@@ -443,6 +443,10 @@ public class Scanner {
           nextChar();
           return createToken(TokenType.LESS_EQUAL, beginToken);
         default:
+          if (scanJSX()) {
+            return new LiteralToken(
+              TokenType.STRING, getTokenString(beginToken), getTokenRange(beginToken));
+          }
           return createToken(TokenType.OPEN_ANGLE, beginToken);
         }
       case '>':
@@ -590,6 +594,57 @@ public class Scanner {
       default:
         return scanIdentifierOrKeyword(beginToken, ch);
       }
+  }
+
+  private boolean scanJSX() {
+    if (Character.isLetter(peekChar())) {
+      final StringBuilder valueBuilder = new StringBuilder();
+      char c = nextChar();
+
+      while (Character.isLetter(c)) {
+        valueBuilder.append(c);
+        c = nextChar();
+      }
+      final String elementName = valueBuilder.toString();
+      final int len = elementName.length();
+
+      while (c != '\0' && c != '>') {
+        c = nextChar();
+      }
+      final boolean selfClosing = peekChar(-1) == '/';
+
+      if (!selfClosing) {
+        int depth = 0;
+        boolean injsx = true;
+
+        c = nextChar();
+        while (c != '\0' && injsx) {
+          switch (c) {
+            case '<':
+              if (depth == 0) depth++;
+              break;
+            case '>':
+              if (0 < depth && peekChar(-1) != '=') {
+                depth--;
+                boolean b = 0 < len;
+
+                for (int i = 0; i < len && b; i++) {
+                  b = peekChar(i - len - 1) == elementName.charAt(i);
+                }
+                if (b) b = peekChar(-len - 2) == '/';
+                if (b) b = peekChar(-len - 3) == '<';
+                if (b) injsx = false;
+              }
+              break;
+            default:
+              break;
+          }
+          if (injsx) c = nextChar();
+        }
+      }
+      return true;
+    }
+    return false;
   }
 
   private Token scanNumberPostPeriod(int beginToken) {
