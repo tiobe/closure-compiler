@@ -71,7 +71,7 @@ public final class LightweightMessageFormatter extends AbstractMessageFormatter 
     SourceExcerptProvider source = getSource();
     String sourceName = error.sourceName;
     int lineNumber = error.lineNumber;
-    int charno = error.getCharno();
+    DiagnosticType type = error.getType();
 
     // Format the non-reverse-mapped position.
     StringBuilder b = new StringBuilder();
@@ -86,53 +86,16 @@ public final class LightweightMessageFormatter extends AbstractMessageFormatter 
     } else {
       sourceName = mapping.getOriginalFile();
       lineNumber = mapping.getLineNumber();
-      charno = mapping.getColumnPosition();
 
-      b.append(nonMappedPosition);
-      b.append("\nOriginally at:\n");
       boldLine.append(formatPosition(sourceName, lineNumber));
     }
 
-    // extract source excerpt
-    String sourceExcerpt = source == null ? null :
-        excerpt.get(
-            source, sourceName, lineNumber, excerptFormatter);
-
-    boldLine.append(getLevelName(warning ? CheckLevel.WARNING : CheckLevel.ERROR));
+    boldLine.append(type.key);
     boldLine.append(" - ");
 
-    boldLine.append(error.description);
+    boldLine.append(error.description.replace("\n", " ").replace("\r", ""));
 
     b.append(maybeEmbolden(boldLine.toString()));
-    b.append('\n');
-    if (sourceExcerpt != null) {
-      b.append(sourceExcerpt);
-      b.append('\n');
-
-      // padding equal to the excerpt and arrow at the end
-      // charno == sourceExcerpt.length() means something is missing
-      // at the end of the line
-      if (excerpt.equals(LINE) && 0 <= charno && charno <= sourceExcerpt.length()) {
-        for (int i = 0; i < charno; i++) {
-          char c = sourceExcerpt.charAt(i);
-          if (TokenUtil.isWhitespace(c)) {
-            b.append(c);
-          } else {
-            b.append(' ');
-          }
-        }
-        if (error.node == null) {
-          b.append("^");
-        } else {
-          int length =
-              Math.max(1, Math.min(error.node.getLength(), sourceExcerpt.length() - charno));
-          for (int i = 0; i < length; i++) {
-            b.append("^");
-          }
-        }
-        b.append("\n");
-      }
-    }
     return b.toString();
   }
 
