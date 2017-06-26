@@ -605,6 +605,13 @@ public class Scanner {
         n++;
       }
       if (isWhitespace(c) || c == '/' || c == '>') {
+        char m = n;
+        final int la = 80 + n;
+
+        while (m < la && c != '\0' && c != '>') {
+          c = peekChar(m++);
+        }
+        if (la <= m) return false;
         final StringBuilder valueBuilder = new StringBuilder();
 
         for (int i = 0; i < n; i++) {
