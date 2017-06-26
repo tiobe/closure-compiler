@@ -598,51 +598,57 @@ public class Scanner {
 
   private boolean scanJSX() {
     if (Character.isLetter(peekChar())) {
-      final StringBuilder valueBuilder = new StringBuilder();
-      char c = nextChar();
+      char n = 0;
+      char c;
 
-      while (Character.isLetter(c)) {
-        valueBuilder.append(c);
-        c = nextChar();
+      while (Character.isLetter(c = peekChar(n))) {
+        n++;
       }
-      final String elementName = valueBuilder.toString();
-      final int len = elementName.length();
+      if (isWhitespace(c) || c == '/' || c == '>') {
+        final StringBuilder valueBuilder = new StringBuilder();
 
-      while (c != '\0' && c != '>') {
-        c = nextChar();
-      }
-      final boolean selfClosing = peekChar(-1) == '/';
-
-      if (!selfClosing) {
-        int depth = 0;
-        boolean injsx = true;
-
-        c = nextChar();
-        while (c != '\0' && injsx) {
-          switch (c) {
-            case '<':
-              if (depth == 0) depth++;
-              break;
-            case '>':
-              if (0 < depth && peekChar(-1) != '=') {
-                depth--;
-                boolean b = 0 < len;
-
-                for (int i = 0; i < len && b; i++) {
-                  b = peekChar(i - len - 1) == elementName.charAt(i);
-                }
-                if (b) b = peekChar(-len - 2) == '/';
-                if (b) b = peekChar(-len - 3) == '<';
-                if (b) injsx = false;
-              }
-              break;
-            default:
-              break;
-          }
-          if (injsx) c = nextChar();
+        for (int i = 0; i < n; i++) {
+          valueBuilder.append(nextChar());
         }
+        final String elementName = valueBuilder.toString();
+        final int len = elementName.length();
+
+        while (c != '\0' && c != '>') {
+          c = nextChar();
+        }
+        final boolean selfClosing = peekChar(-1) == '/';
+
+        if (!selfClosing) {
+          int depth = 0;
+          boolean injsx = true;
+
+          c = nextChar();
+          while (c != '\0' && injsx) {
+            switch (c) {
+              case '<':
+                if (depth == 0) depth++;
+                break;
+              case '>':
+                if (0 < depth && peekChar(-1) != '=') {
+                  depth--;
+                  boolean b = 0 < len;
+
+                  for (int i = 0; i < len && b; i++) {
+                    b = peekChar(i - len - 1) == elementName.charAt(i);
+                  }
+                  if (b) b = peekChar(-len - 2) == '/';
+                  if (b) b = peekChar(-len - 3) == '<';
+                  if (b) injsx = false;
+                }
+                break;
+              default:
+                break;
+            }
+            if (injsx) c = nextChar();
+          }
+        }
+        return true;
       }
-      return true;
     }
     return false;
   }
