@@ -36,6 +36,7 @@ public class Scanner {
   private int index;
   private final CommentRecorder commentRecorder;
   private int typeParameterLevel;
+  private final LinkedList<String> elemStack = new LinkedList<>();
 
   public Scanner(ErrorReporter errorReporter, CommentRecorder commentRecorder,
       SourceFile source) {
@@ -597,67 +598,97 @@ public class Scanner {
   }
 
   private boolean scanJSX() {
-    if (Character.isLetter(peekChar())) {
-      char n = 0;
-      char c;
-
-      while (Character.isLetter(c = peekChar(n))) {
-        n++;
-      }
-      if (isWhitespace(c) || c == '/' || c == '>') {
-        char m = n;
-        final int la = 80 + n;
-
-        while (m < la && c != '\0' && c != '>') {
-          c = peekChar(m++);
-        }
-        if (la <= m) return false;
-        final StringBuilder valueBuilder = new StringBuilder();
-
-        for (int i = 0; i < n; i++) {
-          valueBuilder.append(nextChar());
-        }
-        final String elementName = valueBuilder.toString();
-        final int len = elementName.length();
-
-        while (c != '\0' && c != '>') {
-          c = nextChar();
-        }
-        final boolean selfClosing = peekChar(-1) == '/';
-
-        if (!selfClosing) {
-          int depth = 0;
-          boolean injsx = true;
-
-          c = nextChar();
-          while (c != '\0' && injsx) {
-            switch (c) {
-              case '<':
-                if (depth == 0) depth++;
-                break;
-              case '>':
-                if (0 < depth && peekChar(-1) != '=') {
-                  depth--;
-                  boolean b = 0 < len;
-
-                  for (int i = 0; i < len && b; i++) {
-                    b = peekChar(i - len - 1) == elementName.charAt(i);
-                  }
-                  if (b) b = peekChar(-len - 2) == '/';
-                  if (b) b = peekChar(-len - 3) == '<';
-                  if (b) injsx = false;
-                }
-                break;
-              default:
-                break;
-            }
-            if (injsx) c = nextChar();
-          }
-        }
-        return true;
+    if (!looksLikeHtmlElemOpen()) return false;
+    while (!elemStack.isEmpty()) {
+      switch (nextChar()) {
+      case '<':
+        if (isHtmlElemClose() || looksLikeHtmlElemOpen()) continue;
+        break;
+      case '\0':
+        return false;
+      default:
+        break;
       }
     }
-    return false;
+    return true;
+  }
+
+  private boolean looksLikeHtmlElemOpen() {
+    if (peekChar(-1) != '<') return false;
+    if (!Character.isLetter(peekChar())) return false;
+    final int n = scanElemName(0);
+
+    if (0 == n) return false;
+    final int m = getElemEnd(n);
+
+    if (m < n) return false;
+    final String elementName = getElemName(n);
+
+    for (int i = 0; i < m - n - 1; i++) {
+      nextChar();
+    }
+    //log("" + elementName + " " + peekChar() + isSelfClosing());
+    if (!isSelfClosing()) elemStack.addFirst(elementName);
+    nextChar();
+    return true;
+  }
+
+  private boolean isHtmlElemClose() {
+    if (peekChar(-1) != '<') return false;
+    if (peekChar() != '/') return false;
+    final int n = scanElemName(1);
+
+    if (1 == n) return false;
+    if (peekChar(n) != '>') return false;
+    nextChar();
+    final String elementName = getElemName(n - 1);
+
+    nextChar();
+    if (!elementName.equals(elemStack.peekFirst()));
+    elemStack.removeFirst();
+    return true;
+  }
+
+  private int scanElemName(int n) {
+    while (Character.isLetter(peekChar(n))) {
+      n++;
+    }
+    return n;
+  }
+
+  private int getElemEnd(int m) {
+    char c = peekChar(m);
+
+    if (isWhitespace(c) || c == '/' || c == '>') {
+      final int la = 200 + m;
+
+      while (m < la && c != '\0' && c != '>') {
+        c = peekChar(m++);
+      }
+      if (la <= m) return -1;
+      return m;
+    }
+    return -1;
+  }
+
+  private boolean isSelfClosing() {
+    return peekChar(-1) == '/';
+  }
+
+  private String getElemName(final int n) {
+    final StringBuilder valueBuilder = new StringBuilder(n);
+
+    for (int i = 0; i < n; i++) {
+      valueBuilder.append(nextChar());
+    }
+    return valueBuilder.toString();
+  }
+
+  private void log(Object arg) {
+    final java.util.logging.Logger logger =
+      java.util.logging.Logger.getLogger("DEBUG ");
+
+    logger.info("" + getPosition(index) + ": " + arg);
   }
 
   private Token scanNumberPostPeriod(int beginToken) {
