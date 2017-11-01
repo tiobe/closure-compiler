@@ -16,15 +16,16 @@
 
 'require es6/symbol';
 'require es6/map';
+'require util/defines';
 'require util/polyfill';
 
-/**
- * Whether to skip the conformance check and simply use the polyfill always.
- * @define {boolean}
- */
-$jscomp.ASSUME_NO_NATIVE_SET = false;
-
-$jscomp.polyfill('Set', function(NativeSet) {
+$jscomp.polyfill('Set',
+    /**
+     * @param {*} NativeSet
+     * @return {*}
+     * @suppress {reportUnknownTypes}
+     */
+    function(NativeSet) {
 
   // Perform a conformance check to ensure correct native implementation.
   var isConformant = !$jscomp.ASSUME_NO_NATIVE_SET && (function() {
@@ -135,6 +136,10 @@ $jscomp.polyfill('Set', function(NativeSet) {
   };
 
 
+  /** @override */
+  PolyfillSet.prototype.keys = PolyfillSet.prototype.values;
+
+
   /** @type {?} */ (PolyfillSet.prototype)[Symbol.iterator] =
       PolyfillSet.prototype.values;
 
@@ -149,4 +154,4 @@ $jscomp.polyfill('Set', function(NativeSet) {
 
 
   return PolyfillSet;
-}, 'es6-impl', 'es3');
+}, 'es6', 'es3');

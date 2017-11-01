@@ -24,15 +24,15 @@ import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile;
-
 import java.io.IOException;
 
 /**
  * Check for statements that should end with a semicolon according to the Google style guide.
  */
 public final class CheckMissingSemicolon extends AbstractPostOrderCallback implements CompilerPass {
-  public static final DiagnosticType MISSING_SEMICOLON =
-      DiagnosticType.disabled("JSC_MISSING_SEMICOLON", "Missing semicolon");
+  public static final DiagnosticType MISSING_SEMICOLON = DiagnosticType.disabled(
+      "JSC_MISSING_SEMICOLON",
+      "Missing semicolon");
 
   private final AbstractCompiler compiler;
 
@@ -55,7 +55,7 @@ public final class CheckMissingSemicolon extends AbstractPostOrderCallback imple
   private boolean shouldHaveSemicolon(Node statement) {
     if (statement.isFunction()
         || statement.isClass()
-        || statement.isBlock()
+        || statement.isNormalBlock()
         || statement.isLabelName()
         || statement.isModuleBody()
         || (NodeUtil.isControlStructure(statement) && !statement.isDo())) {

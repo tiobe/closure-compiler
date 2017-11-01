@@ -20,10 +20,8 @@
  */
 
 goog.provide('refactoring_testcase');
-
 goog.require('goog.asserts');
 goog.require('goog.dom.safe');
-goog.require('test_dependency');
 
 //
 // Test cases for .href assignments in well-typed contexts.
@@ -47,6 +45,17 @@ refactoring_testcase.nullable_location_href = function(target, val) {
   goog.dom.safe.setLocationHref(goog.asserts.assert(target), val);
 };
 
+//
+// Test case for matching string literals
+//
+
+/**
+ * @param {!Location} target The target.
+ */
+refactoring_testcase.href_string_literal = function(target) {
+  // Should match do_not_change_setHrefStringLiteral.
+  target.href = 'about:blank';
+};
 
 //
 // Test cases for .href assignments that match the un-typed catch-all rule.
@@ -59,8 +68,7 @@ refactoring_testcase.nullable_location_href = function(target, val) {
  */
 refactoring_testcase.union_type_href = function(target, val) {
   // Should match before_setHrefUnknown.
-  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), 
-Location), val);
+  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), Location), val);
 };
 
 /**
@@ -69,8 +77,7 @@ Location), val);
  */
 refactoring_testcase.unknowntype_href = function(targetElement, val) {
   // Should match before_setHrefUnknown.
-  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(targetElement), 
-Location), val);
+  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(targetElement), Location), val);
 };
 
 //
@@ -133,8 +140,7 @@ refactoring_testcase.document_location_subtype = function(target, val) {
  */
 refactoring_testcase.unknown_location = function(target, val) {
   // Should match before_setLocationUnknown.
-  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), 
-Window).location, val);
+  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), Window).location, val);
 };
 
 /**
@@ -143,8 +149,7 @@ Window).location, val);
  */
 refactoring_testcase.object_location = function(target, val) {
   // Should match before_setLocationUnknown.
-  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), 
-Window).location, val);
+  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), Window).location, val);
 };
 
 
@@ -154,6 +159,5 @@ Window).location, val);
  */
 refactoring_testcase.any_location = function(target, val) {
   // Should match before_setLocationUnknown.
-  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), 
-Window).location, val);
+  goog.dom.safe.setLocationHref(goog.asserts.assertInstanceof(requiresReview(target), Window).location, val);
 };

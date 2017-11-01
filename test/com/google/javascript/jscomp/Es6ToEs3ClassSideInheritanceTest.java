@@ -24,19 +24,20 @@ import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
  */
 public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
   @Override
-  public void setUp() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     setLanguageOut(LanguageMode.ECMASCRIPT3);
-    allowExternsChanges(true);
+    allowExternsChanges();
   }
 
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new Es6ToEs3ClassSideInheritance(compiler);
   }
 
   @Override
-  public int getNumRepetitions() {
+  protected int getNumRepetitions() {
     return 1;
   }
 
@@ -423,8 +424,7 @@ public class Es6ToEs3ClassSideInheritanceTest extends CompilerTestCase {
             "};",
             "$jscomp.inherits(CodeClass,ExternsClass);",
             "/** @suppress {visibility} */",
-            "CodeClass.m = ExternsClass.m;"),
-        null, null);
+            "CodeClass.m = ExternsClass.m;"));
   }
 
   public void testAliasing() {

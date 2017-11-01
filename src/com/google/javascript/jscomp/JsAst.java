@@ -16,7 +16,9 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
+import com.google.common.annotations.GwtIncompatible;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.parsing.ParserRunner;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
@@ -25,6 +27,7 @@ import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 
 /**
@@ -34,9 +37,9 @@ import java.util.ArrayList;
 public class JsAst implements SourceAst {
   private static final long serialVersionUID = 1L;
 
-  private transient InputId inputId;
-  private transient SourceFile sourceFile;
-  private String fileName;
+  private final InputId inputId;
+  private SourceFile sourceFile;
+  private final String fileName;
   private Node root;
   private FeatureSet features;
 
@@ -48,7 +51,7 @@ public class JsAst implements SourceAst {
 
   @Override
   public Node getAstRoot(AbstractCompiler compiler) {
-    if (root == null) {
+    if (!isParsed()) {
       parse(compiler);
       root.setInputId(inputId);
     }
@@ -76,7 +79,7 @@ public class JsAst implements SourceAst {
 
   @Override
   public void setSourceFile(SourceFile file) {
-    Preconditions.checkState(fileName.equals(file.getName()));
+    checkState(fileName.equals(file.getName()));
     sourceFile = file;
   }
 
@@ -85,7 +88,10 @@ public class JsAst implements SourceAst {
     return features;
   }
 
-  public static class RhinoError {
+  /** Representation of Rhino parser error. */
+  public static class RhinoError implements Serializable {
+    private static final long serialVersionUID = 1L;
+
     public final String message;
     public final String sourceName;
     public final int line;
@@ -100,9 +106,12 @@ public class JsAst implements SourceAst {
   }
 
   /** Simple class to share parse results between compilation jobs */
-  public static class ParseResult {
+  public static class ParseResult implements Serializable {
+    private static final long serialVersionUID = 1L;
+
     public final ImmutableList<RhinoError> errors;
     public final ImmutableList<RhinoError> warnings;
+
     ParseResult(ImmutableList<RhinoError> errors, ImmutableList<RhinoError> warnings) {
       this.errors = errors;
       this.warnings = warnings;
@@ -112,7 +121,7 @@ public class JsAst implements SourceAst {
   private static class RecordingReporterProxy implements ErrorReporter {
     final ArrayList<RhinoError> errors = new ArrayList<>();
     final ArrayList<RhinoError> warnings = new ArrayList<>();
-    private ErrorReporter delegateReporter;
+    private final ErrorReporter delegateReporter;
 
     RecordingReporterProxy(ErrorReporter delegateReporter) {
       this.delegateReporter = delegateReporter;
@@ -131,10 +140,11 @@ public class JsAst implements SourceAst {
     }
   }
 
-  private void parse(AbstractCompiler compiler) {
-    ErrorManager errorManager = compiler.getErrorManager();
-    int startErrorCount = errorManager.getErrorCount();
+  boolean isParsed() {
+    return root != null;
+  }
 
+  private void parse(AbstractCompiler compiler) {
     RecordingReporterProxy reporter = new RecordingReporterProxy(
         compiler.getDefaultErrorReporter());
 
@@ -143,8 +153,8 @@ public class JsAst implements SourceAst {
           sourceFile,
           sourceFile.getCode(),
           compiler.getParserConfig(sourceFile.isExtern()
-                        ? AbstractCompiler.ConfigContext.EXTERNS
-                        : AbstractCompiler.ConfigContext.DEFAULT),
+              ? AbstractCompiler.ConfigContext.EXTERNS
+              : AbstractCompiler.ConfigContext.DEFAULT),
           reporter);
       root = result.ast;
       features = result.features;
@@ -152,29 +162,20 @@ public class JsAst implements SourceAst {
       if (compiler.getOptions().preservesDetailedSourceInfo()) {
         compiler.addComments(sourceFile.getName(), result.comments);
       }
-      if (result.sourceMap != null) {
-        String sourceMapName = sourceFile.getName() + ".inline.map";
-        SourceMapInput sourceMapInput =
-            new SourceMapInput(SourceFile.fromCode(sourceMapName, result.sourceMap));
-        compiler.addInputSourceMap(sourceFile.getName(), sourceMapInput);
+      if (result.sourceMapURL != null && compiler.getOptions().resolveSourceMapAnnotations) {
+        boolean parseInline = compiler.getOptions().parseInlineSourceMaps;
+        SourceFile sourceMapSourceFile =
+            SourceMapResolver.extractSourceMap(sourceFile, result.sourceMapURL, parseInline);
+        if (sourceMapSourceFile != null) {
+          compiler.addInputSourceMap(sourceFile.getName(), new SourceMapInput(sourceMapSourceFile));
+        }
       }
     } catch (IOException e) {
       compiler.report(
           JSError.make(AbstractCompiler.READ_ERROR, sourceFile.getName()));
     }
 
-    if (root == null
-        // Most passes try to report as many errors as possible,
-        // so there may already be errors. We only care if there were
-        // errors in the code we just parsed.
-        // Note: we use the ErrorManager here rather than the ErrorReporter as
-        // we don't want to fail if the error was excluded by a warning guard, conversely
-        // we do want to fail if a warning was promoted to an error.
-        || (errorManager.getErrorCount() > startErrorCount
-            && !compiler.getOptions().canContinueAfterErrors())) {
-      // There was a parse error or IOException, so use a dummy block.
-
-
+    if (root == null) {
       root = IR.script();
     } else {
       compiler.prepareAst(root);
@@ -190,5 +191,16 @@ public class JsAst implements SourceAst {
     // Set the source name so that the compiler passes can track
     // the source file and module.
     root.setStaticSourceFile(sourceFile);
+  }
+
+  @GwtIncompatible("ObjectinputStream")
+  private void readObject(java.io.ObjectInputStream in) throws IOException, ClassNotFoundException {
+    AbstractCompiler compiler = ((HasCompiler) in).getCompiler();
+    in.defaultReadObject();
+    // Retrieve the code from the compiler object.
+    CompilerInput input = compiler.getInput(inputId);
+    if (input != null) {
+      sourceFile.restoreFrom(input.getSourceFile());
+    }
   }
 }

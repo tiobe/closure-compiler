@@ -18,12 +18,11 @@ package com.google.javascript.jscomp.graph;
 
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -37,8 +36,7 @@ import java.util.Map;
  */
 public final class LinkedUndirectedGraph<N, E>
     extends UndiGraph<N, E> implements GraphvizGraph {
-  protected final Map<N, LinkedUndirectedGraphNode<N, E>> nodes =
-       new HashMap<>();
+  protected final Map<N, LinkedUndirectedGraphNode<N, E>> nodes = new LinkedHashMap<>();
 
   @Override
   public SubGraph<N, E> newSubGraph() {
@@ -256,7 +254,7 @@ public final class LinkedUndirectedGraph<N, E>
   static class LinkedUndirectedGraphNode<N, E> implements UndiGraphNode<N, E>,
       GraphvizNode {
 
-    private List<UndiGraphEdge<N, E>> neighborEdges = new ArrayList<>();
+    private final List<UndiGraphEdge<N, E>> neighborEdges = new ArrayList<>();
     private final N value;
 
     LinkedUndirectedGraphNode(N nodeValue) {
@@ -348,8 +346,8 @@ public final class LinkedUndirectedGraph<N, E>
   static class LinkedUndirectedGraphEdge<N, E> implements UndiGraphEdge<N, E>,
       GraphvizEdge {
 
-    private UndiGraphNode<N, E> nodeA;
-    private UndiGraphNode<N, E> nodeB;
+    private final UndiGraphNode<N, E> nodeA;
+    private final UndiGraphNode<N, E> nodeB;
     protected final E value;
 
     LinkedUndirectedGraphEdge(UndiGraphNode<N, E> nodeA, E edgeValue,

@@ -17,6 +17,7 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Strings.isNullOrEmpty;
 
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
 
 /**
@@ -47,13 +48,6 @@ final class CompilerOptionsPreprocessor {
           + "remove_unused_prototype_props to be turned on.");
     }
 
-    if (options.getLanguageOut().isEs6OrHigher()
-        && !options.skipNonTranspilationPasses && !options.skipTranspilationAndCrash) {
-      throw new InvalidOptionsException(
-          "ES6 is only supported for transpilation to a lower ECMAScript"
-          + " version. Set --language_out to ES3, ES5, or ES5_STRICT.");
-    }
-
     if (!options.inlineFunctions
         && options.maxFunctionSizeAfterInlining
         != CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING) {
@@ -64,19 +58,10 @@ final class CompilerOptionsPreprocessor {
 
     if (options.getNewTypeInference()) {
       options.checkGlobalThisLevel = CheckLevel.OFF;
-      if (options.checkEventfulObjectDisposalPolicy != CompilerOptions.DisposalCheckingPolicy.OFF) {
-        throw new InvalidOptionsException(
-            "check_eventful_object_disposal is not supported with the new type inference.");
-      }
-    }
-
-    if (options.jqueryPass && options.closurePass) {
-      throw new InvalidOptionsException(
-          "The jQuery pass and the Closure pass cannot both be enabled.");
     }
 
     if (options.dartPass) {
-      if (!options.getLanguageOut().isEs5OrHigher()) {
+      if (!options.getLanguageOut().toFeatureSet().contains(FeatureSet.ES5)) {
         throw new InvalidOptionsException("Dart requires --language_out=ES5 or higher.");
       }
       // --dart_pass does not support type-aware property renaming yet.

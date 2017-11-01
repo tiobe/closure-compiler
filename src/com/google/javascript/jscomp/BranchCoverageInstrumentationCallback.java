@@ -15,8 +15,9 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.annotations.GwtIncompatible;
-import com.google.common.base.Preconditions;
 import com.google.javascript.jscomp.graph.DiGraph;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
@@ -51,10 +52,10 @@ public class BranchCoverageInstrumentationCallback extends NodeTraversal.Abstrac
     if (node.isScript()) {
       if (instrumentationData.get(fileName) != null) {
         // Add instrumentation code
-        node.addChildToFront(newHeaderNode(traversal, node));
+        node.addChildrenToFront(newHeaderNode(traversal, node).removeChildren());
+        compiler.reportChangeToEnclosingScope(node);
         instrumentBranchCoverage(traversal, instrumentationData.get(fileName));
       }
-      compiler.reportCodeChange();
     }
 
     if (node.isIf()) {
@@ -64,7 +65,7 @@ public class BranchCoverageInstrumentationCallback extends NodeTraversal.Abstrac
         if (outEdge.getValue() == ControlFlowGraph.Branch.ON_FALSE) {
           Node destination = outEdge.getDestination().getValue();
           if (destination != null
-              && destination.isBlock()
+              && destination.isNormalBlock()
               && destination.getParent() != null
               && destination.getParent().isIf()) {
             hasDefaultBlock = true;
@@ -80,13 +81,13 @@ public class BranchCoverageInstrumentationCallback extends NodeTraversal.Abstrac
             fileName, new FileInstrumentationData(fileName, createArrayName(traversal)));
       }
       processBranchInfo(node, instrumentationData.get(fileName), getChildrenBlocks(node));
-    } else if (node.isFor() || node.isWhile() || node.isDo()) {
+    } else if (NodeUtil.isLoopStructure(node)) {
       List<Node> blocks = getChildrenBlocks(node);
       ControlFlowGraph<Node> cfg = traversal.getControlFlowGraph();
       for (DiGraph.DiGraphEdge<Node, ControlFlowGraph.Branch> outEdge : cfg.getOutEdges(node)) {
         if (outEdge.getValue() == ControlFlowGraph.Branch.ON_FALSE) {
           Node destination = outEdge.getDestination().getValue();
-          if (destination.isBlock()) {
+          if (destination.isNormalBlock()) {
             blocks.add(destination);
           } else {
             Node exitBlock = IR.block();
@@ -106,7 +107,7 @@ public class BranchCoverageInstrumentationCallback extends NodeTraversal.Abstrac
   private List<Node> getChildrenBlocks(Node node) {
     List<Node> blocks = new ArrayList<>();
     for (Node child : node.children()) {
-      if (child.isBlock()) {
+      if (child.isNormalBlock()) {
         blocks.add(child);
       }
     }
@@ -127,6 +128,7 @@ public class BranchCoverageInstrumentationCallback extends NodeTraversal.Abstrac
           Node block = data.getBranchNode(lineIdx, branchIdx);
           block.addChildToFront(
               newBranchInstrumentationNode(traversal, block, branchCoverageOffset + branchIdx - 1));
+          compiler.reportChangeToEnclosingScope(block);
         }
         branchCoverageOffset += numBranches;
       }
@@ -177,7 +179,7 @@ public class BranchCoverageInstrumentationCallback extends NodeTraversal.Abstrac
   private Node newHeaderNode(NodeTraversal traversal, Node srcref) {
     String fileName = traversal.getSourceName();
     FileInstrumentationData data = instrumentationData.get(fileName);
-    Preconditions.checkNotNull(data);
+    checkNotNull(data);
 
     // var JSCompiler_lcov_branch_data_xx = [];
     // __jscov.branchesTaken.push(JSCompiler_lcov_branch_data_xx);

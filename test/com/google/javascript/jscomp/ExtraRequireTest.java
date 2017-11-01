@@ -16,18 +16,22 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.CheckRequiresForConstructors.EXTRA_REQUIRE_WARNING;
+import static com.google.javascript.jscomp.CheckMissingAndExtraRequires.EXTRA_REQUIRE_WARNING;
 
 import com.google.common.collect.ImmutableList;
-
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import java.util.List;
 
-/**
- * Tests for the "extra requires" check in {@link CheckRequiresForConstructors}.
- */
-public final class ExtraRequireTest extends Es6CompilerTestCase {
+/** Tests for the "extra requires" check in {@link CheckMissingAndExtraRequires}. */
+public final class ExtraRequireTest extends CompilerTestCase {
   public ExtraRequireTest() {
     super();
+  }
+
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
   }
 
   @Override
@@ -38,14 +42,14 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
-    return new CheckRequiresForConstructors(compiler,
-        CheckRequiresForConstructors.Mode.FULL_COMPILE);
+    return new CheckMissingAndExtraRequires(
+        compiler, CheckMissingAndExtraRequires.Mode.FULL_COMPILE);
   }
 
   public void testNoWarning() {
     testSame("goog.require('foo.Bar'); var x = new foo.Bar();");
-    testSameEs6("goog.require('foo.Bar'); let x = new foo.Bar();");
-    testSameEs6("goog.require('foo.Bar'); const x = new foo.Bar();");
+    testSame("goog.require('foo.Bar'); let x = new foo.Bar();");
+    testSame("goog.require('foo.Bar'); const x = new foo.Bar();");
     testSame("goog.require('foo.Bar'); /** @type {foo.Bar} */ var x;");
     testSame("goog.require('foo.Bar'); /** @type {Array<foo.Bar>} */ var x;");
     testSame("goog.require('foo.Bar'); var x = new foo.Bar.Baz();");
@@ -64,27 +68,36 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
     String js = "goog.require('ns.Foo'); /** @type {ns.Foo} */ var f;";
     List<SourceFile> externs = ImmutableList.of(SourceFile.fromCode("externs",
         "/** @const */ var ns;"));
-    test(externs, js, js, null, null, null);
+    testSame(externs(externs), srcs(js));
   }
 
   public void testNoWarning_externsNew() {
     String js = "goog.require('ns.Foo'); new ns.Foo();";
     List<SourceFile> externs = ImmutableList.of(SourceFile.fromCode("externs",
         "/** @const */ var ns;"));
-    test(externs, js, js, null, null, null);
+    testSame(externs(externs), srcs(js));
   }
 
   public void testNoWarning_objlitShorthand() {
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "goog.module('example.module');",
             "",
             "const X = goog.require('example.X');",
             "alert({X});"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "goog.require('X');",
+            "alert({X});"));
+  }
+
+  public void testNoWarning_objlitShorthand_withES6Modules() {
+    testSame(
+        LINE_JOINER.join(
+            "import 'example.module';",
+            "",
+            "import X from 'example.X';",
             "alert({X});"));
   }
 
@@ -102,11 +115,11 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
   public void testWarning() {
     testError("goog.require('foo.bar');", EXTRA_REQUIRE_WARNING);
 
-    testErrorEs6(LINE_JOINER.join(
+    testError(LINE_JOINER.join(
         "goog.require('Bar');",
         "function func( {a} ){}",
         "func( {a: 1} );"), EXTRA_REQUIRE_WARNING);
-    testErrorEs6(LINE_JOINER.join(
+    testError(LINE_JOINER.join(
         "goog.require('Bar');",
         "function func( a = 1 ){}",
         "func(42);"), EXTRA_REQUIRE_WARNING);
@@ -121,38 +134,102 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
   }
 
   public void testPassModule() {
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "import {Foo} from 'bar';",
             "new Foo();"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "import Bar from 'bar';",
             "new Bar();"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "import {CoolFeature as Foo} from 'bar';",
             "new Foo();"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "import Bar, {CoolFeature as Foo, OtherThing as Baz} from 'bar';",
             "new Foo(); new Bar(); new Baz();"));
   }
 
   public void testFailModule() {
-    testErrorEs6(
+    testError(
         "import {Foo} from 'bar';",
         EXTRA_REQUIRE_WARNING);
 
-    testErrorEs6(
+    testError(
         LINE_JOINER.join(
             "import {Foo} from 'bar';",
             "goog.require('example.ExtraRequire');",
             "new Foo;"),
             EXTRA_REQUIRE_WARNING);
+  }
+
+  public void testPassForwardDeclareInModule() {
+    testSame(
+        LINE_JOINER.join(
+            "goog.module('example');",
+            "",
+            "var Event = goog.forwardDeclare('goog.events.Event');",
+            "",
+            "/**",
+            " * @param {!Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}",
+            "",
+            "exports = listener;"));
+  }
+
+  public void testUnusedForwardDeclareInModule() {
+    // Reports extra require warning, but only in single-file mode.
+    testSame(
+        LINE_JOINER.join(
+            "goog.module('example');",
+            "",
+            "var Event = goog.forwardDeclare('goog.events.Event');",
+            "var Unused = goog.forwardDeclare('goog.events.Unused');",
+            "",
+            "/**",
+            " * @param {!Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}",
+            "",
+            "exports = listener;"));
+  }
+
+  public void testPassForwardDeclare() {
+    testSame(
+        LINE_JOINER.join(
+            "goog.forwardDeclare('goog.events.Event');",
+            "",
+            "/**",
+            " * @param {!goog.events.Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}"));
+  }
+
+  public void testFailForwardDeclare() {
+    // Reports extra require warning, but only in single-file mode.
+    testSame(
+        LINE_JOINER.join(
+            "goog.forwardDeclare('goog.events.Event');",
+            "goog.forwardDeclare('goog.events.Unused');",
+            "",
+            "/**",
+            " * @param {!goog.events.Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}"));
   }
 
   public void testGoogModuleGet() {
@@ -168,7 +245,7 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
   }
 
   public void testGoogModuleWithDestructuringRequire() {
-    testErrorEs6(
+    testError(
         LINE_JOINER.join(
             "goog.module('example');",
             "",
@@ -186,7 +263,7 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
             "exports = getElems;"),
         EXTRA_REQUIRE_WARNING);
 
-     testSameEs6(
+     testSame(
         LINE_JOINER.join(
             "goog.module('example');",
             "",
@@ -196,7 +273,7 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
             "  googAssert(true);",
             "};"));
 
-     testErrorEs6(
+     testError(
         LINE_JOINER.join(
             "goog.module('example');",
             "",
@@ -207,7 +284,7 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
             "};"),
         EXTRA_REQUIRE_WARNING);
 
-     testErrorEs6(
+     testError(
         LINE_JOINER.join(
             "goog.module('example');",
             "",
@@ -218,7 +295,7 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
             "};"),
         EXTRA_REQUIRE_WARNING);
 
-     testErrorEs6(
+     testError(
         LINE_JOINER.join(
             "goog.module('example');",
             "",
@@ -227,6 +304,28 @@ public final class ExtraRequireTest extends Es6CompilerTestCase {
             "exports = function() {",
             "  assert(true);",
             "};"),
+        EXTRA_REQUIRE_WARNING);
+  }
+
+  public void testES6ModuleWithDestructuringRequire() {
+    testError(
+        LINE_JOINER.join(
+            "import 'example';",
+            "",
+            "import {assert, fail} from 'goog.asserts';",
+            "",
+            "export default function() {",
+            "  assert(true);",
+            "};"),
+        EXTRA_REQUIRE_WARNING);
+  }
+
+  public void testGoogModuleWithEmptyDestructuringRequire() {
+    testError(
+        LINE_JOINER.join(
+            "goog.module('example');",
+            "",
+            "var {} = goog.require('goog.asserts');"),
         EXTRA_REQUIRE_WARNING);
   }
 }

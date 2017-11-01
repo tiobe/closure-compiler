@@ -19,7 +19,6 @@ package com.google.javascript.jscomp.deps;
 import com.google.common.annotations.GwtIncompatible;
 import com.google.common.base.CharMatcher;
 import com.google.javascript.jscomp.ErrorManager;
-
 import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -46,20 +45,19 @@ public final class JsFunctionParser extends JsFileLineParser {
     }
   }
 
-  private static Logger logger =
-      Logger.getLogger(JsFunctionParser.class.getName());
+  private static final Logger logger = Logger.getLogger(JsFunctionParser.class.getName());
 
   /** Pattern for matching functions. */
-  private Pattern pattern;
+  private final Pattern pattern;
 
   /** Matcher used in the parsing. */
-  private Matcher matcher;
+  private final Matcher matcher;
 
   /** Symbols parsed. */
   private Collection<SymbolInfo> symbols;
 
   /** Functions to parse */
-  private Collection<String> functionsToParse;
+  private final Collection<String> functionsToParse;
 
   /**
    * Constructor
@@ -127,8 +125,7 @@ public final class JsFunctionParser extends JsFileLineParser {
     boolean hasFunctions = false;
     boolean parseLine = false;
 
-    // Quick sanity check that will catch most cases. This is a performance
-    // win for people with a lot of JS.
+    // Quick check that will catch most cases. This is a performance win for teams with a lot of JS.
     for (String function : functionsToParse) {
       if (line.contains(function)) {
         parseLine = true;

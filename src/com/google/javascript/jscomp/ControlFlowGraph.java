@@ -148,6 +148,7 @@ public class ControlFlowGraph<N> extends
     Node parent = n.getParent();
     switch (parent.getToken()) {
       case BLOCK:
+      case ROOT:
       case SCRIPT:
       case TRY:
         return true;
@@ -155,7 +156,7 @@ public class ControlFlowGraph<N> extends
         // A function node represents the start of a function where the name
         // bleeds into the local scope and parameters are assigned
         // to the formal argument names. The node includes the name of the
-        // function and the LP list since we assume the whole set up process
+        // function and the PARAM_LIST since we assume the whole set up process
         // is atomic without change in control flow. The next change of
         // control is going into the function's body, represented by the second
         // child.
@@ -175,13 +176,11 @@ public class ControlFlowGraph<N> extends
         // That way the following:
         // for(var x = 0; x < 10; x++) { } has a graph that is isomorphic to
         // var x = 0; while(x<10) {  x++; }
-        if (NodeUtil.isForIn(parent)) {
-          // TODO(user): Investigate how we should handle the case where
-          // we have a very complex expression inside the FOR-IN header.
-          return n != parent.getFirstChild();
-        } else {
-          return NodeUtil.getConditionExpression(parent) != n;
-        }
+        return NodeUtil.getConditionExpression(parent) != n;
+      case FOR_IN:
+        // TODO(user): Investigate how we should handle the case where
+        // we have a very complex expression inside the FOR-IN header.
+        return n != parent.getFirstChild();
       case SWITCH:
       case CASE:
       case CATCH:

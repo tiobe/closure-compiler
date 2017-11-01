@@ -16,7 +16,7 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.Es6ToEs3Converter.CANNOT_CONVERT;
+import static com.google.javascript.jscomp.Es6ToEs3Util.CANNOT_CONVERT;
 
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
@@ -29,11 +29,12 @@ public final class Es6ExtractClassesTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     setLanguageOut(LanguageMode.ECMASCRIPT3);
     disableTypeCheck();
-    runTypeCheckAfterProcessing = true;
+    enableRunTypeCheckAfterProcessing();
   }
 
   public void testExtractionFromCall() {
@@ -166,6 +167,19 @@ public final class Es6ExtractClassesTest extends CompilerTestCase {
                 LINE_JOINER.join(
                     "const unusual$name$classdecl$var0 = class{};",
                     "alert(unusual$name$classdecl$var0);"))));
+  }
+
+  public void testFilenameContainsPlus() {
+    test(
+        ImmutableList.of(
+            SourceFile.fromCode("+some/+path/file", "alert(class {});")),
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "+path/file",
+                LINE_JOINER.join(
+                    "const $some$$path$file$classdecl$var0 = class{};",
+                    "alert($some$$path$file$classdecl$var0);"))));
+
   }
 
   public void testConditionalBlocksExtractionFromCall() {

@@ -16,10 +16,10 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -49,7 +49,7 @@ class NodeIterators {
      *     exposed in the iteration.
      */
     FunctionlessLocalScope(Node ... ancestors) {
-      Preconditions.checkArgument(ancestors.length > 0);
+      checkArgument(ancestors.length > 0);
 
       for (Node n : ancestors) {
         if (n.isFunction()) {
@@ -115,8 +115,7 @@ class NodeIterators {
      * Gets the parent of the node most recently returned by next().
      */
     protected Node currentParent() {
-      return ancestors.size() >= 2 ?
-          ancestors.get(ancestors.size() - 2) : null;
+      return ancestors.size() >= 2 ? ancestors.get(ancestors.size() - 2) : null;
     }
 
     /**
@@ -157,13 +156,14 @@ class NodeIterators {
     private Node lookAhead;
 
     /**
+     * The name is a bit of a misnomer; this works with let and const as well.
      * @return Create a LocalVarMotion for use with moving a value assigned
      * at a variable declaration.
      */
     static LocalVarMotion forVar(
         Node name, Node var, Node block) {
-      Preconditions.checkArgument(var.isVar());
-      Preconditions.checkArgument(NodeUtil.isStatement(var));
+      checkArgument(NodeUtil.isNameDeclaration(var));
+      checkArgument(NodeUtil.isStatement(var));
       // The FunctionlessLocalScope must start at "name" as this may be used
       // before the Normalize pass, and thus the VAR node may define multiple
       // names and the "name" node may have siblings.  The actual assigned
@@ -178,8 +178,8 @@ class NodeIterators {
      */
     static LocalVarMotion forAssign(
         Node name, Node assign, Node expr, Node block) {
-      Preconditions.checkArgument(assign.isAssign());
-      Preconditions.checkArgument(expr.isExprResult());
+      checkArgument(assign.isAssign());
+      checkArgument(expr.isExprResult());
       // The FunctionlessLocalScope must start at "assign", to skip the value
       // assigned to "name" (which would be its sibling).
       return new LocalVarMotion(
@@ -191,11 +191,10 @@ class NodeIterators {
      *     beginning with the deepest ancestor.
      */
     private LocalVarMotion(Node nameNode, FunctionlessLocalScope iterator) {
-      Preconditions.checkArgument(nameNode.isName());
+      checkArgument(nameNode.isName());
       Node valueNode = NodeUtil.getAssignedValue(nameNode);
       this.varName = nameNode.getString();
-      this.valueHasSideEffects = valueNode != null &&
-          NodeUtil.mayHaveSideEffects(valueNode);
+      this.valueHasSideEffects = valueNode != null && NodeUtil.mayHaveSideEffects(valueNode);
       this.iterator = iterator;
       advanceLookAhead(true);
     }
@@ -226,8 +225,7 @@ class NodeIterators {
         // Don't advance past a reference to the variable that we're trying
         // to inline.
         Node curNode = iterator.current();
-        if (curNode.isName() &&
-            varName.equals(curNode.getString())) {
+        if (curNode.isName() && varName.equals(curNode.getString())) {
           lookAhead = null;
           return;
         }
@@ -247,13 +245,12 @@ class NodeIterators {
         boolean readsState = false;
 
         if (// Any read of a different variable.
-            (nextNode.isName() && !varName.equals(nextNode.getString())) ||
+            (nextNode.isName() && !varName.equals(nextNode.getString()))
             // Any read of a property.
-            (nextNode.isGetProp() || nextNode.isGetElem())) {
+            || (nextNode.isGetProp() || nextNode.isGetElem())) {
 
           // If this is a simple assign, we'll be ok.
-          if (nextParent == null ||
-              !NodeUtil.isVarOrSimpleAssignLhs(nextNode, nextParent)) {
+          if (nextParent == null || !NodeUtil.isNameDeclOrSimpleAssignLhs(nextNode, nextParent)) {
             readsState = true;
           }
 
@@ -278,8 +275,8 @@ class NodeIterators {
       //   var a = b;
       //   var b = 3;
       //   alert(a);
-      if (NodeUtil.nodeTypeMayHaveSideEffects(nextNode) && type != Token.NAME
-          || type == Token.NAME && nextParent.isCatch()) {
+      if ((NodeUtil.nodeTypeMayHaveSideEffects(nextNode) && type != Token.NAME)
+          || (type == Token.NAME && nextParent.isCatch())) {
         lookAhead = null;
         return;
       }

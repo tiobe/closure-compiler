@@ -40,7 +40,7 @@ md.$bottomSheet = function() {};
  *   template: (string|undefined),
  *   scope: (!Object|undefined),
  *   preserveScope: (boolean|undefined),
- *   controller: (!Function|string|undefined),
+ *   controller: (!angular.Injectable|string|undefined),
  *   locals: (!Object|undefined),
  *   targetEvent: (!Object|undefined),
  *   resolve: (!Object|undefined),
@@ -89,7 +89,7 @@ md.$dialog = function() {};
  *   hasBackdrop: (boolean|undefined),
  *   clickOutsideToClose: (boolean|undefined),
  *   escapeToClose: (boolean|undefined),
- *   controller: (Function|string|undefined),
+ *   controller: (angular.Injectable|string|undefined),
  *   locals: (Object|undefined),
  *   resolve: (Object|undefined),
  *   controllerAs: (string|undefined),
@@ -411,7 +411,7 @@ md.$toast = function() {};
  *   template: (string|undefined),
  *   hideDelay: (number|undefined),
  *   position: (string|undefined),
- *   controller: (Function|string|undefined),
+ *   controller: (angular.Injectable|string|undefined),
  *   locals: (Object|undefined),
  *   bindToController: (boolean|undefined),
  *   resolve: (Object|undefined),
@@ -600,7 +600,6 @@ md.$mdTheming.prototype.generateTheme = function(name) {};
 
 /******************************************************************************/
 
-
 /**
  * @param {string} name
  * @constructor
@@ -651,6 +650,24 @@ md.$mdThemingProvider.Theme.prototype.warnPalette =
  */
 md.$mdThemingProvider.Theme.prototype.dark = function(opt_isDark) {};
 
+/******************************************************************************
+ * $mdColors Service
+ *****************************************************************************/
+
+/** @interface */
+md.$mdColors = function() {};
+
+/**
+ * @param {!angular.JQLite} element
+ * @param {?Object} colorExpression
+ */
+md.$mdColors.prototype.applyThemeColors = function(element, colorExpression) {};
+
+/**
+ * @param {string} expression
+ * @return {string}
+ */
+md.$mdColors.prototype.getThemeColor = function(expression) {};
 
 /******************************************************************************
  * $mdIcon Service
@@ -724,6 +741,24 @@ md.$mdMenu = function() {};
  * @return {!angular.$q.Promise}
  */
 md.$mdMenu.prototype.hide = function(opt_reason, opt_options) {};
+
+/******************************************************************************
+ * $mdMenu that is provided to the scope of the trigger element so that the
+ * menu can be closed/opened from the template.
+ * https://material.angularjs.org/latest/api/directive/mdMenu
+ *****************************************************************************/
+
+/** @interface */
+md.menu = function() {};
+
+/** @param {!Event=} opt_event */
+md.menu.prototype.open = function(opt_event) {};
+
+/**
+ * @param {boolean=} opt_skipFocus
+ * @param {*=} opt_closeOptions
+ */
+md.menu.prototype.close = function(opt_skipFocus, opt_closeOptions) {};
 
 /******************************************************************************
  * $mdSelect Service
@@ -816,6 +851,16 @@ md.$mdGestureProvider = function() {};
  */
 md.$mdGestureProvider.prototype.skipClickHijack = function() {};
 
+/******************************************************************************
+ * $mdInkRippleProvider
+ *****************************************************************************/
+
+/** @interface */
+md.$mdInkRippleProvider = function() {};
+
+
+md.$mdInkRippleProvider.prototype.disableInkRipple = function() {};
+
 
 /******************************************************************************
  * VirtualRepeatContainerController
@@ -868,7 +913,7 @@ md.$panel = function() {};
  * @typedef {{
  *   template: (string|undefined),
  *   templateUrl: (string|undefined),
- *   controller: (Function|string|undefined),
+ *   controller: (angular.Injectable|string|undefined),
  *   controllerAs: (string|undefined),
  *   locals: (!Object|undefined),
  *   resolve: (!Object|undefined),
@@ -887,7 +932,8 @@ md.$panel = function() {};
  *   onOpenComplete: (Function|undefined),
  *   onRemoving: (Function|undefined),
  *   onDomRemoved: (Function|undefined),
- *   origin: (!angular.JQLite|!Element|undefined)
+ *   origin: (!angular.JQLite|!Element|undefined),
+ *   onCloseSuccess: (function(md.$panel.MdPanelRef, string)|undefined)
  * }}
  */
 md.$panel.config;
@@ -944,6 +990,15 @@ md.$panel.prototype.animation = {
   FADE: 'md-panel-animate-fade'
 };
 
+/**
+ * Possible default closeReasons for the close function.
+ * @enum {string}
+ */
+md.$panel.prototype.closeReasons = {
+  CLICK_OUTSIDE: 'clickOutsideToClose',
+  ESCAPE: 'escapeToClose',
+};
+
 
 /**
  * @param {!md.$panel.config} config
@@ -961,8 +1016,11 @@ md.$panel.MdPanelRef.prototype.isAttached;
 /** @return {!angular.$q.Promise<!md.$panel.MdPanelRef>} */
 md.$panel.MdPanelRef.prototype.open = function() {};
 
-/** @return {!angular.$q.Promise<!md.$panel.MdPanelRef>} */
-md.$panel.MdPanelRef.prototype.close = function() {};
+/**
+ * @param {string=} opt_closeReason
+ * @return {!angular.$q.Promise<!md.$panel.MdPanelRef>}
+ */
+md.$panel.MdPanelRef.prototype.close = function(opt_closeReason) {};
 
 /** @return {!angular.$q.Promise<!md.$panel.MdPanelRef>} */
 md.$panel.MdPanelRef.prototype.attach = function() {};
@@ -976,6 +1034,7 @@ md.$panel.MdPanelRef.prototype.show = function() {};
 /** @return {!angular.$q.Promise<!md.$panel.MdPanelRef>} */
 md.$panel.MdPanelRef.prototype.hide = function() {};
 
+/** @return {void} */
 md.$panel.MdPanelRef.prototype.destroy = function() {};
 
 /** @param {string} classToAdd */

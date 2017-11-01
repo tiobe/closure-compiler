@@ -15,13 +15,12 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Optional;
-import com.google.common.base.Preconditions;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
@@ -59,15 +58,13 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   private static final class LexicalContext {
     final Optional<Node> function; // absent for top level
     final LexicalContext thisAndArgumentsContext;
-    final Optional<LexicalContext> enclosingAsyncContext;
-    boolean asyncThisReplacementWasDone = false;
-    boolean asyncArgumentsReplacementWasDone = false;
+    boolean mustAddAsyncThisVariable = false;
+    boolean mustAddAsyncArgumentsVariable = false;
 
     /** Creates root-level context. */
     LexicalContext() {
       this.function = Optional.absent();
       this.thisAndArgumentsContext = this;
-      this.enclosingAsyncContext = Optional.absent();
     }
 
     LexicalContext(LexicalContext outer, Node function) {
@@ -75,25 +72,36 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
       // An arrow function shares 'this' and 'arguments' with its outer scope.
       this.thisAndArgumentsContext =
           function.isArrowFunction() ? outer.thisAndArgumentsContext : this;
-      this.enclosingAsyncContext =
-          function.isAsyncFunction() ? Optional.of(this) : outer.enclosingAsyncContext;
     }
 
-    boolean isAsyncFunction() {
+    boolean isAsyncContext() {
       return function.isPresent() && function.get().isAsyncFunction();
     }
 
     boolean mustReplaceThisAndArguments() {
-      return enclosingAsyncContext.isPresent()
-          && enclosingAsyncContext.get().thisAndArgumentsContext == thisAndArgumentsContext;
+      return isAsyncContext() || thisAndArgumentsContext.isAsyncContext();
     }
 
     void recordAsyncThisReplacementWasDone() {
-      enclosingAsyncContext.get().asyncThisReplacementWasDone = true;
+      if (thisAndArgumentsContext.isAsyncContext()) {
+        thisAndArgumentsContext.mustAddAsyncThisVariable = true;
+      } else {
+        // The current context is an async arrow function within a non-async function,
+        // so it must define its own replacement variable.
+        checkState(isAsyncContext());
+        mustAddAsyncThisVariable = true;
+      }
     }
 
     void recordAsyncArgumentsReplacementWasDone() {
-      enclosingAsyncContext.get().asyncArgumentsReplacementWasDone = true;
+      if (thisAndArgumentsContext.isAsyncContext()) {
+        thisAndArgumentsContext.mustAddAsyncArgumentsVariable = true;
+      } else {
+        // The current context is an async arrow function within a non-async function,
+        // so it must define its own replacement variable.
+        checkState(isAsyncContext());
+        mustAddAsyncArgumentsVariable = true;
+      }
     }
   }
 
@@ -101,7 +109,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   private final AbstractCompiler compiler;
 
   public RewriteAsyncFunctions(AbstractCompiler compiler) {
-    Preconditions.checkNotNull(compiler);
+    checkNotNull(compiler);
     this.compiler = compiler;
     this.contextStack = new ArrayDeque<>();
     this.contextStack.addFirst(new LexicalContext());
@@ -132,7 +140,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   public void visit(NodeTraversal t, Node n, Node parent) {
     LexicalContext context = contextStack.getFirst();
 
-    if (n.getToken() == Token.FUNCTION) {
+    if (n.isFunction()) {
       checkState(
           context.function.isPresent() && context.function.get() == n,
           "unexpected function context:\nexpected: %s\nactual: %s",
@@ -142,7 +150,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     }
     switch (n.getToken()) {
       case FUNCTION:
-        if (context.isAsyncFunction()) {
+        if (context.isAsyncContext()) {
           convertAsyncFunction(context);
         }
         break;
@@ -162,7 +170,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
         break;
 
       case AWAIT:
-        checkState(context.isAsyncFunction(), "await found within non-async function body");
+        checkState(context.isAsyncContext(), "await found within non-async function body");
         checkState(n.hasOneChild(), "await should have 1 operand, but has %s", n.getChildCount());
         // Awaits become yields in the converted async function's inner generator function.
         parent.replaceChild(n, IR.yield(n.removeFirstChild()).useSourceInfoIfMissingFrom(n));
@@ -180,21 +188,26 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     Node newBody = IR.block().useSourceInfoIfMissingFrom(originalBody);
     originalFunction.replaceChild(originalBody, newBody);
 
-    if (functionContext.asyncThisReplacementWasDone) {
-      newBody.addChildToBack(IR.let(IR.name(ASYNC_THIS), IR.thisNode()));
+    if (functionContext.mustAddAsyncThisVariable) {
+      newBody.addChildToBack(IR.constNode(IR.name(ASYNC_THIS), IR.thisNode()));
     }
-    if (functionContext.asyncArgumentsReplacementWasDone) {
-      newBody.addChildToBack(IR.let(IR.name(ASYNC_ARGUMENTS), IR.name("arguments")));
+    if (functionContext.mustAddAsyncArgumentsVariable) {
+      newBody.addChildToBack(IR.constNode(IR.name(ASYNC_ARGUMENTS), IR.name("arguments")));
     }
 
     // Normalize arrow function short body to block body
-    if (!originalBody.isBlock()) {
+    if (!originalBody.isNormalBlock()) {
       originalBody = IR.block(IR.returnNode(originalBody)).useSourceInfoFromForTree(originalBody);
     }
     // NOTE: visit() will already have made appropriate replacements in originalBody so it may
     // be used as the generator function body.
-    Node generatorFunction =
-        IR.function(IR.name(ASYNC_GENERATOR_NAME), IR.paramList(), originalBody);
+    Node newFunctionName = IR.name(ASYNC_GENERATOR_NAME);
+    Node originalName = originalFunction.getFirstChild();
+    // Use the source info from the function name. Without this line, we would use the source info
+    // from originalBody for the name node near the end of this method.
+    newFunctionName.useSourceInfoIfMissingFromForTree(originalName);
+    Node generatorFunction = IR.function(newFunctionName, IR.paramList(), originalBody);
+    compiler.reportChangeToChangeScope(generatorFunction);
     generatorFunction.setIsGeneratorFunction(true);
     // function* $jscomp$async$generator() { ... }
     newBody.addChildToBack(generatorFunction);
@@ -206,6 +219,6 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
             IR.call(executeAsyncGenerator, NodeUtil.newCallNode(IR.name(ASYNC_GENERATOR_NAME)))));
 
     newBody.useSourceInfoIfMissingFromForTree(originalBody);
-    compiler.reportCodeChange();
+    compiler.reportChangeToEnclosingScope(newBody);
   }
 }

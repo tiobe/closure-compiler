@@ -15,11 +15,14 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.collect.ImmutableMap;
+import com.google.javascript.jscomp.deps.NodeModuleResolver;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,14 +39,14 @@ public class RewriteJsonToModule extends NodeTraversal.AbstractPostOrderCallback
       DiagnosticType.error("JSC_JSON_UNEXPECTED_TOKEN", "Unexpected JSON token");
 
   private final Map<String, String> packageJsonMainEntries;
-  private final Compiler compiler;
+  private final AbstractCompiler compiler;
 
   /**
    * Creates a new RewriteJsonToModule instance which can be used to rewrite JSON files to modules.
    *
    * @param compiler The compiler
    */
-  public RewriteJsonToModule(Compiler compiler) {
+  public RewriteJsonToModule(AbstractCompiler compiler) {
     this.compiler = compiler;
     this.packageJsonMainEntries = new HashMap<>();
   }
@@ -58,7 +61,7 @@ public class RewriteJsonToModule extends NodeTraversal.AbstractPostOrderCallback
    */
   @Override
   public void process(Node externs, Node root) {
-    Preconditions.checkState(root.isScript());
+    checkState(root.isScript());
     NodeTraversal.traverseEs6(compiler, root, this);
   }
 
@@ -66,7 +69,7 @@ public class RewriteJsonToModule extends NodeTraversal.AbstractPostOrderCallback
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
       case SCRIPT:
-        if (n.getChildCount() != 1) {
+        if (!n.hasOneChild()) {
           compiler.report(t.makeError(n, JSON_UNEXPECTED_TOKEN));
         } else {
           visitScript(t, n, parent);
@@ -103,18 +106,19 @@ public class RewriteJsonToModule extends NodeTraversal.AbstractPostOrderCallback
       // We wrapped the expression in parens so our first-line columns are off by one.
       // We need to correct for this.
       n.setCharno(n.getCharno() - 1);
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
   }
 
   /**
    * For script nodes of JSON objects, add a module variable assignment so the result is exported.
    *
-   * <p>If the file path ends with "/package.json", look for a "main" key in the object literal and
-   * track it as a module alias.
+   * <p>If the file path ends with "/package.json", look for main entries in their specified order
+   * in the object literal and track them as module aliases. Main entries default to "main" and can
+   * be overridden with the `--package_json_entry_names` option.
    */
   private void visitScript(NodeTraversal t, Node n, Node parent) {
-    if (n.getChildCount() != 1 || !n.getFirstChild().isExprResult()) {
+    if (!n.hasOneChild() || !n.getFirstChild().isExprResult()) {
       compiler.report(t.makeError(n, JSON_UNEXPECTED_TOKEN));
       return;
     }
@@ -135,13 +139,49 @@ public class RewriteJsonToModule extends NodeTraversal.AbstractPostOrderCallback
 
     String inputPath = t.getInput().getSourceFile().getOriginalPath();
     if (inputPath.endsWith("/package.json") && jsonObject.isObjectLit()) {
-      Node main = NodeUtil.getFirstPropMatchingKey(jsonObject, "main");
-      if (main != null && main.isString()) {
-        String dirName = inputPath.substring(0, inputPath.length() - "package.json".length());
-        packageJsonMainEntries.put(inputPath, dirName + main.getString());
+      List<String> possibleMainEntries = compiler.getOptions().getPackageJsonEntryNames();
+
+      for (String entryName : possibleMainEntries) {
+        Node entry = NodeUtil.getFirstPropMatchingKey(jsonObject, entryName);
+
+        if (entry != null && (entry.isString() || entry.isObjectLit())) {
+          String dirName = inputPath.substring(0, inputPath.length() - "package.json".length());
+
+          if (entry.isString()) {
+            packageJsonMainEntries.put(inputPath, dirName + entry.getString());
+            break;
+          } else if (entry.isObjectLit()) {
+            checkState(entryName.equals("browser"), entryName);
+
+            // don't break if we're processing a browser field that is an object literal
+            // because one of its entries may override the package.json main, which
+            // we will get in the next iteration.
+            processBrowserFieldAdvancedUsage(dirName, entry);
+          }
+        }
       }
     }
 
-    compiler.reportCodeChange();
+    t.reportCodeChange();
+  }
+
+  /**
+   * For browser field entries in package.json files that are used in an advanced manner
+   * (https://github.com/defunctzombie/package-browser-field-spec/#replace-specific-files---advanced),
+   * track the entries in that object literal as module file replacements.
+   */
+  private void processBrowserFieldAdvancedUsage(String dirName, Node entry) {
+    for (Node child : entry.children()) {
+      Node value = child.getFirstChild();
+
+      checkState(child.isStringKey() && (value.isString() || value.isFalse()));
+
+      String val =
+          value.isString()
+              ? dirName + value.getString()
+              : NodeModuleResolver.JSC_BROWSER_BLACKLISTED_MARKER;
+      // TODO: handle dots in paths (relative paths)
+      packageJsonMainEntries.put(dirName + child.getString(), val);
+    }
   }
 }

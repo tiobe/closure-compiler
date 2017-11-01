@@ -21,10 +21,11 @@ import static com.google.javascript.jscomp.lint.CheckRequiresAndProvidesSorted.P
 import static com.google.javascript.jscomp.lint.CheckRequiresAndProvidesSorted.REQUIRES_NOT_SORTED;
 
 import com.google.javascript.jscomp.Compiler;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.CompilerPass;
-import com.google.javascript.jscomp.Es6CompilerTestCase;
+import com.google.javascript.jscomp.CompilerTestCase;
 
-public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCase {
+public final class CheckRequiresAndProvidesSortedTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new CheckRequiresAndProvidesSorted(compiler);
@@ -33,6 +34,12 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
   @Override
   protected int getNumRepetitions() {
     return 1;
+  }
+
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
   }
 
   public void testNoWarning_require() {
@@ -62,9 +69,7 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
   }
 
   public void testWarning_require() {
-    testWarning("goog.require('a.c');\ngoog.require('a.b')", REQUIRES_NOT_SORTED,
-        "goog.require() statements are not sorted. The correct order is:\n\n"
-        + "goog.require('a.b');\ngoog.require('a.c');\n\n");
+    testWarning("goog.require('a.c');\ngoog.require('a.b')", REQUIRES_NOT_SORTED);
 
     testWarning("goog.require('a.c');\ngoog.require('a')", REQUIRES_NOT_SORTED);
   }
@@ -75,17 +80,7 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
             "goog.require('a.c');",
             "/** @suppress {extraRequire} */",
             "goog.require('a.b')"),
-        REQUIRES_NOT_SORTED,
-        LINE_JOINER.join(
-            "goog.require() statements are not sorted. The correct order is:",
-            "",
-            "/**",
-            " @suppress {extraRequire}",
-            " */",
-            "goog.require('a.b');",
-            "goog.require('a.c');",
-            "",
-            ""));
+        REQUIRES_NOT_SORTED);
   }
 
   public void testWarning_provide() {
@@ -107,7 +102,7 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
   }
 
   public void testGoogModule_shorthandAndStandalone() {
-    testWarningEs6(
+    testWarning(
         LINE_JOINER.join(
             "goog.module('m');",
             "",
@@ -121,7 +116,7 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
   }
 
   public void testGoogModule_destructuring() {
-    testWarningEs6(
+    testWarning(
         LINE_JOINER.join(
             "goog.module('m');",
             "",
@@ -134,8 +129,29 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
         REQUIRES_NOT_SORTED);
   }
 
+  public void testGoogModule_emptyDestructuring() {
+    testWarning(
+        LINE_JOINER.join(
+            "goog.module('m');",
+            "",
+            "const {FOO} = goog.require('example.constants');",
+            "const {} = goog.require('just.forthe.side.effects');",
+            "",
+            "alert(1);"),
+        REQUIRES_NOT_SORTED);
+
+    testNoWarning(
+        LINE_JOINER.join(
+            "goog.module('m');",
+            "",
+            "const {} = goog.require('just.forthe.side.effects');",
+            "const {FOO} = goog.require('example.constants');",
+            "",
+            "alert(1);"));
+  }
+
   public void testGoogModule_allThreeStyles() {
-    testWarningEs6(
+    testWarning(
         LINE_JOINER.join(
             "/** @fileoverview @suppress {extraRequire} */",
             "goog.module('m');",
@@ -157,13 +173,11 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
             "var c = goog.require('a.c');",
             "",
             "alert(1);"),
-        REQUIRES_NOT_SORTED,
-        "goog.require() statements are not sorted. The correct order is:\n\n"
-            + "var c = goog.require('a.c');\nvar d = goog.require('a.b.d');\n\n");
+        REQUIRES_NOT_SORTED);
   }
 
   public void testGoogModule_shorthand_destructuring() {
-    testWarningEs6(
+    testWarning(
         LINE_JOINER.join(
             "goog.module('m');",
             "",
@@ -188,6 +202,28 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
         REQUIRES_NOT_SORTED);
   }
 
+  public void testGoogModule_forwardDeclares() {
+    testWarning(
+        LINE_JOINER.join(
+            "goog.module('x');",
+            "",
+            "const s = goog.require('s');",
+            "const f = goog.forwardDeclare('f');",
+            "const r = goog.require('r');"),
+        REQUIRES_NOT_SORTED);
+  }
+
+  public void testForwardDeclares() {
+    testWarning(
+        LINE_JOINER.join(
+            "goog.provide('x');",
+            "",
+            "goog.require('s');",
+            "goog.forwardDeclare('f');",
+            "goog.require('r');"),
+        REQUIRES_NOT_SORTED);
+  }
+
   public void testDuplicate() {
     testWarning(
         LINE_JOINER.join(
@@ -197,7 +233,7 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
   }
 
   public void testDuplicate_shorthand() {
-    testWarningEs6(
+    testWarning(
         LINE_JOINER.join(
             "const Bar1 = goog.require('Bar');",
             "const Bar2 = goog.require('Bar');"),
@@ -205,10 +241,27 @@ public final class CheckRequiresAndProvidesSortedTest extends Es6CompilerTestCas
   }
 
   public void testDuplicate_destructuring() {
-    testWarningEs6(
+    testWarning(
         LINE_JOINER.join(
             "const Bar = goog.require('Bar');",
             "const {Foo} = goog.require('Bar');"),
         DUPLICATE_REQUIRE);
+  }
+
+  // Just make sure we don't crash.
+  public void testEmptyRequire() {
+    testSame("goog.require();");
+  }
+
+  // Compiler doesn't sort ES6 modules yet, because semantics not yet finalized.
+  // Simple test to make sure compiler does not crash.
+  public void testES6Modules() {
+    testSame(
+        LINE_JOINER.join(
+            "import foo from 'bar';",
+            "import bar from 'foo';",
+            "import * as a from 'b';",
+            "import {a, b} from 'c';",
+            "import 'foobar';"));
   }
 }

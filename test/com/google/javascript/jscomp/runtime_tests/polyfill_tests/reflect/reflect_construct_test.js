@@ -19,16 +19,10 @@ goog.setTestOnly();
 
 const testSuite = goog.require('goog.testing.testSuite');
 const testing = goog.require('jscomp.runtime_tests.polyfill_tests.testing');
-const userAgent = goog.require('goog.userAgent');
 
 const noCheck = testing.noCheck;
 
 testSuite({
-  shouldRunTests() {
-    // Not polyfilled to ES3
-    return !userAgent.IE || userAgent.isVersionOrHigher(9);
-  },
-
   testConstruct() {
     const Foo = class {
       constructor(a, b) {
@@ -64,7 +58,7 @@ testSuite({
   testConstruct_newTarget() {
     /** @constructor */
     let X = function() { this.target = null; };
-    /** @preserveTry */
+
     try {
       X = noCheck(eval('class { constructor() { this.target = new.target; } ' +
                        'x() { return 42; }}'));
@@ -85,4 +79,13 @@ testSuite({
     assertEquals(23, x.y());
     assertUndefined(noCheck(x).x);
   },
+
+  testChakraBug3217() {
+    // Tests workaround for https://github.com/Microsoft/ChakraCore/issues/3217
+    class Base {}
+    class Derived {}
+    assertFalse(new Base() instanceof Derived);
+    Reflect.construct(Base, [], Derived);
+    assertFalse(new Base() instanceof Derived);
+  }
 });

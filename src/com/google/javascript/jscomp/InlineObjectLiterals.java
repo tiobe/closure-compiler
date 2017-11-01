@@ -16,13 +16,11 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
 import com.google.javascript.jscomp.ReferenceCollectingCallback.Behavior;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.Reference;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.ReferenceCollection;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.ReferenceMap;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -62,7 +60,7 @@ class InlineObjectLiterals implements CompilerPass {
   @Override
   public void process(Node externs, Node root) {
     ReferenceCollectingCallback callback = new ReferenceCollectingCallback(
-        compiler, new InliningBehavior());
+        compiler, new InliningBehavior(), new Es6SyntacticScopeCreator(compiler));
     callback.process(externs, root);
   }
 
@@ -162,7 +160,7 @@ class InlineObjectLiterals implements CompilerPass {
         // since the function referenced by y might reference 'this').
         //
         if (parent.isGetProp()) {
-          Preconditions.checkState(parent.getFirstChild() == name);
+          checkState(parent.getFirstChild() == name);
           // A call target may be using the object as a 'this' value.
           if (grandparent.isCall()
               && grandparent.getFirstChild() == parent) {
@@ -185,7 +183,7 @@ class InlineObjectLiterals implements CompilerPass {
           // isn't a perfect algorithm, but it should catch most cases.
           String propName = parent.getLastChild().getString();
           if (!validProperties.contains(propName)) {
-            if (NodeUtil.isVarOrSimpleAssignLhs(parent, grandparent)) {
+            if (NodeUtil.isNameDeclOrSimpleAssignLhs(parent, grandparent)) {
               validProperties.add(propName);
             } else {
               return false;
@@ -222,6 +220,11 @@ class InlineObjectLiterals implements CompilerPass {
              child = child.getNext()) {
           if (child.isGetterDef() || child.isSetterDef()) {
             // ES5 get/set not supported.
+            return false;
+          }
+
+          // Don't inline computed property names
+          if (child.isComputedProp()) {
             return false;
           }
 
@@ -273,7 +276,7 @@ class InlineObjectLiterals implements CompilerPass {
         if (ref.isLvalue() || ref.isInitializingDeclaration()) {
           Node val = ref.getAssignedValue();
           if (val != null) {
-            Preconditions.checkState(val.isObjectLit());
+            checkState(val.isObjectLit(), val);
             for (Node child = val.getFirstChild(); child != null;
                  child = child.getNext()) {
               String varname = child.getString();
@@ -289,7 +292,7 @@ class InlineObjectLiterals implements CompilerPass {
           // This is the var. There is no value.
         } else {
           Node getprop = ref.getParent();
-          Preconditions.checkState(getprop.isGetProp());
+          checkState(getprop.isGetProp(), getprop);
 
           // The key being looked up in the original map.
           String varname = getprop.getLastChild().getString();
@@ -312,7 +315,7 @@ class InlineObjectLiterals implements CompilerPass {
      */
     private void fillInitialValues(Reference init, Map<String, Node> initvals) {
       Node object = init.getAssignedValue();
-      Preconditions.checkState(object.isObjectLit());
+      checkState(object.isObjectLit(), object);
       for (Node key = object.getFirstChild(); key != null;
            key = key.getNext()) {
         initvals.put(key.getString(), key.removeFirstChild());
@@ -330,7 +333,7 @@ class InlineObjectLiterals implements CompilerPass {
       List<Node> nodes = new ArrayList<>();
       Node val = ref.getAssignedValue();
       blacklistVarReferencesInTree(val, v.scope);
-      Preconditions.checkState(val.isObjectLit());
+      checkState(val.isObjectLit(), val);
       Set<String> all = new LinkedHashSet<>(varmap.keySet());
       for (Node key = val.getFirstChild(); key != null;
            key = key.getNext()) {
@@ -407,34 +410,36 @@ class InlineObjectLiterals implements CompilerPass {
         vnode = init.getParent();
         fillInitialValues(init, initvals);
       } else {
-        // TODO(user): More test / rewrite this part.
-        // Find the beginning of the function / script.
-        vnode = v.getScope().getClosestHoistScope().getRootNode().getLastChild().getFirstChild();
+        // Find the beginning of the function body / script.
+        vnode = v.getScope().getClosestHoistScope().getRootNode().getFirstChild();
       }
+      checkState(NodeUtil.isStatement(vnode), vnode);
 
       for (Map.Entry<String, String> entry : varmap.entrySet()) {
         Node val = initvals.get(entry.getKey());
-        Node varnode = NodeUtil.newVarNode(entry.getValue(), val);
+        Node newVarNode = NodeUtil.newVarNode(entry.getValue(), val);
         if (val == null) {
           // is this right?
-          varnode.useSourceInfoIfMissingFromForTree(vnode);
+          newVarNode.useSourceInfoIfMissingFromForTree(vnode);
         } else {
           blacklistVarReferencesInTree(val, v.scope);
         }
-        vnode.getParent().addChildBefore(varnode, vnode);
+        vnode.getParent().addChildBefore(newVarNode, vnode);
         compiler.reportChangeToEnclosingScope(vnode);
       }
 
       if (defined) {
-        vnode.getParent().removeChild(vnode);
+        compiler.reportChangeToEnclosingScope(vnode.getParent());
+        vnode.detach();
       }
 
       for (Reference ref : referenceInfo.references) {
-        compiler.reportChangeToEnclosingScope(ref.getNode());
+
         // The init/decl have already been converted.
         if (defined && ref == init) {
           continue;
         }
+        compiler.reportChangeToEnclosingScope(ref.getNode());
 
         if (ref.isLvalue()) {
           // Assignments have to be handled specially, since they
@@ -447,14 +452,14 @@ class InlineObjectLiterals implements CompilerPass {
         } else {
           // Make sure that the reference is a GETPROP as we expect it to be.
           Node getprop = ref.getParent();
-          Preconditions.checkState(getprop.isGetProp());
+          checkState(getprop.isGetProp(), getprop);
 
           // The key being looked up in the original map.
           String var = getprop.getSecondChild().getString();
 
           // If the variable hasn't already been declared, add an empty
           // declaration near all the other declarations.
-          Preconditions.checkState(varmap.containsKey(var));
+          checkState(varmap.containsKey(var));
 
           // Replace the GETPROP node with a NAME.
           Node replacement = IR.name(varmap.get(var));

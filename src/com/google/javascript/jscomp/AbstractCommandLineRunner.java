@@ -16,6 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
@@ -23,7 +26,6 @@ import com.google.common.annotations.GwtIncompatible;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
@@ -37,16 +39,17 @@ import com.google.gson.stream.JsonWriter;
 import com.google.javascript.jscomp.CompilerOptions.JsonStreamMode;
 import com.google.javascript.jscomp.CompilerOptions.OutputJs;
 import com.google.javascript.jscomp.CompilerOptions.TweakProcessing;
-import com.google.javascript.jscomp.deps.ClosureBundler;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.deps.SourceCodeEscapers;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.TokenStream;
 import com.google.protobuf.CodedOutputStream;
 import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.Flushable;
 import java.io.IOException;
@@ -116,6 +119,14 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       "JSC_OUTPUT_SAME_AS_INPUT_ERROR",
       "Bad output file (already listed as input file): {0}");
 
+  static final DiagnosticType COULD_NOT_SERIALIZE_AST = DiagnosticType.error(
+      "JSC_COULD_NOT_SERIALIZE_AST",
+      "Could not serialize ast to: {0}");
+
+  static final DiagnosticType COULD_NOT_DESERIALIZE_AST = DiagnosticType.error(
+      "JSC_COULD_NOT_DESERIALIZE_AST",
+      "Could not deserialize ast from: {0}");
+
   static final DiagnosticType NO_TREE_GENERATED_ERROR = DiagnosticType.error(
       "JSC_NO_TREE_GENERATED_ERROR",
       "Code contains errors. No tree was generated.");
@@ -179,9 +190,9 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
 
   AbstractCommandLineRunner(InputStream in, PrintStream out, PrintStream err) {
     this.config = new CommandLineConfig();
-    this.in = Preconditions.checkNotNull(in);
-    this.defaultJsOutput = Preconditions.checkNotNull(out);
-    this.err = Preconditions.checkNotNull(err);
+    this.in = checkNotNull(in);
+    this.defaultJsOutput = checkNotNull(out);
+    this.err = checkNotNull(err);
     this.gson = new Gson();
   }
 
@@ -201,8 +212,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       Supplier<List<SourceFile>> inputsSupplier,
       Supplier<List<JSModule>> modulesSupplier,
       Function<Integer, Void> exitCodeReceiver) {
-    Preconditions.checkArgument(
-        inputsSupplier == null ^ modulesSupplier == null);
+    checkArgument(inputsSupplier == null ^ modulesSupplier == null);
     testMode = true;
     this.externsSupplierForTesting = externsSupplier;
     this.inputsSupplierForTesting = inputsSupplier;
@@ -215,7 +225,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
    *    problem during execution or 0i to indicate success.
    */
   public void setExitCodeReceiver(Function<Integer, Void> newExitCodeReceiver) {
-    this.exitCodeReceiver = Preconditions.checkNotNull(newExitCodeReceiver);
+    this.exitCodeReceiver = checkNotNull(newExitCodeReceiver);
   }
 
   /**
@@ -427,7 +437,6 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
     options.processCommonJSModules = config.processCommonJSModules;
     options.moduleRoots = config.moduleRoots;
     options.angularPass = config.angularPass;
-    options.tracer = config.tracerMode;
     options.setNewTypeInference(config.useNewTypeInference);
     options.instrumentationTemplateFile = config.instrumentationTemplateFile;
   }
@@ -448,7 +457,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       // In some environments, the externs.zip is relative to this class.
       input = AbstractCommandLineRunner.class.getResourceAsStream("externs.zip");
     }
-    Preconditions.checkNotNull(input);
+    checkNotNull(input);
 
     ZipInputStream zip = new ZipInputStream(input);
     String envPrefix = env.toString().toLowerCase() + "/";
@@ -485,12 +494,9 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
    * compiler.
    */
   public final void run() {
-    int result = 0;
-    int runs = 1;
+    int result;
     try {
-      for (int i = 0; i < runs && result == 0; i++) {
-        result = doRun();
-      }
+      result = doRun();
     } catch (AbstractCommandLineRunner.FlagUsageException e) {
       err.println(e.getMessage());
       result = -1;
@@ -605,8 +611,6 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       } else {
         SourceFile firstSourceFile = sourceFilesByName.get(relativePath);
         if (firstSourceFile.getCode().equals(sourceFile.getCode())) {
-          errors.add(JSError.make(
-              SourceFile.DUPLICATE_ZIP_CONTENTS, firstSourceFile.getName(), sourceFile.getName()));
           fileIterator.remove();
           if (currentModule != null) {
             currentModule.numJsFiles--;
@@ -651,6 +655,17 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       if (file.flag == JsSourceType.JS_ZIP) {
         if (!"-".equals(filename)) {
           List<SourceFile> newFiles = SourceFile.fromZipFile(filename, inputCharset);
+          // Update the manifest maps for new zip entries.
+          if (rootRelativePathsMap.containsKey(filename)) {
+            String rootFilename = rootRelativePathsMap.get(filename);
+            for (SourceFile zipEntry : newFiles) {
+              String zipEntryName = zipEntry.getName();
+              checkState(zipEntryName.contains(filename));
+              String zipmap = zipEntryName.replace(filename, rootFilename);
+              rootRelativePathsMap.put(zipEntryName, zipmap);
+            }
+          }
+
           inputs.addAll(newFiles);
           if (jsModuleSpec != null) {
             jsModuleSpec.numJsFiles += newFiles.size() - 1;
@@ -758,9 +773,9 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       return modulesSupplierForTesting.get();
     }
 
-    Preconditions.checkState(specs != null);
-    Preconditions.checkState(!specs.isEmpty());
-    Preconditions.checkState(inputs != null);
+    checkState(specs != null);
+    checkState(!specs.isEmpty());
+    checkState(inputs != null);
 
     List<String> moduleNames = new ArrayList<>(specs.size());
     Map<String, JSModule> modulesByName = new LinkedHashMap<>();
@@ -864,7 +879,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
    *         will have the empty string as their value in this map.
    */
   static Map<String, String> parseModuleWrappers(List<String> specs, List<JSModule> modules) {
-    Preconditions.checkState(specs != null);
+    checkState(specs != null);
 
     Map<String, String> wrappers = Maps.newHashMapWithExpectedSize(modules.size());
 
@@ -888,10 +903,13 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
         throw new FlagUsageException("Unknown module: '" + name + "'");
       }
       String wrapper = spec.substring(pos + 1);
+      // Support for %n% and %output%
+      wrapper = wrapper.replace("%output%", "%s").replace("%n%", "\n");
       if (!wrapper.contains("%s")) {
         throw new FlagUsageException("No %s placeholder in module wrapper: '"
             + wrapper + "'");
       }
+
       wrappers.put(name, wrapper);
     }
     return wrappers;
@@ -912,9 +930,28 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
 
     String fileName = getModuleOutputFileName(m);
     String baseName = new File(fileName).getName();
-    writeOutput(out, compiler, compiler.toSource(m),
+    writeOutput(out, compiler, m,
         parsedModuleWrappers.get(m.getName()).replace("%basename%", baseName),
         "%s", null);
+  }
+
+  /**
+   * Writes code to an output stream, optionally wrapping it in an arbitrary
+   * wrapper that contains a placeholder where the code should be inserted.
+   * @param module Which module to write. If this is null, write the entire AST.
+   */
+  static void writeOutput(Appendable out, Compiler compiler, @Nullable JSModule module,
+      String wrapper, String codePlaceholder,
+      @Nullable Function<String, String> escaper)
+      throws IOException {
+    if (compiler.getOptions().outputJs == OutputJs.SENTINEL) {
+      out.append("// No JS output because the compiler was run in checks-only mode.\n");
+      return;
+    }
+    checkState(compiler.getOptions().outputJs == OutputJs.NORMAL);
+
+    String code = module == null ? compiler.toSource() : compiler.toSource(module);
+    writeOutput(out, compiler, code, wrapper, codePlaceholder, escaper);
   }
 
   /**
@@ -925,12 +962,6 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       String wrapper, String codePlaceholder,
       @Nullable Function<String, String> escaper)
       throws IOException {
-    if (compiler.getOptions().outputJs == OutputJs.SENTINEL) {
-      out.append("// No JS output because the compiler was run in checks-only mode.\n");
-      return;
-    }
-    Preconditions.checkState(compiler.getOptions().outputJs == OutputJs.NORMAL);
-
     int pos = wrapper.indexOf(codePlaceholder);
     if (pos != -1) {
       String prefix = "";
@@ -1014,6 +1045,8 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
 
     setRunOptions(options);
 
+    rootRelativePathsMap = constructRootRelativePathsMap();
+
     boolean writeOutputToFile = !config.jsOutputFile.isEmpty();
     List<String> outputFileNames = new ArrayList<>();
     if (writeOutputToFile) {
@@ -1066,19 +1099,36 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
         outputFileNames.add(getModuleOutputFileName(m));
       }
 
-      if (config.skipNormalOutputs) {
-        compiler.initModules(externs, modules, options);
-        compiler.orderInputsWithLargeStack();
-      } else {
-        result = compiler.compileModules(externs, modules, options);
+      compiler.initModules(externs, modules, options);
+    } else {
+      compiler.init(externs, inputs, options);
+    }
+
+    if (options.printConfig) {
+      compiler.printConfig(System.err);
+    }
+
+
+    String saveAfterChecksFilename = config.getSaveAfterChecksFileName();
+    String continueSavedCompilationFilename = config.getContinueSavedCompilationFileName();
+    if (config.skipNormalOutputs) {
+      // TODO(bradfordcsmith): Should we be ignoring possible init/initModules() errors here?
+      compiler.orderInputsWithLargeStack();
+    } else if (compiler.hasErrors()) {
+      // init() or initModules() encountered an error.
+      compiler.generateReport();
+      result = compiler.getResult();
+    } else if (options.getInstrumentForCoverageOnly()) {
+      result = instrumentForCoverage();
+    } else if (saveAfterChecksFilename != null) {
+      result = performStage1andSave(saveAfterChecksFilename);
+    } else if (continueSavedCompilationFilename != null) {
+      result = restoreAndPerformStage2(continueSavedCompilationFilename);
+      if (modules != null) {
+        modules = compiler.getModules();
       }
     } else {
-      if (config.skipNormalOutputs) {
-        compiler.init(externs, inputs, options);
-        compiler.orderInputsWithLargeStack();
-      } else {
-        result = compiler.compile(externs, inputs, options);
-      }
+      result = performFullCompilation();
     }
 
     if (createCommonJsModules) {
@@ -1099,6 +1149,81 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
     }
 
     return processResults(result, modules, options);
+  }
+
+  private Result performStage1andSave(String filename) {
+    Result result;
+    try (BufferedOutputStream serializedOutputStream =
+        new BufferedOutputStream(new FileOutputStream(filename))) {
+      compiler.parseForCompilation();
+      if (!compiler.hasErrors()) {
+        compiler.stage1Passes();
+        compiler.saveState(serializedOutputStream);
+        compiler.performPostCompilationTasks();
+      }
+    } catch (IOException e) {
+      compiler.report(JSError.make(COULD_NOT_SERIALIZE_AST, filename));
+    } finally {
+      // Make sure we generate a report of errors and warnings even if the compiler throws an
+      // exception somewhere.
+      compiler.generateReport();
+    }
+    result = compiler.getResult();
+    return result;
+  }
+
+  private Result restoreAndPerformStage2(String filename) {
+    Result result;
+    try (BufferedInputStream serializedInputStream =
+        new BufferedInputStream(new FileInputStream(filename))) {
+      compiler.restoreState(serializedInputStream);
+      if (!compiler.hasErrors()) {
+          compiler.stage2Passes();
+      }
+      compiler.performPostCompilationTasks();
+    } catch (IOException | ClassNotFoundException e) {
+      compiler.report(JSError.make(COULD_NOT_DESERIALIZE_AST, filename));
+    } finally {
+      // Make sure we generate a report of errors and warnings even if the compiler throws an
+      // exception somewhere.
+      compiler.generateReport();
+    }
+    result = compiler.getResult();
+    return result;
+  }
+
+  private Result performFullCompilation() {
+    Result result;
+    try {
+      compiler.parseForCompilation();
+      if (!compiler.hasErrors()) {
+        compiler.stage1Passes();
+        if (!compiler.hasErrors()) {
+          compiler.stage2Passes();
+        }
+        compiler.performPostCompilationTasks();
+      }
+    } finally {
+      // Make sure we generate a report of errors and warnings even if the compiler throws an
+      // exception somewhere.
+      compiler.generateReport();
+    }
+    result = compiler.getResult();
+    return result;
+  }
+
+  private Result instrumentForCoverage() {
+    Result result;
+    try {
+      compiler.parseForCompilation();
+      if (!compiler.hasErrors()) {
+        compiler.instrumentForCoverage();
+      }
+    } finally {
+      compiler.generateReport();
+    }
+    result = compiler.getResult();
+    return result;
   }
 
   /**
@@ -1144,8 +1269,6 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
         return 0;
       }
     }
-
-    rootRelativePathsMap = constructRootRelativePathsMap();
 
     if (config.skipNormalOutputs) {
       // Output the manifest and bundle files if requested.
@@ -1213,13 +1336,13 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
     if (isOutputInJson()) {
       this.filesToStreamOut.add(createJsonFile(options, marker, escaper));
     } else {
-      if(!config.jsOutputFile.isEmpty()) {
+      if (!config.jsOutputFile.isEmpty()) {
         maybeCreateDirsForPath(config.jsOutputFile);
       }
 
       Appendable jsOutput = createDefaultOutput();
       writeOutput(
-          jsOutput, compiler, compiler.toSource(), config.outputWrapper,
+          jsOutput, compiler, (JSModule) null, config.outputWrapper,
           marker, escaper);
       closeAppendable(jsOutput);
     }
@@ -1233,7 +1356,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       Function<String, String> escaper) throws IOException {
     Appendable jsOutput = new StringBuilder();
     writeOutput(
-        jsOutput, compiler, compiler.toSource(), config.outputWrapper,
+        jsOutput, compiler, (JSModule) null, config.outputWrapper,
         outputMarker, escaper);
 
     JsonFileSpec jsonOutput = new JsonFileSpec(jsOutput.toString(),
@@ -1395,8 +1518,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
   }
 
   protected List<SourceFile> createExterns(CompilerOptions options) throws IOException {
-    return isInTestMode() ? externsSupplierForTesting.get() :
-        createExternInputs(config.externs);
+    return isInTestMode() ? externsSupplierForTesting.get() : createExternInputs(config.externs);
   }
 
   /**
@@ -1621,7 +1743,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
     if (!config.variableMapOutputFile.isEmpty()) {
       if (variableMapOutputPath != null) {
         throw new FlagUsageException("The flags variable_map_output_file and "
-            + "create_name_map_files cannot both be used simultaniously.");
+            + "create_name_map_files cannot both be used simultaneously.");
       }
 
       variableMapOutputPath = config.variableMapOutputFile;
@@ -1630,7 +1752,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
     if (!config.propertyMapOutputFile.isEmpty()) {
       if (propertyMapOutputPath != null) {
         throw new FlagUsageException("The flags property_map_output_file and "
-            + "create_name_map_files cannot both be used simultaniously.");
+            + "create_name_map_files cannot both be used simultaneously.");
       }
 
       propertyMapOutputPath = config.propertyMapOutputFile;
@@ -1659,8 +1781,16 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
    * Outputs the string map generated by the {@link ReplaceStrings} pass if an output path exists.
    */
   private void outputStringMap() throws IOException {
-    if (!config.stringMapOutputPath.isEmpty() && compiler.getStringMap() != null) {
-      compiler.getStringMap().save(config.stringMapOutputPath);
+    if (!config.stringMapOutputPath.isEmpty()) {
+      if (compiler.getStringMap() == null) {
+        // Ensure an empty file is created if there is no string map.
+        // This avoids confusing some build tools that expect to see the file, even if it is empty.
+        if (!(new File(config.stringMapOutputPath).createNewFile())) {
+          throw new IOException("Could not create file: " + config.stringMapOutputPath);
+        }
+      } else {
+        compiler.getStringMap().save(config.stringMapOutputPath);
+      }
     }
   }
 
@@ -1858,7 +1988,8 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
    * Prints a list of input names (using root-relative paths), delimited by
    * newlines, to the manifest file.
    */
-  private void printManifestTo(Iterable<CompilerInput> inputs, Appendable out)
+  @VisibleForTesting
+  void printManifestTo(Iterable<CompilerInput> inputs, Appendable out)
       throws IOException {
     for (CompilerInput input : inputs) {
       String rootRelativePath = rootRelativePathsMap.get(input.getName());
@@ -1877,7 +2008,6 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
   @VisibleForTesting
   void printBundleTo(Iterable<CompilerInput> inputs, Appendable out)
       throws IOException {
-    ClosureBundler bundler = new ClosureBundler();
 
     for (CompilerInput input : inputs) {
       // Every module has an empty file in it. This makes it easier to implement
@@ -1893,7 +2023,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       // make all the other cases simpler.
       if (input.getName().equals(
               Compiler.createFillFileName(Compiler.SINGLETON_MODULE_NAME))) {
-        Preconditions.checkState(1 == Iterables.size(inputs));
+        checkState(1 == Iterables.size(inputs));
         return;
       }
 
@@ -1905,7 +2035,14 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       out.append(displayName);
       out.append("\n");
 
-      bundler.appendTo(out, input, input.getSourceFile().getCodeCharSource());
+      if (input.isModule()) {
+        // TODO(sdh): This is copied from ClosureBundler
+        out.append("goog.loadModule(function(exports) {'use strict';");
+        out.append(input.getSourceFile().getCode());
+        out.append("\n;return exports;});\n");
+      } else {
+        out.append(input.getSourceFile().getCode());
+      }
 
       out.append("\n");
     }
@@ -1919,10 +2056,10 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
     Map<String, String> rootRelativePathsMap = new LinkedHashMap<>();
     for (String mapString : config.manifestMaps) {
       int colonIndex = mapString.indexOf(':');
-      Preconditions.checkState(colonIndex > 0);
+      checkState(colonIndex > 0);
       String execPath = mapString.substring(0, colonIndex);
       String rootRelativePath = mapString.substring(colonIndex + 1);
-      Preconditions.checkState(rootRelativePath.indexOf(':') == -1);
+      checkState(rootRelativePath.indexOf(':') == -1);
       rootRelativePathsMap.put(execPath, rootRelativePath);
     }
     return rootRelativePathsMap;
@@ -1966,7 +2103,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
 
     private CompilerOptions.DevMode jscompDevMode = CompilerOptions.DevMode.OFF;
 
-    /** Turns on extra sanity checks */
+    /** Turns on extra validity checks */
     public CommandLineConfig setJscompDevMode(CompilerOptions.DevMode jscompDevMode) {
       this.jscompDevMode = jscompDevMode;
       return this;
@@ -2041,6 +2178,34 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
       return this;
     }
 
+    private String continueSavedCompilationFileName = null;
+
+    /**
+     * Set the compiler to resume a saved compilation state from a file.
+     */
+    public CommandLineConfig setContinueSavedCompilationFileName(String fileName) {
+      continueSavedCompilationFileName = fileName;
+      return this;
+    }
+
+    String getContinueSavedCompilationFileName() {
+      return continueSavedCompilationFileName;
+    }
+
+    private String saveAfterChecksFileName = null;
+
+    /**
+     * Set the compiler to perform the first phase and save the intermediate result to a file.
+     */
+    public CommandLineConfig setSaveAfterChecksFileName(String fileName) {
+      saveAfterChecksFileName = fileName;
+      return this;
+    }
+
+    public String getSaveAfterChecksFileName() {
+      return saveAfterChecksFileName;
+    }
+
     private final List<String> module = new ArrayList<>();
 
     /**
@@ -2067,8 +2232,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
 
     private boolean parseInlineSourceMaps = false;
 
-    public CommandLineConfig setParseInlineSourceMaps(
-        boolean parseInlineSourceMaps) {
+    public CommandLineConfig setParseInlineSourceMaps(boolean parseInlineSourceMaps) {
       this.parseInlineSourceMaps = parseInlineSourceMaps;
       return this;
     }
@@ -2341,7 +2505,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
      * those files and sort them in dependency order.
      */
     public CommandLineConfig setEntryPoints(List<ModuleIdentifier> entryPoints) {
-      Preconditions.checkNotNull(entryPoints);
+      checkNotNull(entryPoints);
       this.entryPoints = entryPoints;
       return this;
     }
@@ -2493,14 +2657,6 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
      */
     public CommandLineConfig setAngularPass(boolean angularPass) {
       this.angularPass = angularPass;
-      return this;
-    }
-
-    private CompilerOptions.TracerMode tracerMode =
-        CompilerOptions.TracerMode.OFF;
-
-    public CommandLineConfig setTracerMode(CompilerOptions.TracerMode tracerMode) {
-      this.tracerMode = tracerMode;
       return this;
     }
 
@@ -2710,7 +2866,7 @@ public abstract class AbstractCommandLineRunner<A extends Compiler,
 
     @Override
     public Void apply(Integer exitCode) {
-      int exitCodeValue = Preconditions.checkNotNull(exitCode);
+      int exitCodeValue = checkNotNull(exitCode);
       // Don't spuriously report success.
       // Posix conventions only guarantee that 8b are significant.
       byte exitCodeByte = (byte) exitCodeValue;

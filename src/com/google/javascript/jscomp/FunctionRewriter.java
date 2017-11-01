@@ -100,8 +100,9 @@ class FunctionRewriter implements CompilerPass {
         }
 
         Node addingRoot = compiler.getNodeForCodeInsertion(null);
+        NodeUtil.markNewScopesChanged(helperCode, compiler);
         addingRoot.addChildToFront(helperCode);
-        compiler.reportCodeChange();
+        compiler.reportChangeToEnclosingScope(addingRoot);
       }
     }
   }
@@ -141,7 +142,8 @@ class FunctionRewriter implements CompilerPass {
      */
     void apply() {
       parent.replaceChild(oldChild, newChild);
-      compiler.reportCodeChange();
+      NodeUtil.markFunctionsDeleted(oldChild, compiler);
+      compiler.reportChangeToEnclosingScope(newChild);
     }
 
     /**

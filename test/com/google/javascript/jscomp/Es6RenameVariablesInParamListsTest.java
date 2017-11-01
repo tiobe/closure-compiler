@@ -26,9 +26,10 @@ import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 public final class Es6RenameVariablesInParamListsTest extends CompilerTestCase {
 
   @Override
-  public void setUp() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
-    runTypeCheckAfterProcessing = true;
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
+    enableRunTypeCheckAfterProcessing();
   }
 
   @Override
@@ -39,7 +40,7 @@ public final class Es6RenameVariablesInParamListsTest extends CompilerTestCase {
   }
 
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new Es6RenameVariablesInParamLists(compiler);
   }
 
@@ -137,13 +138,7 @@ public final class Es6RenameVariablesInParamListsTest extends CompilerTestCase {
             "  return w$0;",
             "}"));
 
-    test(
-        LINE_JOINER.join(
-            "function x() {}",
-            "function f(y=(function () { w = 5; return w; }())) {",
-            "  w;",
-            "  return w;",
-            "}"),
+    testSame(
         LINE_JOINER.join(
             "function x() {}",
             "function f(y=(function () { w = 5; return w; }())) {",

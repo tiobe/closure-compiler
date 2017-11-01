@@ -16,10 +16,13 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-
+import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.jstype.JSTypeNative;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -53,9 +56,9 @@ class GenerateExports implements CompilerPass {
       boolean allowNonGlobalExports,
       String exportSymbolFunction,
       String exportPropertyFunction) {
-    Preconditions.checkNotNull(compiler);
-    Preconditions.checkNotNull(exportSymbolFunction);
-    Preconditions.checkNotNull(exportPropertyFunction);
+    checkNotNull(compiler);
+    checkNotNull(exportSymbolFunction);
+    checkNotNull(exportPropertyFunction);
 
     this.compiler = compiler;
     this.allowNonGlobalExports = allowNonGlobalExports;
@@ -87,12 +90,14 @@ class GenerateExports implements CompilerPass {
   }
 
   private void addExtern(String export) {
-    Node propstmt = IR.exprResult(
-        IR.getprop(NodeUtil.newQName(compiler, "Object.prototype"), IR.string(export)));
+    Node objectPrototype = NodeUtil.newQName(compiler, "Object.prototype");
+    TypeI objCtor = compiler.getTypeIRegistry().getNativeType(JSTypeNative.OBJECT_FUNCTION_TYPE);
+    objectPrototype.getFirstChild().setTypeI(objCtor);
+    Node propstmt = IR.exprResult(IR.getprop(objectPrototype, IR.string(export)));
     propstmt.useSourceInfoFromForTree(getSynthesizedExternsRoot());
     propstmt.setOriginalName(export);
     getSynthesizedExternsRoot().addChildToBack(propstmt);
-    compiler.reportCodeChange();
+    compiler.reportChangeToEnclosingScope(propstmt);
   }
 
   private void recordExportSymbol(String qname) {
@@ -171,8 +176,6 @@ class GenerateExports implements CompilerPass {
     annotate(expression);
 
     addStatement(context, expression);
-
-    compiler.reportCodeChange();
   }
 
   private void addStatement(Node context, Node stmt) {
@@ -199,6 +202,7 @@ class GenerateExports implements CompilerPass {
 
     Node block = exprRoot.getParent();
     block.addChildAfter(stmt, exprRoot);
+    compiler.reportChangeToEnclosingScope(stmt);
   }
 
   private void annotate(Node node) {
@@ -213,7 +217,7 @@ class GenerateExports implements CompilerPass {
    * @return property name.
    */
   private static String getPropertyName(Node node) {
-    Preconditions.checkArgument(node.isGetProp() || node.getParent().isMemberFunctionDef());
+    checkArgument(node.isGetProp() || node.getParent().isMemberFunctionDef());
     if (node.isGetProp()) {
       return node.getLastChild().getString();
     } else {

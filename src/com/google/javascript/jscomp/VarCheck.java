@@ -16,14 +16,14 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
+import com.google.javascript.jscomp.Es6SyntacticScopeCreator.RedeclarationHandler;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
-import com.google.javascript.jscomp.SyntacticScopeCreator.RedeclarationHandler;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.Node;
-
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
@@ -74,7 +74,7 @@ class VarCheck extends AbstractPostOrderCallback implements
   static final DiagnosticType VAR_MULTIPLY_DECLARED_ERROR =
       DiagnosticType.error(
           "JSC_VAR_MULTIPLY_DECLARED_ERROR",
-          "Variable {0} first declared in {1}");
+          "Variable {0} declared more than once. First occurrence: {1}");
 
   static final DiagnosticType VAR_ARGUMENTS_SHADOWED_ERROR =
     DiagnosticType.error(
@@ -97,8 +97,8 @@ class VarCheck extends AbstractPostOrderCallback implements
 
   private final AbstractCompiler compiler;
 
-  // Whether this is the post-processing sanity check.
-  private final boolean sanityCheck;
+  // Whether this is the post-processing validity check.
+  private final boolean validityCheck;
 
   // Whether extern checks emit error.
   private final boolean strictExternCheck;
@@ -109,20 +109,19 @@ class VarCheck extends AbstractPostOrderCallback implements
     this(compiler, false);
   }
 
-  VarCheck(AbstractCompiler compiler, boolean sanityCheck) {
+  VarCheck(AbstractCompiler compiler, boolean validityCheck) {
     this.compiler = compiler;
     this.strictExternCheck = compiler.getErrorLevel(
         JSError.make("", 0, 0, UNDEFINED_EXTERN_VAR_ERROR)) == CheckLevel.ERROR;
-    this.sanityCheck = sanityCheck;
+    this.validityCheck = validityCheck;
   }
 
   /**
-   * Create a SyntacticScopeCreator. If not in sanity check mode, use a
-   * {@link RedeclarationCheckHandler} to check var redeclarations.
-   * @return the SyntacticScopeCreator
+   * Creates the scope creator used by this pass. If not in validity check mode, use a {@link
+   * RedeclarationCheckHandler} to check var redeclarations.
    */
   private ScopeCreator createScopeCreator() {
-    if (sanityCheck) {
+    if (validityCheck) {
       return new Es6SyntacticScopeCreator(compiler);
     } else {
       dupHandler = new RedeclarationCheckHandler();
@@ -136,7 +135,7 @@ class VarCheck extends AbstractPostOrderCallback implements
     // Don't run externs-checking in sanity check mode. Normalization will
     // remove duplicate VAR declarations, which will make
     // externs look like they have assigns.
-    if (!sanityCheck) {
+    if (!validityCheck) {
       NodeTraversal traversal = new NodeTraversal(
           compiler, new NameRefInExternsCheck(), scopeCreator);
       traversal.traverse(externs);
@@ -155,7 +154,7 @@ class VarCheck extends AbstractPostOrderCallback implements
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    Preconditions.checkState(scriptRoot.isScript());
+    checkState(scriptRoot.isScript());
     ScopeCreator scopeCreator = createScopeCreator();
     NodeTraversal t = new NodeTraversal(compiler, this, scopeCreator);
     // Note we use the global scope to prevent wrong "undefined-var errors" on
@@ -172,8 +171,8 @@ class VarCheck extends AbstractPostOrderCallback implements
 
       // Only a function can have an empty name.
       if (varName.isEmpty()) {
-        Preconditions.checkState(parent.isFunction());
-        Preconditions.checkState(NodeUtil.isFunctionExpression(parent));
+        checkState(parent.isFunction());
+        checkState(NodeUtil.isFunctionExpression(parent));
         return;
       }
 
@@ -194,17 +193,24 @@ class VarCheck extends AbstractPostOrderCallback implements
       Var var = scope.getVar(varName);
       if (var == null) {
         if (NodeUtil.isFunctionExpression(parent)
-            || NodeUtil.isClassExpression(parent) && n == parent.getFirstChild()) {
+            || (NodeUtil.isClassExpression(parent) && n == parent.getFirstChild())) {
           // e.g. [ function foo() {} ], it's okay if "foo" isn't defined in the
           // current scope.
+        } else if (NodeUtil.isNonlocalModuleExportName(n)) {
+          // e.g. "export {a as b}" or "import {b as a} from './foo.js'
+          // where b is defined in a module's export entries but not in any module scope.
         } else {
-          boolean isArguments = scope.isLocal() && ARGUMENTS.equals(varName);
+          boolean isArguments = scope.isFunctionScope() && ARGUMENTS.equals(varName);
           // The extern checks are stricter, don't report a second error.
           if (!isArguments && !(strictExternCheck && t.getInput().isExtern())) {
             t.report(n, UNDEFINED_VAR_ERROR, varName);
           }
 
-          if (sanityCheck) {
+          if (validityCheck) {
+            // When the code is initially traversed, any undeclared variables are treated as
+            // externs. During this sanity check, we ensure that all variables have either been
+            // declared or marked as an extern. A failure at this point means that we have created
+            // some variable/generated some code with an undefined reference.
             throw new IllegalStateException("Unexpected variable " + varName);
           } else {
             createSynthesizedExternVar(varName);
@@ -225,7 +231,7 @@ class VarCheck extends AbstractPostOrderCallback implements
       JSModule currModule = currInput.getModule();
       JSModule varModule = varInput.getModule();
       JSModuleGraph moduleGraph = compiler.getModuleGraph();
-      if (!sanityCheck && varModule != currModule && varModule != null && currModule != null) {
+      if (!validityCheck && varModule != currModule && varModule != null && currModule != null) {
         if (moduleGraph.dependsOn(currModule, varModule)) {
           // The module dependency was properly declared.
         } else {
@@ -267,8 +273,9 @@ class VarCheck extends AbstractPostOrderCallback implements
       nameNode.putBooleanProp(Node.IS_CONSTANT_NAME, true);
     }
 
-    getSynthesizedExternsRoot(compiler).addChildToBack(IR.var(nameNode));
-    compiler.reportCodeChange();
+    Node syntheticExternVar = IR.var(nameNode);
+    getSynthesizedExternsRoot(compiler).addChildToBack(syntheticExternVar);
+    compiler.reportChangeToEnclosingScope(syntheticExternVar);
   }
 
   /**
@@ -295,7 +302,15 @@ class VarCheck extends AbstractPostOrderCallback implements
           case FUNCTION:
           case CLASS:
           case PARAM_LIST:
+          case DEFAULT_VALUE:
+          case REST:
+          case ARRAY_PATTERN:
             // These are okay.
+            return;
+          case STRING_KEY:
+            if (parent.getParent().isObjectPattern()) {
+              return;
+            }
             break;
           case GETPROP:
             if (n == parent.getFirstChild()) {
@@ -306,30 +321,37 @@ class VarCheck extends AbstractPostOrderCallback implements
                 varsToDeclareInExterns.add(n.getString());
               }
             }
-            break;
-         case ASSIGN:
+            return;
+          case ASSIGN:
             // Don't warn for the "window.foo = foo;" nodes added by
             // DeclaredGlobalExternsOnWindow, nor for alias declarations
             // of the form "/** @const */ ns.Foo = Bar;"
             if (n == parent.getLastChild() && n.isQualifiedName()
                 && parent.getFirstChild().isQualifiedName()) {
-              break;
-            }
-            // fall through
-          default:
-            // Don't warn for simple var assignments "/** @const */ var foo = bar;"
-            // They are used to infer the types of namespace aliases.
-            if (!parent.isName() || parent.getParent() == null
-                || !NodeUtil.isNameDeclaration(parent.getParent())) {
-              t.report(n, NAME_REFERENCE_IN_EXTERNS_ERROR, n.getString());
-            }
-
-            Scope scope = t.getScope();
-            Var var = scope.getVar(n.getString());
-            if (var == null) {
-              varsToDeclareInExterns.add(n.getString());
+              return;
             }
             break;
+          case NAME:
+            // Don't warn for simple var assignments "/** @const */ var foo = bar;"
+            // They are used to infer the types of namespace aliases.
+            if (NodeUtil.isNameDeclaration(parent.getParent())) {
+              return;
+            }
+            break;
+          case OR:
+            // Don't warn for namespace declarations: "/** @const */ var ns = ns || {};"
+            if (NodeUtil.isNamespaceDecl(parent.getParent())) {
+              return;
+            }
+            break;
+          default:
+            break;
+        }
+        t.report(n, NAME_REFERENCE_IN_EXTERNS_ERROR, n.getString());
+        Scope scope = t.getScope();
+        Var var = scope.getVar(n.getString());
+        if (var == null) {
+          varsToDeclareInExterns.add(n.getString());
         }
       }
     }
@@ -343,7 +365,7 @@ class VarCheck extends AbstractPostOrderCallback implements
    *     for the given node.
    */
   static boolean hasDuplicateDeclarationSuppression(Node n, Var origVar) {
-    Preconditions.checkState(n.isName() || n.isRest() || n.isStringKey(), n);
+    checkState(n.isName() || n.isRest() || n.isStringKey() || n.isImportStar(), n);
     Node parent = n.getParent();
     Node origParent = origVar.getParentNode();
 
@@ -407,7 +429,8 @@ class VarCheck extends AbstractPostOrderCallback implements
                             ? origVar.input.getName()
                             : "??")));
         }
-      } else if (name.equals(ARGUMENTS) && !NodeUtil.isVarDeclaration(n)) {
+      } else if (name.equals(ARGUMENTS)
+          && !(NodeUtil.isNameDeclaration(n.getParent()) && n.isName())) {
         // Disallow shadowing "arguments" as we can't handle with our current
         // scope modeling.
         compiler.report(
@@ -417,9 +440,10 @@ class VarCheck extends AbstractPostOrderCallback implements
 
     public void removeDuplicates() {
       for (Node n : dupDeclNodes) {
-        if (n.getParent() != null) {
+        Node parent = n.getParent();
+        if (parent != null) {
           n.detach();
-          compiler.reportCodeChange();
+          compiler.reportChangeToEnclosingScope(parent);
         }
       }
     }

@@ -296,26 +296,15 @@ XPathNamespace.XPATH_NAMESPACE_NODE = 13;
  */
 function XMLHttpRequest() {}
 
-/**
- * @param {boolean=} opt_useCapture
- * @override
- * @return {undefined}
- */
-XMLHttpRequest.prototype.addEventListener =
-    function(type, listener, opt_useCapture) {};
+/** @override */
+XMLHttpRequest.prototype.addEventListener = function(
+    type, listener, opt_options) {};
 
-/**
- * @param {boolean=} opt_useCapture
- * @override
- * @return {undefined}
- */
-XMLHttpRequest.prototype.removeEventListener =
-    function(type, listener, opt_useCapture) {};
+/** @override */
+XMLHttpRequest.prototype.removeEventListener = function(
+    type, listener, opt_options) {};
 
-/**
- * @override
- * @return {boolean}
- */
+/** @override */
 XMLHttpRequest.prototype.dispatchEvent = function(evt) {};
 
 /**
@@ -402,13 +391,13 @@ XMLHttpRequest.prototype.status;
 XMLHttpRequest.prototype.statusText;
 
 /**
- * @type {Function}
+ * @type {?function(!Event)}
  * @see http://www.w3.org/TR/XMLHttpRequest/#handler-xhr-onreadystatechange
  */
 XMLHttpRequest.prototype.onreadystatechange;
 
 /**
- * @type {Function}
+ * @type {?function(!Event)}
  * @see http://www.w3.org/TR/XMLHttpRequest/#handler-xhr-onerror
  */
 XMLHttpRequest.prototype.onerror;

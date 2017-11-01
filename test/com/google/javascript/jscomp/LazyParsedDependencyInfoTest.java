@@ -86,7 +86,7 @@ public final class LazyParsedDependencyInfoTest extends TestCase {
         new SimpleDependencyInfo("", "", EMPTY, EMPTY, ImmutableMap.of("foo", "bar"));
     DependencyInfo info = new LazyParsedDependencyInfo(delegate, ast, compiler);
 
-    assertThat(info.getLoadFlags()).containsExactly("foo", "bar", "lang", "es6-impl");
+    assertThat(info.getLoadFlags()).containsExactly("foo", "bar", "lang", "es6");
     assertFalse(info.isModule());
   }
 
@@ -122,7 +122,9 @@ public final class LazyParsedDependencyInfoTest extends TestCase {
 
   public void testModuleConflict() {
     Compiler compiler = new Compiler();
-    compiler.initOptions(new CompilerOptions());
+    CompilerOptions options = new CompilerOptions();
+    options.setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
+    compiler.initOptions(options);
     JsAst ast = new JsAst(SourceFile.fromCode("file.js", "export let foo = 42;"));
     SimpleDependencyInfo delegate =
         new SimpleDependencyInfo("", "my/js.js", EMPTY, EMPTY, ImmutableMap.of("module", "goog"));

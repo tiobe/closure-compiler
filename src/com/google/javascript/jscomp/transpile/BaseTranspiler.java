@@ -25,14 +25,13 @@ import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.DiagnosticGroup;
 import com.google.javascript.jscomp.DiagnosticType;
-import com.google.javascript.jscomp.ErrorFormat;
-import com.google.javascript.jscomp.JSError;
-import com.google.javascript.jscomp.MessageFormatter;
 import com.google.javascript.jscomp.PropertyRenamingPolicy;
 import com.google.javascript.jscomp.Result;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.VariableRenamingPolicy;
+import com.google.javascript.jscomp.bundle.TranspilationException;
 import java.io.IOException;
+import java.nio.file.Path;
 
 /**
  * Basic Transpiler implementation for outputting ES5 code.
@@ -48,20 +47,8 @@ public final class BaseTranspiler implements Transpiler {
   }
 
   @Override
-  public TranspileResult transpile(String path, String code) {
+  public TranspileResult transpile(Path path, String code) {
     CompileResult result = compilerSupplier.compile(path, code);
-    if (result.errors.length > 0) {
-      // TODO(sdh): how to handle this?  Currently we throw an ISE with the message,
-      // but this may not be the most appropriate option.  It might make sense to
-      // add console.log() statements to any JS that comes out, particularly for
-      // warnings.
-      MessageFormatter formatter = ErrorFormat.SOURCELESS.toFormatter(null, false);
-      StringBuilder message = new StringBuilder().append("Transpilation failed.\n");
-      for (JSError error : result.errors) {
-        message.append(formatter.formatError(error));
-      }
-      throw new IllegalStateException(message.toString());
-    }
     if (!result.transpiled) {
       return new TranspileResult(path, code, code, "");
     }
@@ -85,22 +72,27 @@ public final class BaseTranspiler implements Transpiler {
    * time when we're in single-file mode.
    */
   public static class CompilerSupplier {
-    public CompileResult compile(String path, String code) {
+    public CompileResult compile(Path path, String code) {
       Compiler compiler = compiler();
-      Result result = compiler.compile(EXTERNS, SourceFile.fromCode(path, code), options());
+      Result result =
+          compiler.compile(EXTERNS, SourceFile.fromCode(path.toString(), code), options());
+      String source = compiler.toSource();
       StringBuilder sourceMap = new StringBuilder();
       if (result.sourceMap != null) {
         try {
-          result.sourceMap.appendTo(sourceMap, path);
+          result.sourceMap.appendTo(sourceMap, path.toString());
         } catch (IOException e) {
           // impossible, and not a big deal even if it did happen.
         }
       }
+      boolean transpiled = !result.transpiledFiles.isEmpty();
+      if (result.errors.length > 0) {
+        throw new TranspilationException(compiler, result.errors, result.warnings);
+      }
       return new CompileResult(
-          compiler.toSource(),
-          result.errors,
-          !result.transpiledFiles.isEmpty(),
-          sourceMap.toString());
+          source,
+          transpiled,
+          transpiled ? sourceMap.toString() : "");
     }
 
     public String runtime(String library) {
@@ -122,7 +114,7 @@ public final class BaseTranspiler implements Transpiler {
     }
 
     protected void setOptions(CompilerOptions options) {
-      options.setLanguageIn(LanguageMode.ECMASCRIPT6_STRICT);
+      options.setLanguageIn(LanguageMode.ECMASCRIPT_2017);
       // TODO(sdh): It would be nice to allow people to output code in
       // strict mode.  But currently we swallow all the input language
       // strictness checks, and there are various tests that are never
@@ -156,12 +148,10 @@ public final class BaseTranspiler implements Transpiler {
    */
   public static class CompileResult {
     public final String source;
-    public final JSError[] errors;
     public final boolean transpiled;
     public final String sourceMap;
-    public CompileResult(String source, JSError[] errors, boolean transpiled, String sourceMap) {
+    public CompileResult(String source, boolean transpiled, String sourceMap) {
       this.source = checkNotNull(source);
-      this.errors = checkNotNull(errors);
       this.transpiled = transpiled;
       this.sourceMap = checkNotNull(sourceMap);
     }

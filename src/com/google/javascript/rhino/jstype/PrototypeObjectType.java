@@ -41,12 +41,11 @@ package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -155,7 +154,7 @@ public class PrototypeObjectType extends ObjectType {
    * Creates an object type, allowing specification of the implicit prototype,
    * whether the object is native, and any templatized types.
    */
-  PrototypeObjectType(JSTypeRegistry registry, String className,
+  private PrototypeObjectType(JSTypeRegistry registry, String className,
       ObjectType implicitPrototype, boolean nativeType,
       TemplateTypeMap templateTypeMap, boolean anonymousType) {
     super(registry, templateTypeMap);
@@ -278,58 +277,56 @@ public class PrototypeObjectType extends ObjectType {
   }
 
   @Override
-  String toStringHelper(boolean forAnnotations) {
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
     if (hasReferenceName()) {
-      return getReferenceName();
-    } else if (prettyPrint) {
-      // Don't pretty print recursively.
-      prettyPrint = false;
+      return sb.append(forAnnotations ? getNormalizedReferenceName() : getReferenceName());
+    }
+    if (!prettyPrint) {
+      return sb.append(forAnnotations ? "?" : "{...}");
+    }
+    // Don't pretty print recursively.
+    prettyPrint = false;
 
-      // Use a tree set so that the properties are sorted.
-      Set<String> propertyNames = new TreeSet<>();
-      for (ObjectType current = this;
-           current != null && !current.isNativeObjectType() &&
-               propertyNames.size() <= MAX_PRETTY_PRINTED_PROPERTIES;
-           current = current.getImplicitPrototype()) {
-        propertyNames.addAll(current.getOwnPropertyNames());
-      }
+    // Use a tree set so that the properties are sorted.
+    Set<String> propertyNames = new TreeSet<>();
+    for (ObjectType current = this;
+        current != null && !current.isNativeObjectType() &&
+            propertyNames.size() <= MAX_PRETTY_PRINTED_PROPERTIES;
+        current = current.getImplicitPrototype()) {
+      propertyNames.addAll(current.getOwnPropertyNames());
+    }
 
-      StringBuilder sb = new StringBuilder();
-      sb.append("{");
-      boolean useNewlines = !forAnnotations && propertyNames.size() > 2;
+    sb.append("{");
+    boolean useNewlines = !forAnnotations && propertyNames.size() > 2;
 
-      int i = 0;
-      for (String property : propertyNames) {
-        if (i > 0) {
-          sb.append(",");
-        }
-        if (useNewlines) {
-          sb.append("\n  ");
-        } else if (i > 0) {
-          sb.append(" ");
-        }
-
-        sb.append(property);
-        sb.append(": ");
-        sb.append(getPropertyType(property).toNonNullString(forAnnotations));
-
-        ++i;
-        if (!forAnnotations && i == MAX_PRETTY_PRINTED_PROPERTIES) {
-          sb.append(", ...");
-          break;
-        }
+    int i = 0;
+    for (String property : propertyNames) {
+      if (i > 0) {
+        sb.append(",");
       }
       if (useNewlines) {
-        sb.append("\n");
+        sb.append("\n  ");
+      } else if (i > 0) {
+        sb.append(" ");
       }
 
-      sb.append("}");
+      sb.append(property).append(": ");
+      getPropertyType(property).appendAsNonNull(sb, forAnnotations);
 
-      prettyPrint = true;
-      return sb.toString();
-    } else {
-      return forAnnotations ? "?" : "{...}";
+      ++i;
+      if (!forAnnotations && i == MAX_PRETTY_PRINTED_PROPERTIES) {
+        sb.append(", ...");
+        break;
+      }
     }
+    if (useNewlines) {
+      sb.append("\n");
+    }
+
+    sb.append("}");
+
+    prettyPrint = true;
+    return sb;
   }
 
   void setPrettyPrint(boolean prettyPrint) {
@@ -379,11 +376,6 @@ public class PrototypeObjectType extends ObjectType {
 
   public boolean isAnonymous() {
     return anonymousType;
-  }
-
-  @Override
-  public boolean isInstanceofObject() {
-    return isAnonymous();
   }
 
   @Override
@@ -473,7 +465,7 @@ public class PrototypeObjectType extends ObjectType {
 
   @Override
   void setOwnerFunction(FunctionType type) {
-    Preconditions.checkState(ownerFunction == null || type == null);
+    checkState(ownerFunction == null || type == null);
     ownerFunction = type;
   }
 
@@ -561,4 +553,12 @@ public class PrototypeObjectType extends ObjectType {
     }
   }
 
+  @Override
+  public int hashCode() {
+    if (isStructuralType()) {
+      return Objects.hash(className, properties);
+    } else {
+      return System.identityHashCode(this);
+    }
+  }
 }

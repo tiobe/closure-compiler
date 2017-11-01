@@ -16,8 +16,9 @@
 
 package com.google.javascript.jscomp.newtypes;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Preconditions;
 
 /**
  * Represents a declaration of a javascript type.
@@ -27,12 +28,12 @@ import com.google.common.base.Preconditions;
  */
 public class Declaration {
   // Type of local, formal, or extern that the declaration refers to
-  private JSType simpleType;
-  private Typedef typedef;
-  private Namespace ns;
-  private DeclaredTypeRegistry funScope;
-  private boolean isTypeVar;
-  private boolean isConstant;
+  private final JSType simpleType;
+  private final Typedef typedef;
+  private final Namespace ns;
+  private final DeclaredTypeRegistry funScope;
+  private final boolean isTypeVar;
+  private final boolean isConstant;
 
   public Declaration(JSType simpleType, Typedef typedef, Namespace ns,
       DeclaredTypeRegistry funScope, boolean isTypeVar, boolean isConstant) {
@@ -46,20 +47,16 @@ public class Declaration {
   }
 
   private void checkValid() {
-    if (this.simpleType != null) {
-      Preconditions.checkState(this.typedef == null);
-    }
     if (this.typedef != null) {
-      Preconditions.checkState(
-          this.simpleType == null && this.ns == null && this.funScope == null);
+      checkState(this.ns == null && this.funScope == null);
     }
     if (this.ns != null) {
       // Note: Non-null nominal with null function is allowed,
       // e.g., /** @constructor */ var Bar = Foo;
-      Preconditions.checkState(this.typedef == null);
+      checkState(this.typedef == null);
     }
     if (this.funScope != null) {
-      Preconditions.checkState(this.typedef == null);
+      checkState(this.typedef == null);
     }
   }
 

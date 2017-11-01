@@ -29,22 +29,26 @@ import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.CompilationLevel;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
+import com.google.javascript.jscomp.CompilerOptions.IsolationMode;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import com.google.javascript.jscomp.CompilerOptions.TracerMode;
 import com.google.javascript.jscomp.DefaultExterns;
 import com.google.javascript.jscomp.DependencyOptions;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.JSError;
 import com.google.javascript.jscomp.ModuleIdentifier;
-import com.google.javascript.jscomp.ResourceLoader;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.SourceMap;
 import com.google.javascript.jscomp.SourceMapInput;
 import com.google.javascript.jscomp.WarningLevel;
+import com.google.javascript.jscomp.deps.ModuleLoader.ResolutionMode;
 import com.google.javascript.jscomp.deps.SourceCodeEscapers;
+import com.google.javascript.jscomp.resources.ResourceLoader;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -79,19 +83,26 @@ public final class GwtRunner implements EntryPoint {
     String[] entryPoint;
     String env;
     boolean exportLocalPropertyDefinitions;
+    String[] extraAnnotationNames;
     boolean generateExports;
     String languageIn;
     String languageOut;
     boolean checksOnly;
     boolean newTypeInf;
+    String isolationMode;
     String outputWrapper;
+    @Deprecated
     boolean polymerPass;
+    Double polymerVersion;  // nb. nullable JS number represented by java.lang.Double in GWT.
     boolean preserveTypeAnnotations;
+    boolean processClosurePrimitives;
     boolean processCommonJsModules;
     public String renamePrefixNamespace;
     boolean rewritePolyfills;
     String warningLevel;
     boolean useTypesForOptimization;
+    String tracerMode;
+    String moduleResolutionMode;
 
     // These flags do not match the Java compiler JAR.
     File[] jsCode;
@@ -117,13 +128,17 @@ public final class GwtRunner implements EntryPoint {
     defaultFlags.entryPoint = null;
     defaultFlags.env = "BROWSER";
     defaultFlags.exportLocalPropertyDefinitions = false;
+    defaultFlags.extraAnnotationNames = null;
     defaultFlags.generateExports = false;
     defaultFlags.languageIn = "ECMASCRIPT6";
     defaultFlags.languageOut = "ECMASCRIPT5";
     defaultFlags.newTypeInf = false;
+    defaultFlags.isolationMode = "NONE";
     defaultFlags.outputWrapper = null;
     defaultFlags.polymerPass = false;
+    defaultFlags.polymerVersion = null;
     defaultFlags.preserveTypeAnnotations = false;
+    defaultFlags.processClosurePrimitives = true;
     defaultFlags.processCommonJsModules = false;
     defaultFlags.renamePrefixNamespace = null;
     defaultFlags.rewritePolyfills = true;
@@ -132,6 +147,8 @@ public final class GwtRunner implements EntryPoint {
     defaultFlags.jsCode = null;
     defaultFlags.externs = null;
     defaultFlags.createSourceMap = false;
+    defaultFlags.tracerMode = "OFF";
+    defaultFlags.moduleResolutionMode = "BROWSER";
   }
 
   @JsType(namespace = JsPackage.GLOBAL, name = "Object", isNative = true)
@@ -303,7 +320,7 @@ public final class GwtRunner implements EntryPoint {
   private static void applyDefaultOptions(CompilerOptions options) {
     CompilationLevel.SIMPLE_OPTIMIZATIONS.setOptionsForCompilationLevel(options);
     WarningLevel.DEFAULT.setOptionsForWarningLevel(options);
-    options.setLanguageIn(LanguageMode.ECMASCRIPT6);
+    options.setLanguageIn(LanguageMode.ECMASCRIPT_2017);
     options.setLanguageOut(LanguageMode.ECMASCRIPT5);
   }
 
@@ -367,6 +384,23 @@ public final class GwtRunner implements EntryPoint {
       options.setDefineReplacements(flags.defines.asMap());
     }
 
+    if (flags.extraAnnotationNames != null) {
+      options.setExtraAnnotationNames(Arrays.asList(flags.extraAnnotationNames));
+    }
+
+    if (flags.tracerMode != null) {
+      options.setTracerMode(TracerMode.valueOf(flags.tracerMode));
+    }
+
+    if (flags.moduleResolutionMode != null) {
+      options.setModuleResolutionMode(ResolutionMode.valueOf(flags.moduleResolutionMode));
+    }
+
+    if (flags.isolationMode != null
+        && IsolationMode.valueOf(flags.isolationMode) == IsolationMode.IIFE) {
+      flags.outputWrapper = "(function(){%output%}).call(this);";
+    }
+
     options.setAngularPass(flags.angularPass);
     options.setApplyInputSourceMaps(flags.applyInputSourceMaps);
     options.setChecksOnly(flags.checksOnly);
@@ -374,8 +408,13 @@ public final class GwtRunner implements EntryPoint {
     options.setExportLocalPropertyDefinitions(flags.exportLocalPropertyDefinitions);
     options.setGenerateExports(flags.generateExports);
     options.setNewTypeInference(flags.newTypeInf);
-    options.setPolymerPass(flags.polymerPass);
+    if (flags.polymerPass) {
+      options.setPolymerVersion(1);
+    } else if (flags.polymerVersion != null) {
+      options.setPolymerVersion(flags.polymerVersion.intValue());
+    }
     options.setPreserveTypeAnnotations(flags.preserveTypeAnnotations);
+    options.setClosurePass(flags.processClosurePrimitives);
     options.setProcessCommonJSModules(flags.processCommonJsModules);
     options.setRenamePrefixNamespace(flags.renamePrefixNamespace);
     options.setRewritePolyfills(flags.rewritePolyfills);

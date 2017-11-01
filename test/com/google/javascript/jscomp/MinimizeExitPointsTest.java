@@ -56,8 +56,7 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
          "f:while(a())break f");
     foldSame("f:for(x in a())break f");
 
-    fold("f:{while(a())break;}",
-         "f:{while(a())break;}");
+    foldSame("f:{while(a())break;}");
     foldSame("f:{for(x in a())break}");
 
     fold("f:try{break f;}catch(e){break f;}",
@@ -69,6 +68,9 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
          "");
     fold("f:g:{if(a()){break f;}else{break f;} break f;}",
          "f:g:{if(a()){}else{}}");
+    fold(
+        "function f() { a: break a; }",
+        "function f() {}");
   }
 
   public void testFunctionReturnOptimization1() throws Exception {
@@ -95,10 +97,12 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
          "function f(){if(a()){}else{}}");
     fold("function f(){if(a()){return;}else{return;} b();}",
          "function f(){if(a()){}else{return;b()}}");
-    fold("function f(){ if (x) return; if (y) return; if (z) return; w(); }",
-        " function f() {" +
-        "   if (x) {} else { if (y) {} else { if (z) {} else w(); }}" +
-        " }");
+    fold(
+        "function f(){ if (x) return; if (y) return; if (z) return; w(); }",
+        LINE_JOINER.join(
+            "function f() {",
+            "  if (x) {} else { if (y) {} else { if (z) {} else w(); }}",
+            "}"));
 
     fold("function f(){while(a())return;}",
          "function f(){while(a())return}");
@@ -151,13 +155,11 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
 
     fold("while(true)while(a())break;",
          "while(true)while(a())break");
-    fold("while(true)for(x in a())break",
-         "while(true)for(x in a())break");
+    foldSame("while(true)for(x in a())break");
 
     fold("while(true){try{continue;}catch(e){continue;}}",
          "while(true){try{}catch(e){}}");
-    fold("while(true){try{if(a()){continue;}else{continue;}" +
-         "continue;}catch(e){}}",
+    fold("while(true){try{if(a()){continue;}else{continue;} continue;}catch(e){}}",
          "while(true){try{if(a()){}else{}}catch(e){}}");
 
     fold("while(true){g:continue}",
@@ -193,13 +195,11 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
 
     fold("do{while(a())break;}while(true)",
          "do while(a())break;while(true)");
-    fold("do for(x in a())break;while(true)",
-         "do for(x in a())break;while(true)");
+    foldSame("do for(x in a())break;while(true)");
 
     fold("do{try{continue;}catch(e){continue;}}while(true)",
          "do{try{}catch(e){}}while(true)");
-    fold("do{try{if(a()){continue;}else{continue;}" +
-         "continue;}catch(e){}}while(true)",
+    fold("do{try{if(a()){continue;}else{continue;} continue;}catch(e){}}while(true)",
          "do{try{if(a()){}else{}}catch(e){}}while(true)");
 
     fold("do{g:continue}while(true)",
@@ -230,6 +230,19 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
          "for(x in y){if(a()){b();}else{c();}}");
     fold("for(x in y){if(a()){b();}else{c();continue;}}",
          "for(x in y){if(a()){b();}else{c();}}");
+
+    fold("for(x of y){if(x)continue; x=3; continue; }",
+        "for(x of y)if(x);else x=3");
+    foldSame("for(x of y){a();continue;b()}");
+    fold("for(x of y){if(true){a();continue;}else;b();}",
+        "for(x of y){if(true)a();else b();}");
+    fold("for(x of y){if(false){a();continue;}else;b();continue;}",
+        "for(x of y){if(false){a();}else{b()}}");
+    fold("for(x of y){if(a()){b();continue;}else;c();}",
+        "for(x of y){if(a()){b();}else{c();}}");
+    fold("for(x of y){if(a()){b();}else{c();continue;}}",
+        "for(x of y){if(a()){b();}else{c();}}");
+
     fold("for(x=0;x<y;x++){if(a()){b();continue;}else;}",
          "for(x=0;x<y;x++){if(a()){b();}else;}");
     fold("for(x=0;x<y;x++){if(a()){continue;}else{continue;} continue;}",
@@ -248,8 +261,7 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
 
     fold("for(x=0;x<y;x++){try{continue;}catch(e){continue;}}",
          "for(x=0;x<y;x++){try{}catch(e){}}");
-    fold("for(x=0;x<y;x++){try{if(a()){continue;}else{continue;}" +
-         "continue;}catch(e){}}",
+    fold("for(x=0;x<y;x++){try{if(a()){continue;}else{continue;} continue;}catch(e){}}",
          "for(x=0;x<y;x++){try{if(a()){}else{}}catch(e){}}");
 
     fold("for(x=0;x<y;x++){g:continue}",
@@ -259,7 +271,7 @@ public final class MinimizeExitPointsTest extends CompilerTestCase {
   }
 
   public void testCodeMotionDoesntBreakFunctionHoisting() throws Exception {
-    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT6);
+    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     fold("function f() { if (x) return; foo(); function foo() {} }",
          "function f() { if (x); else { function foo() {} foo(); } }");
   }

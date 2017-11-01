@@ -16,14 +16,16 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.annotations.GwtIncompatible;
-import com.google.common.base.Preconditions;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Multimap;
+import com.google.common.collect.Ordering;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
@@ -32,68 +34,94 @@ import com.google.javascript.jscomp.deps.SortedDependencies;
 import com.google.javascript.jscomp.deps.SortedDependencies.MissingProvideException;
 import com.google.javascript.jscomp.graph.LinkedDirectedGraph;
 import com.google.javascript.jscomp.parsing.parser.util.format.SimpleFormat;
-
+import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 
 /**
- * A {@link JSModule} dependency graph that assigns a depth to each module and
- * can answer depth-related queries about them. For the purposes of this class,
- * a module's depth is defined as the number of hops in the longest (non cyclic)
- * path from the module to a module with no dependencies.
- *
+ * A {@link JSModule} dependency graph that assigns a depth to each module and can answer
+ * depth-related queries about them. For the purposes of this class, a module's depth is defined as
+ * the number of hops in the longest (non cyclic) path from the module to a module with no
+ * dependencies.
  */
-public final class JSModuleGraph {
+public final class JSModuleGraph implements Serializable {
 
-  private List<JSModule> modules;
+  private final JSModule[] modules;
 
   /**
-   * Lists of modules at each depth. <code>modulesByDepth.get(3)</code> is a
-   * list of the modules at depth 3, for example.
+   * selfPlusTransitiveDeps[i] = indices of all modules that modules[i] depends on, including
+   * itself.
    */
-  private List<List<JSModule>> modulesByDepth;
+  private final BitSet[] selfPlusTransitiveDeps;
 
   /**
-   * dependencyMap is a cache of dependencies that makes the dependsOn
-   * function faster.  Each map entry associates a starting
-   * JSModule with the set of JSModules that are transitively dependent on the
-   * starting module.
+   * subtreeSize[i] = Number of modules that transitively depend on modules[i], including itself.
+   */
+  private final int[] subtreeSize;
+
+  /**
+   * Lists of modules at each depth. <code>modulesByDepth.get(3)</code> is a list of the modules at
+   * depth 3, for example.
+   */
+  private final List<List<JSModule>> modulesByDepth;
+
+  /**
+   * dependencyMap is a cache of dependencies that makes the dependsOn function faster. Each map
+   * entry associates a starting JSModule with the set of JSModules that are transitively dependent
+   * on the starting module.
    *
-   * If the cache returns null, then the entry hasn't been filled in for that
-   * module.
+   * <p>If the cache returns null, then the entry hasn't been filled in for that module.
    *
-   * dependencyMap should be filled from leaf to root so that
-   * getTransitiveDepsDeepestFirst can use its results directly.
+   * <p>NOTE: JSModule has identity semantics so this map implementation is safe
    */
-  private Map<JSModule, Set<JSModule>> dependencyMap = new HashMap<>();
+  private final Map<JSModule, Set<JSModule>> dependencyMap = new IdentityHashMap<>();
 
-  /**
-   * Creates a module graph from a list of modules in dependency order.
-   */
+  /** Creates a module graph from a list of modules in dependency order. */
   public JSModuleGraph(JSModule[] modulesInDepOrder) {
-    this(ImmutableList.copyOf(modulesInDepOrder));
+    this(Arrays.asList(modulesInDepOrder));
   }
 
-  /**
-   * Creates a module graph from a list of modules in dependency order.
-   */
+  /** Creates a module graph from a list of modules in dependency order. */
   public JSModuleGraph(List<JSModule> modulesInDepOrder) {
-    Preconditions.checkState(
-        modulesInDepOrder.size() == new HashSet<>(modulesInDepOrder).size(),
-        "Found duplicate modules");
-    modules = ImmutableList.copyOf(modulesInDepOrder);
-    modulesByDepth = new ArrayList<>();
+    modules = new JSModule[modulesInDepOrder.size()];
 
-    for (JSModule module : modulesInDepOrder) {
+    // n = number of modules
+    // Populate modules O(n)
+    for (int moduleIndex = 0; moduleIndex < modules.length; ++moduleIndex) {
+      final JSModule module = modulesInDepOrder.get(moduleIndex);
+      checkState(module.getIndex() == -1, "Module index already set: %s", module);
+      module.setIndex(moduleIndex);
+      modules[moduleIndex] = module;
+    }
+
+    // Determine depth for all modules.
+    // m = number of edges in the graph
+    // O(n*m)
+    modulesByDepth = initModulesByDepth();
+
+    // Determine transitive deps for all modules.
+    // O(n*m * log(n)) (probably a bit better than that)
+    selfPlusTransitiveDeps = initTransitiveDepsBitSets();
+
+    // O(n*m)
+    subtreeSize = initSubtreeSize();
+  }
+
+  private List<List<JSModule>> initModulesByDepth() {
+    final List<List<JSModule>> tmpModulesByDepth = new ArrayList<>();
+    for (int moduleIndex = 0; moduleIndex < modules.length; ++moduleIndex) {
+      final JSModule module = modules[moduleIndex];
+      checkState(module.getDepth() == -1, "Module depth already set: %s", module);
       int depth = 0;
       for (JSModule dep : module.getDependencies()) {
         int depDepth = dep.getDepth();
@@ -107,10 +135,54 @@ public final class JSModuleGraph {
       }
 
       module.setDepth(depth);
-      if (depth == modulesByDepth.size()) {
-        modulesByDepth.add(new ArrayList<JSModule>());
+      if (depth == tmpModulesByDepth.size()) {
+        tmpModulesByDepth.add(new ArrayList<JSModule>());
       }
-      modulesByDepth.get(depth).add(module);
+      tmpModulesByDepth.get(depth).add(module);
+    }
+    return tmpModulesByDepth;
+  }
+
+  private BitSet[] initTransitiveDepsBitSets() {
+    BitSet[] array = new BitSet[modules.length];
+    for (int moduleIndex = 0; moduleIndex < modules.length; ++moduleIndex) {
+      final JSModule module = modules[moduleIndex];
+      BitSet selfPlusTransitiveDeps = new BitSet(moduleIndex + 1);
+      array[moduleIndex] = selfPlusTransitiveDeps;
+      selfPlusTransitiveDeps.set(moduleIndex);
+      // O(moduleIndex * log64(moduleIndex))
+      for (JSModule dep : module.getDependencies()) {
+        // Add this dependency and all of its dependencies to the current module.
+        // O(log64(moduleIndex))
+        selfPlusTransitiveDeps.or(array[dep.getIndex()]);
+      }
+    }
+    return array;
+  }
+
+  private int[] initSubtreeSize() {
+    int[] subtreeSize = new int[modules.length];
+    for (int dependentIndex = 0; dependentIndex < modules.length; ++dependentIndex) {
+      BitSet dependencies = selfPlusTransitiveDeps[dependentIndex];
+      // Iterating backward through the bitset is slightly more efficient, since it avoids
+      // considering later modules, which this one cannot depend on.
+      for (int requiredIndex = dependentIndex;
+          requiredIndex >= 0;
+          requiredIndex = dependencies.previousSetBit(requiredIndex - 1)) {
+        subtreeSize[requiredIndex] += 1; // Count dependent in required module's subtree.
+      }
+    }
+    return subtreeSize;
+  }
+
+  /**
+   * This only exists as a temprorary workaround.
+   * @deprecated Fix the tests that use this.
+   */
+  @Deprecated
+  public void breakThisGraphSoItsModulesCanBeReused() {
+    for (JSModule m : modules) {
+      m.resetThisModuleSoItCanBeReused();
     }
   }
 
@@ -118,7 +190,7 @@ public final class JSModuleGraph {
    * Gets an iterable over all modules in dependency order.
    */
   Iterable<JSModule> getAllModules() {
-    return modules;
+    return Arrays.asList(modules);
   }
 
   /**
@@ -136,7 +208,7 @@ public final class JSModuleGraph {
    * Gets the total number of modules.
    */
   int getModuleCount() {
-    return modules.size();
+    return modules.length;
   }
 
   /**
@@ -187,13 +259,61 @@ public final class JSModuleGraph {
    * module never depends on itself, as that dependency would be cyclic.
    */
   public boolean dependsOn(JSModule src, JSModule m) {
-    Set<JSModule> deps = dependencyMap.get(src);
-    if (deps == null) {
-      deps = getTransitiveDepsDeepestFirst(src);
-      dependencyMap.put(src, deps);
-    }
+    return src != m && selfPlusTransitiveDeps[src.getIndex()].get(m.getIndex());
+  }
 
-    return deps.contains(m);
+  /**
+   * Finds the module with the fewest transitive dependents on which all of the given modules depend
+   * and that is a subtree of the given parent module tree.
+   *
+   * <p>If no such subtree can be found, the parent module is returned.
+   *
+   * <p>If multiple candidates have the same number of dependents, the module farthest down in the
+   * total ordering of modules will be chosen.
+   *
+   * @param parentTree module on which the result must depend
+   * @param dependentModules indices of modules to consider
+   * @return A module on which all of the argument modules depend
+   */
+  public JSModule getSmallestCoveringSubtree(JSModule parentTree, BitSet dependentModules) {
+    checkState(!dependentModules.isEmpty());
+
+    // Candidate modules are those that all of the given dependent modules depend on, including
+    // themselves. The dependent module with the smallest index might be our answer, if all
+    // the other modules depend on it.
+    int minDependentModuleIndex = modules.length;
+    final BitSet candidates = new BitSet(modules.length);
+    candidates.set(0, modules.length, true);
+    for (int dependentIndex = dependentModules.nextSetBit(0);
+        dependentIndex >= 0;
+        dependentIndex = dependentModules.nextSetBit(dependentIndex + 1)) {
+      minDependentModuleIndex = Math.min(minDependentModuleIndex, dependentIndex);
+      candidates.and(selfPlusTransitiveDeps[dependentIndex]);
+    }
+    checkState(
+        !candidates.isEmpty(), "No common dependency found for %s", dependentModules);
+
+    // All candidates must have an index <= the smallest dependent module index.
+    // Work backwards through the candidates starting with the dependent module with the smallest
+    // index. For each candidate, we'll remove all of the modules it depends on from consideration,
+    // since they must all have larger subtrees than the one we're considering.
+    int parentTreeIndex = parentTree.getIndex();
+    // default to parent tree if we don't find anything better
+    int bestCandidateIndex = parentTreeIndex;
+    for (int candidateIndex = candidates.previousSetBit(minDependentModuleIndex);
+        candidateIndex >= 0;
+        candidateIndex = candidates.previousSetBit(candidateIndex - 1)) {
+
+      BitSet candidatePlusTransitiveDeps = selfPlusTransitiveDeps[candidateIndex];
+      if (candidatePlusTransitiveDeps.get(parentTreeIndex)) {
+        // candidate is a subtree of parentTree
+        candidates.andNot(candidatePlusTransitiveDeps);
+        if (subtreeSize[candidateIndex] < subtreeSize[bestCandidateIndex]) {
+          bestCandidateIndex = candidateIndex;
+        }
+      } // eliminate candidates that are not a subtree of parentTree
+    }
+    return modules[bestCandidateIndex];
   }
 
   /**
@@ -263,58 +383,19 @@ public final class JSModuleGraph {
    * @param m A module in this graph
    * @return The transitive dependencies of module {@code m}
    */
-  Set<JSModule> getTransitiveDepsDeepestFirst(JSModule m) {
+  @VisibleForTesting
+  List<JSModule> getTransitiveDepsDeepestFirst(JSModule m) {
+    return InverseDepthComparator.INSTANCE.sortedCopy(getTransitiveDeps(m));
+  }
+
+  /** Returns the transitive dependencies of the module. */
+  private Set<JSModule> getTransitiveDeps(JSModule m) {
     Set<JSModule> deps = dependencyMap.get(m);
-    if (deps != null) {
-      return deps;
+    if (deps == null) {
+      deps = m.getAllDependencies();
+      dependencyMap.put(m, deps);
     }
-    deps = new TreeSet<>(new InverseDepthComparator());
-    addDeps(deps, m);
-    dependencyMap.put(m, deps);
     return deps;
-  }
-
-  /**
-   * Adds a module's transitive dependencies to a set.
-   */
-  private static void addDeps(Set<JSModule> deps, JSModule m) {
-    for (JSModule dep : m.getDependencies()) {
-      deps.add(dep);
-      addDeps(deps, dep);
-    }
-  }
-
-  /**
-   * Replaces any files that are found multiple times with a single instance in
-   * the closest parent module that is common to all modules where it appears.
-   *
-   * JSCompiler normally errors if you attempt to compile modules containing the
-   * same file.  This method can be used to remove duplicates before compiling
-   * to avoid such an error.
-   */
-  public void coalesceDuplicateFiles() {
-    Multimap<String, JSModule> fileRefs = LinkedHashMultimap.create();
-    for (JSModule module : modules) {
-      for (CompilerInput jsFile : module.getInputs()) {
-        fileRefs.put(jsFile.getName(), module);
-      }
-    }
-
-    for (String path : fileRefs.keySet()) {
-      Collection<JSModule> refModules = fileRefs.get(path);
-      if (refModules.size() > 1) {
-        JSModule depModule = getDeepestCommonDependencyInclusive(refModules);
-        CompilerInput file = refModules.iterator().next().getByName(path);
-        for (JSModule module : refModules) {
-          if (module != depModule) {
-            module.removeByName(path);
-          }
-        }
-        if (!refModules.contains(depModule)) {
-          depModule.add(file);
-        }
-      }
-    }
   }
 
   /**
@@ -364,6 +445,17 @@ public final class JSModuleGraph {
     Iterable<CompilerInput> entryPointInputs = createEntryPointInputs(
         depOptions, inputs, sorter);
 
+    HashMap<String, CompilerInput> inputsByProvide = new HashMap<>();
+    for (CompilerInput input : inputs) {
+      for (String provide : input.getKnownProvides()) {
+        inputsByProvide.put(provide, input);
+      }
+      String moduleName = input.getPath().toModuleName();
+      if (!inputsByProvide.containsKey(moduleName)) {
+        inputsByProvide.put(moduleName, input);
+      }
+    }
+
     // The order of inputs, sorted independently of modules.
     List<CompilerInput> absoluteOrder =
         sorter.getDependenciesOf(inputs, depOptions.shouldSortDependencies());
@@ -373,7 +465,7 @@ public final class JSModuleGraph {
         LinkedListMultimap.create();
     for (CompilerInput input : entryPointInputs) {
       JSModule module = input.getModule();
-      Preconditions.checkNotNull(module);
+      checkNotNull(module);
       entryPointInputsPerModule.put(module, input);
     }
 
@@ -385,11 +477,34 @@ public final class JSModuleGraph {
 
     // Figure out which sources *must* be in each module, or in one
     // of that module's dependencies.
+    List<CompilerInput> orderedInputs = new ArrayList<>();
+    Set<CompilerInput> reachedInputs = new HashSet<>();
     for (JSModule module : entryPointInputsPerModule.keySet()) {
-      List<CompilerInput> transitiveClosure =
-          sorter.getDependenciesOf(
-              entryPointInputsPerModule.get(module),
-              depOptions.shouldSortDependencies());
+      List<CompilerInput> transitiveClosure;
+      // Prefer a depth first ordering of dependencies from entry points.
+      // Always orders in a deterministic fashion regardless of the order of provided inputs
+      // given the same entry points in the same order.
+      if (depOptions.shouldSortDependencies() && depOptions.shouldPruneDependencies()) {
+        transitiveClosure = new ArrayList<>();
+        // We need the ful set of dependencies for each module, so start with the full input set
+        Set<CompilerInput> inputsNotYetReached = new HashSet<>(inputs);
+        for (CompilerInput entryPoint : entryPointInputsPerModule.get(module)) {
+          transitiveClosure.addAll(
+              getDepthFirstDependenciesOf(entryPoint, inputsNotYetReached, inputsByProvide));
+        }
+        // For any input we have not yet reached, add them to the ordered list
+        for (CompilerInput orderedInput : transitiveClosure) {
+          if (reachedInputs.add(orderedInput)) {
+            orderedInputs.add(orderedInput);
+          }
+        }
+      } else {
+        // Simply order inputs so that any required namespace comes before it's usage.
+        // Ordered result varies based on the original order of inputs.
+        transitiveClosure =
+            sorter.getDependenciesOf(
+                entryPointInputsPerModule.get(module), depOptions.shouldSortDependencies());
+      }
       for (CompilerInput input : transitiveClosure) {
         JSModule oldModule = input.getModule();
         if (oldModule == null) {
@@ -401,10 +516,14 @@ public final class JSModuleGraph {
         }
       }
     }
+    if (!(depOptions.shouldSortDependencies() && depOptions.shouldPruneDependencies())
+        || entryPointInputsPerModule.isEmpty()) {
+      orderedInputs = absoluteOrder;
+    }
 
     // All the inputs are pointing to the modules that own them. Yeah!
     // Update the modules to reflect this.
-    for (CompilerInput input : absoluteOrder) {
+    for (CompilerInput input : orderedInputs) {
       JSModule module = input.getModule();
       if (module != null) {
         module.add(input);
@@ -420,6 +539,36 @@ public final class JSModuleGraph {
     return result.build();
   }
 
+  /**
+   * Given an input and set of unprocessed inputs, return the input and it's dependencies by
+   * performing a recursive, depth-first traversal.
+   */
+  private List<CompilerInput> getDepthFirstDependenciesOf(
+      CompilerInput rootInput,
+      Set<CompilerInput> unreachedInputs,
+      Map<String, CompilerInput> inputsByProvide) {
+    List<CompilerInput> orderedInputs = new ArrayList<>();
+    if (!unreachedInputs.remove(rootInput)) {
+      return orderedInputs;
+    }
+
+    for (String importedNamespace : rootInput.getRequires()) {
+      CompilerInput dependency = null;
+      if (inputsByProvide.containsKey(importedNamespace)
+          && unreachedInputs.contains(inputsByProvide.get(importedNamespace))) {
+        dependency = inputsByProvide.get(importedNamespace);
+      }
+
+      if (dependency != null) {
+        orderedInputs.addAll(
+            getDepthFirstDependenciesOf(dependency, unreachedInputs, inputsByProvide));
+      }
+    }
+
+    orderedInputs.add(rootInput);
+    return orderedInputs;
+  }
+
   private Collection<CompilerInput> createEntryPointInputs(
       DependencyOptions depOptions,
       List<CompilerInput> inputs,
@@ -427,8 +576,14 @@ public final class JSModuleGraph {
       throws MissingModuleException, MissingProvideException {
     Set<CompilerInput> entryPointInputs = new LinkedHashSet<>();
     Map<String, JSModule> modulesByName = getModulesByName();
-
     if (depOptions.shouldPruneDependencies()) {
+      // Some files implicitly depend on base.js without actually requiring anything.
+      // So we always treat it as the first entry point to ensure it's ordered correctly.
+      CompilerInput baseJs = sorter.maybeGetInputProviding("goog");
+      if (baseJs != null) {
+        entryPointInputs.add(baseJs);
+      }
+
       if (!depOptions.shouldDropMoochers()) {
         entryPointInputs.addAll(sorter.getInputsWithoutProvides());
       }
@@ -458,11 +613,6 @@ public final class JSModuleGraph {
 
         entryPointInputs.add(entryPointInput);
       }
-
-      CompilerInput baseJs = sorter.maybeGetInputProviding("goog");
-      if (baseJs != null) {
-        entryPointInputs.add(baseJs);
-      }
     } else {
       entryPointInputs.addAll(inputs);
     }
@@ -487,7 +637,8 @@ public final class JSModuleGraph {
    * A module depth comparator that considers a deeper module to be "less than"
    * a shallower module. Uses module names to consistently break ties.
    */
-  private static class InverseDepthComparator implements Comparator<JSModule> {
+  private static final class InverseDepthComparator extends Ordering<JSModule> {
+    static final InverseDepthComparator INSTANCE = new InverseDepthComparator();
     @Override
     public int compare(JSModule m1, JSModule m2) {
       return depthCompare(m2, m1);

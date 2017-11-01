@@ -15,9 +15,11 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.Token;
 
 /**
  * Replicates the effect of {@literal ClosureBundler} in whitespace-only mode and wraps goog.modules
@@ -34,7 +36,7 @@ public class WhitespaceWrapGoogModules implements HotSwapCompilerPass {
   @Override
   public void process(Node externs, Node root) {
     for (Node c = root.getFirstChild(); c != null; c = c.getNext()) {
-      Preconditions.checkState(c.isScript());
+      checkState(c.isScript());
       hotSwapScript(c, null);
     }
   }
@@ -44,8 +46,10 @@ public class WhitespaceWrapGoogModules implements HotSwapCompilerPass {
     if (!NodeUtil.isGoogModuleFile(scriptRoot)) {
       return;
     }
-    ClosureRewriteModule.inlineModuleIntoGlobal(scriptRoot);
-    compiler.reportCodeChange();
+    Node moduleBody = scriptRoot.getFirstChild();
+    moduleBody.setToken(Token.BLOCK);
+    NodeUtil.tryMergeBlock(moduleBody, true);
+    compiler.reportChangeToEnclosingScope(scriptRoot);
 
     // As per ClosureBundler:
     /*
@@ -65,11 +69,10 @@ public class WhitespaceWrapGoogModules implements HotSwapCompilerPass {
     block.addChildToBack(
         IR.exprResult(IR.string("use strict"))); // needs to be explicit, to match ClosureBundler
 
+    Node function = IR.function(IR.name(""), IR.paramList(IR.name("exports")), block);
+    compiler.reportChangeToChangeScope(function);
     Node loadMod =
-        IR.exprResult(
-                IR.call(
-                    IR.getprop(IR.name("goog"), IR.string("loadModule")),
-                    IR.function(IR.name(""), IR.paramList(IR.name("exports")), block)))
+        IR.exprResult(IR.call(IR.getprop(IR.name("goog"), IR.string("loadModule")), function))
             .srcrefTree(scriptRoot);
 
     if (scriptRoot.hasChildren()) {
@@ -78,6 +81,6 @@ public class WhitespaceWrapGoogModules implements HotSwapCompilerPass {
     block.addChildToBack(IR.returnNode(IR.name("exports")).srcrefTree(scriptRoot));
 
     scriptRoot.addChildToBack(loadMod);
-    compiler.reportCodeChange();
+    compiler.reportChangeToChangeScope(scriptRoot);
   }
 }

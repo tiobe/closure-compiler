@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.jscomp.DefinitionsRemover.Definition;
 import com.google.javascript.rhino.FunctionTypeI;
 import com.google.javascript.rhino.IR;
@@ -123,7 +124,7 @@ class DevirtualizePrototypeMethods
       return nameNode.isGetProp() &&
           nameNode.getLastChild().getString().equals("prototype");
     } else if (node.isStringKey()) {
-      Preconditions.checkState(parent.isObjectLit());
+      checkState(parent.isObjectLit());
 
       if (!gramp.isAssign()) {
         return false;
@@ -280,8 +281,8 @@ class DevirtualizePrototypeMethods
       if (!allDefinitionsEquivalent(singleSiteDefinitions)) {
         return false;
       }
-      Preconditions.checkState(!singleSiteDefinitions.isEmpty());
-      Preconditions.checkState(singleSiteDefinitions.contains(definition));
+      checkState(!singleSiteDefinitions.isEmpty());
+      checkState(singleSiteDefinitions.contains(definition));
 
       // Accessing the property in a module loaded before the
       // definition module prevents rewrite; accessing a variable
@@ -343,9 +344,9 @@ class DevirtualizePrototypeMethods
       node.removeChild(objectNode);
       parent.replaceChild(node, objectNode);
       parent.addChildToFront(IR.name(newMethodName).srcref(node));
-      Preconditions.checkState(parent.isCall());
+      checkState(parent.isCall());
       parent.putBooleanProp(Node.FREE_CALL, true);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(parent);
     }
   }
 
@@ -370,7 +371,7 @@ class DevirtualizePrototypeMethods
 
     Node functionNode;
     if (!isObjLitDefKey) {
-      Preconditions.checkState(parent.isAssign());
+      checkState(parent.isAssign());
       functionNode = parent.getLastChild();
       Node expr = parent.getParent();
       Node block = expr.getParent();
@@ -378,7 +379,7 @@ class DevirtualizePrototypeMethods
       newNameNode.addChildToFront(functionNode);
       block.replaceChild(expr, newVarNode);
     } else {
-      Preconditions.checkState(parent.isObjectLit());
+      checkState(parent.isObjectLit());
       functionNode = node.getFirstChild();
       Node assign = parent.getParent();
       Node expr = assign.getParent();
@@ -389,21 +390,23 @@ class DevirtualizePrototypeMethods
       newNameNode.addChildToFront(functionNode);
       block.addChildAfter(newVarNode, expr);
     }
+    compiler.reportChangeToEnclosingScope(newVarNode);
 
     // add extra argument
     String self = newMethodName + "$self";
     Node argList = functionNode.getSecondChild();
     argList.addChildToFront(IR.name(self)
         .useSourceInfoIfMissingFrom(functionNode));
+    compiler.reportChangeToEnclosingScope(argList);
 
     // rewrite body
     Node body = functionNode.getLastChild();
-    replaceReferencesToThis(body, self);
+    if (replaceReferencesToThis(body, self)) {
+      compiler.reportChangeToEnclosingScope(body);
+    }
 
     // fix type
     fixFunctionType(functionNode);
-
-    compiler.reportCodeChange();
   }
 
   /**
@@ -426,19 +429,23 @@ class DevirtualizePrototypeMethods
    * Replaces references to "this" with references to name.  Do not
    * traverse function boundaries.
    */
-  private static void replaceReferencesToThis(Node node, String name) {
+  private static boolean replaceReferencesToThis(Node node, String name) {
     if (node.isFunction()) {
-      return;
+      return false;
     }
 
+    boolean changed = false;
     for (Node child : node.children()) {
       if (child.isThis()) {
         Node newName = IR.name(name);
         newName.setTypeI(child.getTypeI());
         node.replaceChild(child, newName);
+        changed = true;
       } else {
-        replaceReferencesToThis(child, name);
+        changed |= replaceReferencesToThis(child, name);
       }
     }
+
+    return changed;
   }
 }

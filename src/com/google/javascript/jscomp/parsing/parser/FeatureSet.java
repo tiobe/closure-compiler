@@ -16,8 +16,12 @@
 
 package com.google.javascript.jscomp.parsing.parser;
 
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
+import com.google.errorprone.annotations.Immutable;
 import java.io.Serializable;
-import java.util.Objects;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Represents various aspects of language version and support.
@@ -35,112 +39,138 @@ import java.util.Objects;
  *
  * <p>Instances of this class are immutable.
  */
+@Immutable
 public final class FeatureSet implements Serializable {
+  private final ImmutableSet<Feature> features;
 
-  /** The number of the language version: 3, 5, or 6. */
-  private final int number;
-  /** Whether this includes features not supported in current stable browsers. */
-  private final boolean unsupported;
-  /** Whether ES6 modules are included. */
-  private final boolean es6Modules;
-  /** Whether TypeScript syntax is included (for .d.ts support). */
-  private final boolean typeScript;
+  /** The bare minimum set of features. */
+  public static final FeatureSet BARE_MINIMUM = new FeatureSet(ImmutableSet.<Feature>of());
 
-  /** The bare minimum set of features in ES3. */
-  public static final FeatureSet ES3 = new FeatureSet(3, false, false, false);
+  /** Features from ES3. */
+  public static final FeatureSet ES3 = BARE_MINIMUM.with(LangVersion.ES3.features());
+
   /** Features from ES5 only. */
-  public static final FeatureSet ES5 = new FeatureSet(5, false, false, false);
-  /** The subset of ES6 features that are implemented in stable Chrome, Firefox, and Edge. */
-  public static final FeatureSet ES6_IMPL = new FeatureSet(6, false, false, false);
-  /** The full set of ES6 features, not including modules. */
-  public static final FeatureSet ES6 = new FeatureSet(6, true, false, false);
+  public static final FeatureSet ES5 = ES3.with(LangVersion.ES5.features());
+
   /** All ES6 features, including modules. */
-  public static final FeatureSet ES6_MODULES = new FeatureSet(6, true, true, false);
-  public static final FeatureSet ES7 = new FeatureSet(7, true, false, false);
-  public static final FeatureSet ES7_MODULES = new FeatureSet(7, true, true, false);
-  public static final FeatureSet ES8 = new FeatureSet(8, true, false, false);
-  public static final FeatureSet ES8_MODULES = new FeatureSet(8, true, true, false);
-  /** TypeScript syntax. */
-  public static final FeatureSet TYPESCRIPT = new FeatureSet(8, true, true, true);
+  public static final FeatureSet ES6_MODULES = ES5.with(LangVersion.ES6.features());
 
-  /**
-   * Specific features that can be included (indirectly) in a FeatureSet.
-   * This primarily adds a name so that helper functions can simultaneously
-   * update the detected features and also warn about unsupported features
-   * by name.  Additionally, collecting these all in one place provides a
-   * single file that needs to be edited to update the current browser support.
-   */
+  /** The full set of ES6 features, not including modules. */
+  public static final FeatureSet ES6 = ES6_MODULES.without(Feature.MODULES);
+
+  public static final FeatureSet ES7_MODULES = ES6_MODULES.with(LangVersion.ES7.features());
+
+  public static final FeatureSet ES7 = ES7_MODULES.without(Feature.MODULES);
+
+  public static final FeatureSet ES8_MODULES = ES7_MODULES.with(LangVersion.ES8.features());
+
+  public static final FeatureSet ES8 = ES8_MODULES.without(Feature.MODULES);
+
+  public static final FeatureSet TYPESCRIPT = ES8_MODULES.with(LangVersion.TYPESCRIPT.features());
+
+  // TODO(b/64536685): Remove this FeatureSet once NTI supports all of ES6.
+  public static final FeatureSet NTI_SUPPORTED =
+      ES5.with(
+          ImmutableSet.<Feature>of(
+              Feature.COMPUTED_PROPERTIES,
+              Feature.EXPONENT_OP,
+              Feature.EXTENDED_OBJECT_LITERALS,
+              Feature.FOR_OF,
+              Feature.GENERATORS,
+              Feature.MEMBER_DECLARATIONS,
+              Feature.TEMPLATE_LITERALS));
+
+  private enum LangVersion {
+    ES3,
+    ES5,
+    ES6,
+    ES7,
+    ES8,
+    TYPESCRIPT;
+
+    private Set<Feature> features() {
+      Set<Feature> set = new HashSet<>();
+      for (Feature feature : Feature.values()) {
+        if (feature.version == this) {
+          set.add(feature);
+        }
+      }
+      return set;
+    }
+  }
+
+  /** Specific features that can be included in a FeatureSet. */
   public enum Feature {
+    // ES3 features
+    // Functions can be declared in the block scope for all ES versions. However, for ES3 and ES5,
+    // we want to hoist the functions from the block scope by redeclaring them as vars (i.e.
+    // { function f() {} } becomes { var f = function {} }. To prevent this feature from causing
+    // code to run additional transpilation passes beyond rewriting block scoped functions, we mark
+    // block scoped functions as an ES3 feature and then manually determine whether to rewrite
+    // functions inside the processTranspile method of TranspilationPasses.java
+    BLOCK_SCOPED_FUNCTION_DECLARATION("block function", LangVersion.ES3),
+
     // ES5 features
-    ES3_KEYWORDS_AS_IDENTIFIERS("ES3 keywords as identifiers", ES5),
-    GETTER("getters", ES5),
-    KEYWORDS_AS_PROPERTIES("reserved words as properties", ES5),
-    SETTER("setters", ES5),
-    STRING_CONTINUATION("string continuation", ES5),
-    TRAILING_COMMA("trailing comma", ES5),
+    ES3_KEYWORDS_AS_IDENTIFIERS("ES3 keywords as identifiers", LangVersion.ES5),
+    GETTER("getters", LangVersion.ES5),
+    KEYWORDS_AS_PROPERTIES("reserved words as properties", LangVersion.ES5),
+    SETTER("setters", LangVersion.ES5),
+    STRING_CONTINUATION("string continuation", LangVersion.ES5),
+    TRAILING_COMMA("trailing comma", LangVersion.ES5),
 
-    // ES6 features that are already implemented in modern stable browsers
-    // (Chrome 50, Firefox 46, and Edge 13)
-    ARROW_FUNCTIONS("arrow function", ES6_IMPL),
-    BINARY_LITERALS("binary literal", ES6_IMPL),
-    OCTAL_LITERALS("octal literal", ES6_IMPL),
-    CLASSES("class", ES6_IMPL),
-    COMPUTED_PROPERTIES("computed property", ES6_IMPL),
-    EXTENDED_OBJECT_LITERALS("extended object literal", ES6_IMPL),
-    FOR_OF("for-of loop", ES6_IMPL),
-    GENERATORS("generator", ES6_IMPL),
-    LET_DECLARATIONS("let declaration", ES6_IMPL),
-    MEMBER_DECLARATIONS("member declaration", ES6_IMPL),
-    REGEXP_FLAG_Y("RegExp flag 'y'", ES6_IMPL),
-    REST_PARAMETERS("rest parameter", ES6_IMPL),
-    SPREAD_EXPRESSIONS("spread expression", ES6_IMPL),
-    SUPER("super", ES6_IMPL),
-    TEMPLATE_LITERALS("template literal", ES6_IMPL),
+    // ES6 features (besides modules): all stable browsers are now fully compliant
+    ARROW_FUNCTIONS("arrow function", LangVersion.ES6),
+    BINARY_LITERALS("binary literal", LangVersion.ES6),
+    OCTAL_LITERALS("octal literal", LangVersion.ES6),
+    CLASSES("class", LangVersion.ES6),
+    COMPUTED_PROPERTIES("computed property", LangVersion.ES6),
+    EXTENDED_OBJECT_LITERALS("extended object literal", LangVersion.ES6),
+    FOR_OF("for-of loop", LangVersion.ES6),
+    GENERATORS("generator", LangVersion.ES6),
+    LET_DECLARATIONS("let declaration", LangVersion.ES6),
+    MEMBER_DECLARATIONS("member declaration", LangVersion.ES6),
+    REGEXP_FLAG_Y("RegExp flag 'y'", LangVersion.ES6),
+    ARRAY_PATTERN_REST("array pattern rest", LangVersion.ES6),
+    REST_PARAMETERS("rest parameter", LangVersion.ES6),
+    SPREAD_EXPRESSIONS("spread expression", LangVersion.ES6),
+    SUPER("super", LangVersion.ES6),
+    TEMPLATE_LITERALS("template literal", LangVersion.ES6),
+    CONST_DECLARATIONS("const declaration", LangVersion.ES6),
+    DESTRUCTURING("destructuring", LangVersion.ES6),
+    NEW_TARGET("new.target", LangVersion.ES6),
+    REGEXP_FLAG_U("RegExp flag 'u'", LangVersion.ES6),
+    DEFAULT_PARAMETERS("default parameter", LangVersion.ES6),
+    MODULES("modules", LangVersion.ES6),
 
-    // ES6 features that are not yet implemented in all "modern" browsers
-    // The following features will become stable once Edge 14 is released:
-    CONST_DECLARATIONS("const declaration", ES6),
-    DESTRUCTURING("destructuring", ES6),
-    NEW_TARGET("new.target", ES6), // Not fully supported until Edge 14
-    REGEXP_FLAG_U("RegExp flag 'u'", ES6), // (note: case folding still broken even in Edge 14)
-    // The following features are still broken even in Firefox 49:
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1187502 for details
-    DEFAULT_PARAMETERS("default parameter", ES6),
+    // ES 2016 only added one new feature:
+    EXPONENT_OP("exponent operator (**)", LangVersion.ES7),
 
-    // ES6 features that include modules
-    MODULES("modules", ES6_MODULES),
-
-    // '**' operator
-    EXPONENT_OP("exponent operator (**)", ES7),
-
-    // http://tc39.github.io/ecmascript-asyncawait/
-    ASYNC_FUNCTIONS("async function", ES8),
+    // ES 2017 features:
+    ASYNC_FUNCTIONS("async function", LangVersion.ES8),
+    TRAILING_COMMA_IN_PARAM_LIST("trailing comma in param list", LangVersion.ES8),
 
     // ES6 typed features that are not at all implemented in browsers
-    AMBIENT_DECLARATION("ambient declaration", TYPESCRIPT),
-    CALL_SIGNATURE("call signature", TYPESCRIPT),
-    CONSTRUCTOR_SIGNATURE("constructor signature", TYPESCRIPT),
-    ENUM("enum", TYPESCRIPT),
-    GENERICS("generics", TYPESCRIPT),
-    IMPLEMENTS("implements", TYPESCRIPT),
-    INDEX_SIGNATURE("index signature", TYPESCRIPT),
-    INTERFACE("interface", TYPESCRIPT),
-    MEMBER_VARIABLE_IN_CLASS("member variable in class", TYPESCRIPT),
-    NAMESPACE_DECLARATION("namespace declaration", TYPESCRIPT),
-    OPTIONAL_PARAMETER("optional parameter", TYPESCRIPT),
-    TYPE_ALIAS("type alias", TYPESCRIPT),
-    TYPE_ANNOTATION("type annotation", TYPESCRIPT);
+    ACCESSIBILITY_MODIFIER("accessibility modifier", LangVersion.TYPESCRIPT),
+    AMBIENT_DECLARATION("ambient declaration", LangVersion.TYPESCRIPT),
+    CALL_SIGNATURE("call signature", LangVersion.TYPESCRIPT),
+    CONSTRUCTOR_SIGNATURE("constructor signature", LangVersion.TYPESCRIPT),
+    ENUM("enum", LangVersion.TYPESCRIPT),
+    GENERICS("generics", LangVersion.TYPESCRIPT),
+    IMPLEMENTS("implements", LangVersion.TYPESCRIPT),
+    INDEX_SIGNATURE("index signature", LangVersion.TYPESCRIPT),
+    INTERFACE("interface", LangVersion.TYPESCRIPT),
+    MEMBER_VARIABLE_IN_CLASS("member variable in class", LangVersion.TYPESCRIPT),
+    NAMESPACE_DECLARATION("namespace declaration", LangVersion.TYPESCRIPT),
+    OPTIONAL_PARAMETER("optional parameter", LangVersion.TYPESCRIPT),
+    TYPE_ALIAS("type alias", LangVersion.TYPESCRIPT),
+    TYPE_ANNOTATION("type annotation", LangVersion.TYPESCRIPT);
 
     private final String name;
-    private final FeatureSet features;
+    private final LangVersion version;
 
-    private Feature(String name, FeatureSet features) {
+    private Feature(String name, LangVersion version) {
       this.name = name;
-      this.features = features;
-    }
-
-    public FeatureSet features() {
-      return features;
+      this.version = version;
     }
 
     @Override
@@ -149,103 +179,88 @@ public final class FeatureSet implements Serializable {
     }
   }
 
-  private FeatureSet(int number, boolean unsupported, boolean es6Modules, boolean typeScript) {
-    this.number = number;
-    this.unsupported = unsupported;
-    this.es6Modules = es6Modules;
-    this.typeScript = typeScript;
+  private FeatureSet(Set<Feature> features) {
+    this.features = ImmutableSet.copyOf(features);
   }
 
   /** Returns a string representation suitable for encoding in depgraph and deps.js files. */
   public String version() {
-    if (typeScript) {
-      return "ts";
-    } else if (number > 6) {
-      return "es" + number;
-    } else if (unsupported || es6Modules) {
-      return "es6";
-    } else if (number > 5) {
-      return "es6-impl";
-    } else if (number > 3) {
+    if (ES3.contains(this)) {
+      return "es3";
+    }
+    if (ES5.contains(this)) {
       return "es5";
     }
-    return "es3";
+    if (ES6_MODULES.contains(this)) {
+      return "es6";
+    }
+    if (NTI_SUPPORTED.contains(this)) {
+      return "ntiSupported";
+    }
+    if (ES7_MODULES.contains(this)) {
+      return "es7";
+    }
+    if (ES8_MODULES.contains(this)) {
+      return "es8";
+    }
+    if (TYPESCRIPT.contains(this)) {
+      return "ts";
+    }
+    throw new IllegalStateException(this.toString());
   }
 
-  /** Returns whether this feature set includes ES6 modules. */
-  public boolean hasEs6Modules() {
-    return es6Modules;
+  public FeatureSet without(Feature feature) {
+    return new FeatureSet(Sets.difference(features, ImmutableSet.of(feature)));
   }
 
-  /** Returns whether this feature set includes typescript features. */
-  public boolean isTypeScript() {
-    return typeScript;
-  }
-
-  /** Returns a feature set combining all the features from {@code this} and {@code other}. */
-  public FeatureSet require(FeatureSet other) {
-    return this.contains(other) ? this : this.union(other);
+  public FeatureSet withoutTypes() {
+    return new FeatureSet(Sets.difference(features, LangVersion.TYPESCRIPT.features()));
   }
 
   /**
    * Returns a new {@link FeatureSet} including all features of both {@code this} and {@code other}.
    */
   public FeatureSet union(FeatureSet other) {
-    return new FeatureSet(
-        Math.max(number, other.number),
-        unsupported || other.unsupported,
-        es6Modules || other.es6Modules,
-        typeScript || other.typeScript);
+    return new FeatureSet(Sets.union(features, other.features));
   }
 
   /**
    * Does this {@link FeatureSet} contain all of the features of {@code other}?
    */
   public boolean contains(FeatureSet other) {
-    return this.number >= other.number
-        && (this.unsupported || !other.unsupported)
-        && (this.es6Modules || !other.es6Modules)
-        && (this.typeScript || !other.typeScript);
+    return this.features.containsAll(other.features);
   }
 
-  /** Returns a feature set combining all the features from {@code this} and {@code feature}. */
-  public FeatureSet require(Feature feature) {
-    return require(feature.features);
+  /** Returns a feature set combining all the features from {@code this} and {@code newFeatures}. */
+  public FeatureSet with(Feature... newFeatures) {
+    return new FeatureSet(Sets.union(features, ImmutableSet.copyOf(newFeatures)));
+  }
+
+  /** Returns a feature set combining all the features from {@code this} and {@code newFeatures}. */
+  public FeatureSet with(Set<Feature> newFeatures) {
+    return new FeatureSet(Sets.union(features, newFeatures));
   }
 
   /**
    * Does this {@link FeatureSet} include {@code feature}?
    */
-  public boolean contains(Feature feature) {
-    return contains(feature.features());
+  public boolean has(Feature feature) {
+    return features.contains(feature);
   }
 
   @Override
   public boolean equals(Object other) {
-    return other instanceof FeatureSet
-        && ((FeatureSet) other).number == number
-        && ((FeatureSet) other).unsupported == unsupported
-        && ((FeatureSet) other).es6Modules == es6Modules
-        && ((FeatureSet) other).typeScript == typeScript;
+    return other instanceof FeatureSet && ((FeatureSet) other).features.equals(features);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(number, unsupported, es6Modules, typeScript);
+    return features.hashCode();
   }
 
   @Override
   public String toString() {
-    return "FeatureSet{number=" + number
-        + (unsupported ? ", unsupported" : "")
-        + (es6Modules ? ", es6Modules" : "")
-        + (typeScript ? ", typeScript" : "")
-        + "}";
-  }
-
-  /** Returns a the name of a corresponding LanguageMode enum element. */
-  public String toLanguageModeString() {
-    return "ECMASCRIPT" + number;
+    return features.toString();
   }
 
   /** Parses known strings into feature sets. */
@@ -256,9 +271,12 @@ public final class FeatureSet implements Serializable {
       case "es5":
         return ES5;
       case "es6-impl":
-        return ES6_IMPL;
       case "es6":
         return ES6;
+      case "es7":
+        return ES7;
+      case "es8":
+        return ES8;
       case "ts":
         return TYPESCRIPT;
       default:
@@ -266,8 +284,7 @@ public final class FeatureSet implements Serializable {
     }
   }
 
-  public boolean isEs6ImplOrHigher() {
-    String version = version();
-    return !version.equals("es3") && !version.equals("es5");
+  public static FeatureSet latest() {
+    return TYPESCRIPT;
   }
 }

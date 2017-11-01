@@ -15,14 +15,11 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.jstype.JSType;
 
 /** An optimization pass to re-write J2CL Equality.$same. */
-public class J2clEqualitySameRewriterPass extends AbstractPostOrderCallback
-    implements CompilerPass {
+public class J2clEqualitySameRewriterPass extends AbstractPeepholeOptimization {
 
   /** Whether to use "==" or "===". */
   private static enum Eq {
@@ -30,66 +27,55 @@ public class J2clEqualitySameRewriterPass extends AbstractPostOrderCallback
     TRIPLE
   }
 
-  private final AbstractCompiler compiler;
+  private boolean shouldRunJ2clPasses = false;
 
-  J2clEqualitySameRewriterPass(AbstractCompiler compiler) {
-    this.compiler = compiler;
+  @Override
+  void beginTraversal(AbstractCompiler compiler) {
+    super.beginTraversal(compiler);
+    shouldRunJ2clPasses = J2clSourceFileChecker.shouldRunJ2clPasses(compiler);
   }
 
   @Override
-  public void process(Node externs, Node root) {
-    if (!J2clSourceFileChecker.shouldRunJ2clPasses(compiler)) {
-      return;
+  Node optimizeSubtree(Node node) {
+    if (!shouldRunJ2clPasses) {
+      return node;
     }
 
-    NodeTraversal.traverseEs6(compiler, root, this);
-  }
-
-  @Override
-  public void visit(NodeTraversal t, Node node, Node parent) {
-    if (isEqualitySameCall(node)) {
-      trySubstituteEqualitySame(node);
+    if (!isEqualitySameCall(node)) {
+      return node;
     }
+
+    Node replacement = trySubstituteEqualitySame(node);
+    if (replacement != node) {
+      replacement = replacement.useSourceInfoIfMissingFrom(node);
+      node.replaceWith(replacement);
+      compiler.reportChangeToEnclosingScope(replacement);
+    }
+    return replacement;
   }
 
-  private void trySubstituteEqualitySame(Node callNode) {
+  private Node trySubstituteEqualitySame(Node callNode) {
     Node firstExpr = callNode.getSecondChild();
     Node secondExpr = callNode.getLastChild();
 
     if (NodeUtil.isNullOrUndefined(firstExpr) || NodeUtil.isNullOrUndefined(secondExpr)) {
       // At least one side is null or undefined so no coercion danger.
-      rewriteToEq(callNode, firstExpr, secondExpr, Eq.DOUBLE);
-      return;
+      return rewriteToEq(firstExpr, secondExpr, Eq.DOUBLE);
     }
 
     if (NodeUtil.isLiteralValue(firstExpr, true) || NodeUtil.isLiteralValue(secondExpr, true)) {
       // There is a coercion danger but since at least one side is not null, we can use === that
       // will not trigger any coercion.
-      rewriteToEq(callNode, firstExpr, secondExpr, Eq.TRIPLE);
-      return;
+      return rewriteToEq(firstExpr, secondExpr, Eq.TRIPLE);
     }
 
-    // "--use_types_for_optimization" must be on to enable the following type check.
-    if (!compiler.getOptions().useTypesForLocalOptimization) {
-      return;
-    }
-
-    JSType firstType = getTypeRestrictByNotNullOrUndefined(firstExpr);
-    JSType secondType = getTypeRestrictByNotNullOrUndefined(secondExpr);
-    if (isObjectType(firstType) || isObjectType(secondType) || sameType(firstType, secondType)) {
-      // Typeof is same for both so no coersion danger.
-      rewriteToEq(callNode, firstExpr, secondExpr, Eq.DOUBLE);
-      return;
-    }
+    return callNode;
   }
 
-  private void rewriteToEq(Node callNode, Node firstExpr, Node secondExpr, Eq eq) {
+  private Node rewriteToEq(Node firstExpr, Node secondExpr, Eq eq) {
     firstExpr.detach();
     secondExpr.detach();
-    Node replacement =
-        eq == Eq.DOUBLE ? IR.eq(firstExpr, secondExpr) : IR.sheq(firstExpr, secondExpr);
-    callNode.replaceWith(replacement.useSourceInfoIfMissingFrom(callNode));
-    compiler.reportCodeChange();
+    return eq == Eq.DOUBLE ? IR.eq(firstExpr, secondExpr) : IR.sheq(firstExpr, secondExpr);
   }
 
   private static boolean isEqualitySameCall(Node node) {
@@ -101,25 +87,8 @@ public class J2clEqualitySameRewriterPass extends AbstractPostOrderCallback
       return false;
     }
     // NOTE: This should be rewritten to use method name + file name of definition site
-    // like other j2cl passes, which is more precise.
+    // like other J2CL passes, which is more precise.
     String originalQname = fnName.getOriginalQualifiedName();
     return originalQname.endsWith(".$same") && originalQname.contains("Equality");
-  }
-
-  private static JSType getTypeRestrictByNotNullOrUndefined(Node node) {
-    JSType jsType = node.getJSType();
-    return jsType == null ? null : jsType.restrictByNotNullOrUndefined();
-  }
-
-  private static boolean isObjectType(JSType jsType) {
-    return !isUnknownType(jsType) && jsType.isObject();
-  }
-
-  private static boolean sameType(JSType jsType1, JSType jsType2) {
-    return !isUnknownType(jsType1) && !isUnknownType(jsType2) && jsType1.equals(jsType2);
-  }
-
-  private static boolean isUnknownType(JSType jsType) {
-    return jsType == null || jsType.isUnknownType() || jsType.isNoType() || jsType.isAllType();
   }
 }

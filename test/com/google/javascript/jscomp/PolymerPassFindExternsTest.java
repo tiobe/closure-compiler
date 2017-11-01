@@ -20,10 +20,11 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.Node;
 
-public final class PolymerPassFindExternsTest extends Es6CompilerTestCase {
+public final class PolymerPassFindExternsTest extends TypeICompilerTestCase {
 
   private static final String EXTERNS =
       LINE_JOINER.join(
+          MINIMAL_EXTERNS,
           "/** @constructor */",
           "var HTMLElement = function() {};",
           "/** @constructor @extends {HTMLElement} */",
@@ -74,10 +75,10 @@ public final class PolymerPassFindExternsTest extends Es6CompilerTestCase {
   @Override
   protected void setUp() throws Exception {
     super.setUp();
-    allowExternsChanges(true);
-    enableTypeCheck();
-    runTypeCheckAfterProcessing = true;
-    parseTypeInfo = true;
+    allowExternsChanges();
+    this.mode = TypeInferenceMode.BOTH;
+    enableRunTypeCheckAfterProcessing();
+    enableParseTypeInfo();
   }
 
   @Override
@@ -108,8 +109,8 @@ public final class PolymerPassFindExternsTest extends Es6CompilerTestCase {
   }
 
   private String getPropertyName(Node node) {
-    Node rightName = node.getFirstChild().getChildAtIndex(1);
+    Node rightName = node.getFirstChild().getSecondChild();
     return rightName.isFunction()
-        ? node.getFirstFirstChild().getChildAtIndex(1).getString() : rightName.getString();
+        ? node.getFirstFirstChild().getSecondChild().getString() : rightName.getString();
   }
 }

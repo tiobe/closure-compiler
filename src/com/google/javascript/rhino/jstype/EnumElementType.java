@@ -39,7 +39,7 @@
 
 package com.google.javascript.rhino.jstype;
 
-
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
@@ -120,16 +120,16 @@ public class EnumElementType extends ObjectType {
     return primitiveType.testForEquality(that);
   }
 
-  /**
-   * This predicate determines whether objects of this type can have the null
-   * value, and therefore can appear in contexts where null is expected.
-   *
-   * @return true for everything but Number and Boolean types.
-   */
   @Override
   public boolean isNullable() {
     return primitiveType.isNullable();
   }
+
+  @Override
+  public boolean isVoidable() {
+    return primitiveType.isVoidable();
+  }
+
 
   @Override
   public boolean isNominalType() {
@@ -142,18 +142,17 @@ public class EnumElementType extends ObjectType {
    */
   @Override
   public int hashCode() {
-    if (hasReferenceName()) {
-      return getReferenceName().hashCode();
-    } else {
-      return super.hashCode();
-    }
+    checkState(hasReferenceName());
+    return getReferenceName().hashCode();
   }
 
   @Override
-  String toStringHelper(boolean forAnnotations) {
-    return forAnnotations ?
-        primitiveType.toString() :
-        (getReferenceName() + "<" + primitiveType + ">");
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
+    if (forAnnotations) {
+      // TODO(dimvar): this should use getReferenceName() instead of this.primitiveType
+      return sb.append(this.primitiveType);
+    }
+    return sb.append(getReferenceName()).append("<").append(this.primitiveType).append(">");
   }
 
   @Override

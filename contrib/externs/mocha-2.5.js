@@ -24,36 +24,87 @@
  * @see https://mochajs.org/
  */
 
+/**
+ * @typedef {function(function(*=): *): (*|IThenable<*>)}
+ */
+var ActionFunction;
+
 // Below are the externs for the TDD API: https://mochajs.org/#tdd
 
 /**
- * @param {string} name
- * @param {!Function} cb
+ * @param {string} description
+ * @param {function(): void} spec
  */
-var suite = function(name, cb) {};
+var suite = function(description, spec) {};
 
 /**
- * @param {!Function} cb
+ * @param {!ActionFunction} action
  */
-var setup = function(cb) {};
+var setup = function(action) {};
 
 /**
- * @param {!Function} cb
+ * @param {!ActionFunction} action
  */
-var teardown = function(cb) {};
+var teardown = function(action) {};
 
 /**
- * @param {!Function} cb
+ * @param {!ActionFunction} action
  */
-var suiteSetup = function(cb) {};
+var suiteSetup = function(action) {};
 
 /**
- * @param {!Function} cb
+ * @param {!ActionFunction} action
  */
-var suiteTeardown = function(cb) {};
+var suiteTeardown = function(action) {};
 
 /**
- * @param {string} name
- * @param {!Function} cb
+ * @param {string} expectation
+ * @param {!ActionFunction=} assertion
  */
-var test = function(name, cb) {};
+var test = function(expectation, assertion) {};
+
+// Below are the externs for the BDD API: https://mochajs.org/#bdd
+
+/**
+ * @param {string} description
+ * @param {function(): void} spec
+ */
+var describe = function(description, spec) {};
+
+/**
+ * @param {string} description
+ * @param {function(): void} spec
+ */
+var context = function(description, spec) {};
+
+/**
+ * @param {string} expectation
+ * @param {!ActionFunction=} assertion
+ */
+var it = function(expectation, assertion) {};
+
+/**
+ * @param {string} expectation
+ * @param {!ActionFunction=} assertion
+ */
+var specify = function(expectation, assertion) {};
+
+/**
+ * @param {!ActionFunction} action
+ */
+var before = function(action) {};
+
+/**
+ * @param {!ActionFunction} action
+ */
+var after = function(action) {};
+
+/**
+ * @param {!ActionFunction} action
+ */
+var beforeEach = function(action) {};
+
+/**
+ * @param {!ActionFunction} action
+ */
+var afterEach = function(action) {};

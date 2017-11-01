@@ -22,12 +22,10 @@ import static com.google.javascript.rhino.jstype.JSTypeNative.NUMBER_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.STRING_TYPE;
 
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.TypeValidator.TypeMismatch;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
-
 import java.util.Collections;
 import java.util.List;
 
@@ -37,16 +35,14 @@ import java.util.List;
  * @author nicksantos@google.com (Nick Santos)
  */
 public final class TypeValidatorTest extends CompilerTestCase {
-
-  private Compiler compiler = null;
-
-  public TypeValidatorTest() {
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
     enableTypeCheck();
   }
 
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    this.compiler = compiler;
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node n) {
@@ -55,23 +51,25 @@ public final class TypeValidatorTest extends CompilerTestCase {
     };
   }
 
-  @Override public int getNumRepetitions() { return 1; }
+  @Override
+  protected int getNumRepetitions() {
+    return 1;
+  }
 
   public void testBasicMismatch() throws Exception {
-    testSame("/** @param {number} x */ function f(x) {} f('a');",
-        TYPE_MISMATCH_WARNING);
+    testWarning("/** @param {number} x */ function f(x) {} f('a');", TYPE_MISMATCH_WARNING);
     assertMismatches(ImmutableList.of(fromNatives(STRING_TYPE, NUMBER_TYPE)));
   }
 
   public void testFunctionMismatch() throws Exception {
-    testSame(
-        "/** \n" +
-        " * @param {function(string): number} x \n" +
-        " * @return {function(boolean): string} \n" +
-        " */ function f(x) { return x; }",
+    testWarning(
+        "/** \n"
+            + " * @param {function(string): number} x \n"
+            + " * @return {function(boolean): string} \n"
+            + " */ function f(x) { return x; }",
         TYPE_MISMATCH_WARNING);
 
-    JSTypeRegistry registry = compiler.getTypeRegistry();
+    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
     JSType string = registry.getNativeType(STRING_TYPE);
     JSType bool = registry.getNativeType(BOOLEAN_TYPE);
     JSType number = registry.getNativeType(NUMBER_TYPE);
@@ -86,14 +84,14 @@ public final class TypeValidatorTest extends CompilerTestCase {
   }
 
   public void testFunctionMismatch2() throws Exception {
-    testSame(
-        "/** \n" +
-        " * @param {function(string): number} x \n" +
-        " * @return {function(boolean): number} \n" +
-        " */ function f(x) { return x; }",
+    testWarning(
+        "/** \n"
+            + " * @param {function(string): number} x \n"
+            + " * @return {function(boolean): number} \n"
+            + " */ function f(x) { return x; }",
         TYPE_MISMATCH_WARNING);
 
-    JSTypeRegistry registry = compiler.getTypeRegistry();
+    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
     JSType string = registry.getNativeType(STRING_TYPE);
     JSType bool = registry.getNativeType(BOOLEAN_TYPE);
     JSType number = registry.getNativeType(NUMBER_TYPE);
@@ -131,7 +129,9 @@ public final class TypeValidatorTest extends CompilerTestCase {
             "  c: string,",
             "  d: string,",
             "  e: string",
-            "}"));
+            "}",
+            "missing : []",
+            "mismatch: [e]"));
   }
 
   /**
@@ -154,7 +154,9 @@ public final class TypeValidatorTest extends CompilerTestCase {
             "found   : {a: string, b: string, c: string, d: string, e: string, f: string,"
               + " g: string, h: string, i: string, j: string, k: (number|string)}",
             "required: {a: string, b: string, c: string, d: string, e: string, f: string,"
-              + " g: string, h: string, i: string, j: string, k: string}"));
+              + " g: string, h: string, i: string, j: string, k: string}",
+            "missing : []",
+            "mismatch: [k]"));
   }
 
   /**
@@ -180,27 +182,31 @@ public final class TypeValidatorTest extends CompilerTestCase {
             "found   : {a: string, b: string, c: string, d: string, e: string, f: string,"
               + " g: string, h: string, i: string, j: string, k: (number|string)}",
             "required: {a: string, b: string, c: string, d: string, e: string, f: string,"
-              + " g: string, h: string, i: string, j: string, k: string}"));
+              + " g: string, h: string, i: string, j: string, k: string}",
+            "missing : []",
+            "mismatch: [k]"));
   }
 
   public void testNullUndefined() {
-    testSame("/** @param {string} x */ function f(x) {}\n" +
-             "f(/** @type {string|null|undefined} */ ('a'));",
-             TYPE_MISMATCH_WARNING);
+    testWarning(
+        "/** @param {string} x */ function f(x) {}\n"
+            + "f(/** @type {string|null|undefined} */ ('a'));",
+        TYPE_MISMATCH_WARNING);
     assertMismatches(Collections.<TypeMismatch>emptyList());
   }
 
   public void testSubclass() {
-    testSame("/** @constructor */\n"  +
-             "function Super() {}\n" +
-             "/**\n" +
-             " * @constructor\n" +
-             " * @extends {Super}\n" +
-             " */\n" +
-             "function Sub() {}\n" +
-             "/** @param {Sub} x */ function f(x) {}\n" +
-             "f(/** @type {Super} */ (new Sub));",
-             TYPE_MISMATCH_WARNING);
+    testWarning(
+        "/** @constructor */\n"
+            + "function Super() {}\n"
+            + "/**\n"
+            + " * @constructor\n"
+            + " * @extends {Super}\n"
+            + " */\n"
+            + "function Sub() {}\n"
+            + "/** @param {Sub} x */ function f(x) {}\n"
+            + "f(/** @type {Super} */ (new Sub));",
+        TYPE_MISMATCH_WARNING);
     assertMismatches(Collections.<TypeMismatch>emptyList());
   }
 
@@ -337,7 +343,7 @@ public final class TypeValidatorTest extends CompilerTestCase {
 
   public void testModuloNullUndef12() {
     // Only warn for the file not ending in .java.js
-    test(ImmutableList.of(
+    testWarning(ImmutableList.of(
         SourceFile.fromCode(
             "foo.js",
             LINE_JOINER.join(
@@ -350,8 +356,6 @@ public final class TypeValidatorTest extends CompilerTestCase {
                 "function g(/** number */ to, /** (number|null) */ from) {",
                 "  to = from;",
                 "}"))),
-        null,
-        null,
         TypeValidator.TYPE_MISMATCH_WARNING);
   }
 
@@ -436,29 +440,28 @@ public final class TypeValidatorTest extends CompilerTestCase {
         "/** @type {number} @suppress {duplicate} */",
         "ns1.x = 3;"));
 
-    testSame(LINE_JOINER.join(
-        "/** @const */",
-        "var ns2 = {};",
-        "/** @type {number} */",
-        "ns2.x = 3;",
-        "/** @type {number} */",
-        "ns2.x = 3;"),
+    testWarning(
+        LINE_JOINER.join(
+            "/** @const */",
+            "var ns2 = {};",
+            "/** @type {number} */",
+            "ns2.x = 3;",
+            "/** @type {number} */",
+            "ns2.x = 3;"),
         TypeValidator.DUP_VAR_DECLARATION);
 
-    testSame(LINE_JOINER.join(
-        "/** @const */",
-        "var ns3 = {};",
-        "/** @type {number} */",
-        "ns3.x;",
-        "/** @type {string} @suppress {duplicate} */",
-        "ns3.x;"),
+    testWarning(
+        LINE_JOINER.join(
+            "/** @const */",
+            "var ns3 = {};",
+            "/** @type {number} */",
+            "ns3.x;",
+            "/** @type {string} @suppress {duplicate} */",
+            "ns3.x;"),
         TypeValidator.DUP_VAR_DECLARATION_TYPE_MISMATCH);
 
-    testSame(LINE_JOINER.join(
-        "/** @type {number} */",
-        "var w;",
-        "/** @type {number} */",
-        "var w;"),
+    testWarning(
+        LINE_JOINER.join("/** @type {number} */", "var w;", "/** @type {number} */", "var w;"),
         TypeValidator.DUP_VAR_DECLARATION);
 
     testSame(LINE_JOINER.join(
@@ -467,29 +470,28 @@ public final class TypeValidatorTest extends CompilerTestCase {
         "/** @type {number} @suppress {duplicate} */",
         "var x;"));
 
-    testSame(LINE_JOINER.join(
-        "/** @type {number} */",
-        "var y = 3;",
-        "/** @type {number} */",
-        "var y = 3;"),
+    testWarning(
+        LINE_JOINER.join(
+            "/** @type {number} */", "var y = 3;", "/** @type {number} */", "var y = 3;"),
         TypeValidator.DUP_VAR_DECLARATION);
 
-    testSame(LINE_JOINER.join(
-        "/** @type {number} */",
-        "var z;",
-        "/** @type {string} @suppress {duplicate} */",
-        "var z;"),
+    testWarning(
+        LINE_JOINER.join(
+            "/** @type {number} */",
+            "var z;",
+            "/** @type {string} @suppress {duplicate} */",
+            "var z;"),
         TypeValidator.DUP_VAR_DECLARATION_TYPE_MISMATCH);
   }
 
   private TypeMismatch fromNatives(JSTypeNative a, JSTypeNative b) {
-    JSTypeRegistry registry = compiler.getTypeRegistry();
+    JSTypeRegistry registry = getLastCompiler().getTypeRegistry();
     return new TypeMismatch(
         registry.getNativeType(a), registry.getNativeType(b), null);
   }
 
   private void assertMismatches(List<TypeMismatch> expected) {
-    List<TypeMismatch> actual = ImmutableList.copyOf(compiler.getTypeMismatches());
+    List<TypeMismatch> actual = ImmutableList.copyOf(getLastCompiler().getTypeMismatches());
     assertEquals(expected, actual);
   }
 }

@@ -45,11 +45,11 @@ public class J2clPass implements CompilerPass {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       if (isUtilGetDefineCall(n)) {
-        substituteUtilGetDefine(n);
+        substituteUtilGetDefine(t, n);
       }
     }
 
-    private void substituteUtilGetDefine(Node callNode) {
+    private void substituteUtilGetDefine(NodeTraversal t, Node callNode) {
       Node firstExpr = callNode.getSecondChild();
       Node secondExpr = callNode.getLastChild();
 
@@ -63,7 +63,7 @@ public class J2clPass implements CompilerPass {
       Node replacement = getDefineReplacement(firstExpr, secondExpr);
       replacement.useSourceInfoIfMissingFromForTree(callNode);
       callNode.replaceWith(replacement);
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
 
     private Node getDefineReplacement(Node firstExpr, Node secondExpr) {
@@ -91,7 +91,7 @@ public class J2clPass implements CompilerPass {
    *
    * <p>e.g. "let $RegExp = window.RegExp; var foo = new $RegExp;" becomes "var foo = new RegExp;"
    */
-  private class NativeAliasInliner extends AbstractPostOrderCallback {
+  private static class NativeAliasInliner extends AbstractPostOrderCallback {
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
@@ -103,7 +103,7 @@ public class J2clPass implements CompilerPass {
             && declaringNode.getFirstChild() != n
             && isNativeAlias(declaringNode)) {
           parent.replaceChild(n, declaringNode.getFirstFirstChild().cloneTree());
-          compiler.reportCodeChange();
+          t.reportCodeChange();
         }
       }
     }
@@ -234,26 +234,32 @@ public class J2clPass implements CompilerPass {
     /*
      * Re-writes Util.getDefine to make it work for compiled mode.
      */
-    Set<String> defines = new ProcessDefines(compiler, null).collectDefines(root).keySet();
+    Set<String> defines =
+        new ProcessDefines(compiler, null, true).collectDefines(externs, root).keySet();
     NodeTraversal.traverseEs6(compiler, root, new GetDefineRewriter(defines));
 
     /*
      * Inlines Arrays.$create(), Arrays.$init(), Arrays.$instanceIsOfType(), Arrays.$castTo() and
-     * Casts.to() so that all references to Object.$isInstance() functions will be fully qualified
+     * Casts.$to() so that all references to Object.$isInstance() functions will be fully qualified
      * and easy to strip.
      */
     inlineFunctionsInFile(
         root,
         "vmbootstrap/Arrays.impl.java.js",
-        ImmutableSet.of("$create", "$init", "$instanceIsOfType", "$castTo"),
+        ImmutableSet.of("$create", "$init", "$instanceIsOfType", "$castTo", "$stampType"),
         InliningMode.DIRECT);
     inlineFunctionsInFile(
-        root, "vmbootstrap/Casts.impl.java.js", ImmutableSet.of("to"), InliningMode.DIRECT);
+        root, "vmbootstrap/Casts.impl.java.js", ImmutableSet.of("$to"), InliningMode.DIRECT);
 
     /*
      * Inlines all Interface.$markImplementor(FooClass) metaclass calls so that FooClass and others
      * like it are not unnecessarily retained and so that static analysis of interface instanceof
      * calls becomes possible.
+     *
+     * Note that his pass should NOT be restricted to j2cl .java.js files because JavaScript code
+     * implementing Java interfaces (not recommended but widely used in xplat) needs calls to
+     * $markImplementor.
+     *
      */
     inlineFunctionsInFile(
         root, ALL_CLASS_FILE_NAMES, ImmutableSet.of("$markImplementor"), InliningMode.BLOCK);

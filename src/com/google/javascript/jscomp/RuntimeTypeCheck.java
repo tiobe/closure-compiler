@@ -161,7 +161,7 @@ class RuntimeTypeCheck implements CompilerPass {
           IR.trueNode()));
 
       nodeToInsertAfter.getParent().addChildAfter(assign, nodeToInsertAfter);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(assign);
       nodeToInsertAfter = assign;
       return nodeToInsertAfter;
     }
@@ -187,7 +187,7 @@ class RuntimeTypeCheck implements CompilerPass {
     }
 
     private static Node findEnclosingConstructorDeclaration(Node n) {
-      while (!n.getParent().isScript() && !n.getParent().isBlock()) {
+      while (!n.getParent().isScript() && !n.getParent().isNormalBlock()) {
         n = n.getParent();
       }
       return n;
@@ -265,7 +265,7 @@ class RuntimeTypeCheck implements CompilerPass {
           block.addChildAfter(checkNode, insertionPoint);
         }
 
-        compiler.reportCodeChange();
+        compiler.reportChangeToEnclosingScope(block);
         paramName = paramName.getNext();
         insertionPoint = checkNode;
       }
@@ -288,7 +288,7 @@ class RuntimeTypeCheck implements CompilerPass {
       }
 
       n.replaceChild(retValue, checkNode);
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
 
     /**
@@ -382,7 +382,7 @@ class RuntimeTypeCheck implements CompilerPass {
                   compiler,
                   logFunction)));
       newNode.getParent().addChildAfter(logOverride, newNode);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(newNode);
     }
   }
 

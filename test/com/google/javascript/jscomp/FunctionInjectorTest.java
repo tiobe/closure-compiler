@@ -16,6 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.javascript.jscomp.CompilerTestCase.LINE_JOINER;
+
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.AbstractCompiler.LifeCycleStage;
 import com.google.javascript.jscomp.FunctionInjector.CanInlineResult;
@@ -23,12 +26,10 @@ import com.google.javascript.jscomp.FunctionInjector.InliningMode;
 import com.google.javascript.jscomp.FunctionInjector.Reference;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
-
-import junit.framework.TestCase;
-
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import junit.framework.TestCase;
 
 /**
  * Inline function tests.
@@ -39,7 +40,7 @@ public final class FunctionInjectorTest extends TestCase {
   static final InliningMode INLINE_DIRECT = InliningMode.DIRECT;
   static final InliningMode INLINE_BLOCK = InliningMode.BLOCK;
   private boolean assumeStrictThis = false;
-  private boolean assumeMinimumCapture = false;
+  private final boolean assumeMinimumCapture = false;
 
   @Override
   protected void setUp() throws Exception {
@@ -933,12 +934,21 @@ public final class FunctionInjectorTest extends TestCase {
   public void testInline18() {
     // This doesn't bring names into the global name space.
     helperInlineReferenceToFunction(
-        "function foo(a){var b;return a;}; " +
-            "function x() { foo(goo()); }",
-            "function foo(a){var b;return a;}; " +
-            "function x() {{var a$jscomp$inline_0=goo();" +
-                "var b$jscomp$inline_1;a$jscomp$inline_0}}",
-        "foo", INLINE_BLOCK);
+        "function foo(a){var b;return a;} function x() { foo(goo()); }",
+        LINE_JOINER.join(
+            "function foo(a) {",
+            "  var b;",
+            "  return a;",
+            "}",
+            "function x() {",
+            "  {",
+            "    var a$jscomp$inline_0 = goo();",
+            "    var b$jscomp$inline_1;",
+            "    a$jscomp$inline_0;",
+            "  }",
+            "}"),
+        "foo",
+        INLINE_BLOCK);
   }
 
   public void testInline19() {
@@ -972,14 +982,28 @@ public final class FunctionInjectorTest extends TestCase {
         "foo", INLINE_BLOCK);
   }
 
+  public void testInline20() {
+    // cloned FUNCTION node must be reported as being added.
+    helperInlineReferenceToFunction(
+        "function foo(a){return a}; foo(function(){});",
+        "function foo(a){return a}; (function(){})",
+        "foo", INLINE_DIRECT);
+  }
+
+  public void testInline21() {
+    // cloned FUNCTION node must be reported as being added.
+    helperInlineReferenceToFunction(
+        "function foo(a){return a}; foo(function(){});",
+        "function foo(a){return a}; {(function(){})}",
+        "foo", INLINE_BLOCK);
+  }
+
   public void testInlineIntoLoop() {
     helperInlineReferenceToFunction(
-        "function foo(a){var b;return a;}; " +
-        "for(;1;){ foo(1); }",
-        "function foo(a){var b;return a;}; " +
-        "for(;1;){ {" +
-            "var b$jscomp$inline_1=void 0;1}}",
-        "foo", INLINE_BLOCK);
+        "function foo(a){var b;return a;}; for(;1;){ foo(1); }",
+        "function foo(a){var b;return a;}; for(;1;){ { var b$jscomp$inline_1=void 0;1} }",
+        "foo",
+        INLINE_BLOCK);
 
     helperInlineReferenceToFunction(
         "function foo(a){var b;return a;}; " +
@@ -1031,18 +1055,28 @@ public final class FunctionInjectorTest extends TestCase {
     // Call with inner function expression.
     helperInlineReferenceToFunction(
         "function foo(){return function() {var a; return true;}}; foo();",
-        "function foo(){return function() {var a; return true;}};" +
-            "{(function() {var a$jscomp$inline_0; return true;});}",
+        LINE_JOINER.join(
+            "function foo(){return function() {var a; return true;}};",
+            "{(function() {var a$jscomp$inline_0; return true;});}"),
         "foo", INLINE_BLOCK);
   }
 
   public void testInlineFunctionWithInnerFunction5() {
     // Call with inner function statement.
     helperInlineReferenceToFunction(
-        "function foo(){function x() {var a; return true;} return x}; foo();",
-        "function foo(){function x(){var a;return true}return x};" +
-            "{var x$jscomp$inline_0 = function(){" +
-            "var a$jscomp$inline_1;return true};x$jscomp$inline_0}",
+        "function foo(){function x() {var a; return true;} return x} foo();",
+        LINE_JOINER.join(
+            "function foo() {",
+            "  function x() { var a; return true; }",
+            "  return x;",
+            "}",
+            "{",
+            "  var x$jscomp$inline_0 = function(){",
+            "    var a$jscomp$inline_1;",
+            "    return true;",
+            "  };",
+            "  x$jscomp$inline_0;",
+            "}"),
         "foo", INLINE_BLOCK);
   }
 
@@ -1493,34 +1527,41 @@ public final class FunctionInjectorTest extends TestCase {
             ref, fnNode, unsafe,
             NodeUtil.referencesThis(fnNode),
             NodeUtil.containsFunction(NodeUtil.getFunctionBody(fnNode)));
-        assertTrue("canInlineReferenceToFunction should not be CAN_NOT_INLINE",
-            CanInlineResult.NO != canInline);
+        assertWithMessage("canInlineReferenceToFunction should not be CAN_NOT_INLINE")
+            .that(canInline)
+            .isNotEqualTo(CanInlineResult.NO);
         if (decompose) {
-          assertSame("canInlineReferenceToFunction " + "should be CAN_INLINE_AFTER_DECOMPOSITION",
-              canInline, CanInlineResult.AFTER_PREPARATION);
+          assertSame(
+              "canInlineReferenceToFunction should be CAN_INLINE_AFTER_DECOMPOSITION",
+              canInline,
+              CanInlineResult.AFTER_PREPARATION);
 
           Set<String> knownConstants = new HashSet<>();
           injector.setKnownConstants(knownConstants);
           injector.maybePrepareCall(ref);
 
-          assertTrue("canInlineReferenceToFunction " +
-              "should be CAN_INLINE",
-              CanInlineResult.YES != canInline);
+          assertWithMessage("canInlineReferenceToFunction should be CAN_INLINE")
+              .that(canInline)
+              .isNotEqualTo(CanInlineResult.YES);
         }
 
         Node result = injector.inline(ref, fnName, fnNode);
         validateSourceInfo(compiler, result);
         String explanation = expectedRoot.checkTreeEquals(tree.getFirstChild());
-        assertNull("\nExpected: " + toSource(expectedRoot) +
-            "\nResult: " + toSource(tree.getFirstChild()) +
-            "\n" + explanation, explanation);
+        assertNull(""
+            + "\nExpected: " + toSource(expectedRoot)
+            + "\nResult:   " + toSource(tree.getFirstChild())
+            + "\n" + explanation, explanation);
         return true;
       }
     };
 
     compiler.resetUniqueNameId();
+
+    ChangeVerifier verifier = new ChangeVerifier(compiler).snapshot(mainRoot);
     TestCallback test = new TestCallback(fnName, tester);
     NodeTraversal.traverseEs6(compiler, tree, test);
+    verifier.checkRecordedChanges("helperInlineReferenceToFunction", mainRoot);
   }
 
   interface Method {

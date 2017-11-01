@@ -19,7 +19,6 @@ package com.google.javascript.jscomp.lint;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.DiagnosticGroups;
 import com.google.javascript.jscomp.TypeICompilerTestCase;
@@ -29,7 +28,8 @@ import com.google.javascript.jscomp.TypeICompilerTestCase;
  *
  */
 public final class CheckNullableReturnTest extends TypeICompilerTestCase {
-  private static String externs = DEFAULT_EXTERNS + "/** @constructor */ function SomeType() {}";
+  private static final String EXTERNS =
+      DEFAULT_EXTERNS + "/** @constructor */ function SomeType() {}";
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
@@ -39,13 +39,19 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
   @Override
   protected CompilerOptions getOptions(CompilerOptions options) {
     super.getOptions(options);
-    options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.ANALYZER_CHECKS, CheckLevel.WARNING);
     return options;
   }
 
   @Override
   protected int getNumRepetitions() {
     return 1;
+  }
+
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    enableTranspile();
   }
 
   public void testSimpleWarning() {
@@ -130,7 +136,6 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
         "    return new SomeType();",
         "  }",
         "}"));
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
     testError(LINE_JOINER.join(
         "var obj = {",
         "  /** @return {SomeType} */",
@@ -154,7 +159,6 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
         "    return new SomeType();",
         "  }",
         "}"));
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
     testError(LINE_JOINER.join(
         "var obj = {",
         "  /** @return {SomeType} */",
@@ -210,7 +214,6 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
     testOk(LINE_JOINER.join(
         "/** @return {SomeType} */",
         "function f() {}"));
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
     testOk(LINE_JOINER.join(
         "var obj = {",
         "  /** @return {SomeType} */\n",
@@ -227,7 +230,6 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
         "function f4(arr) {",
         "  return arr[0] || null;",
         "}"));
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
     testOk(LINE_JOINER.join(
         "var obj = {",
         "  /**",
@@ -242,11 +244,9 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
 
   public void testNonfunctionTypeDoesntCrash() {
     enableClosurePass();
-    test(DEFAULT_EXTERNS,
-        "goog.forwardDeclare('FunType'); /** @type {!FunType} */ (function() { return; })",
-        (String) null,
-        null,
-        null);
+    testNoWarning(
+        DEFAULT_EXTERNS,
+        "goog.forwardDeclare('FunType'); /** @type {!FunType} */ (function() { return; })");
   }
 
   private static String createFunction(String body) {
@@ -258,22 +258,20 @@ public final class CheckNullableReturnTest extends TypeICompilerTestCase {
   }
 
   private void testOk(String js) {
-    testSame(externs, js, null);
+    testSame(EXTERNS, js);
   }
 
   private void testError(String js) {
-    testSame(externs, js, CheckNullableReturn.NULLABLE_RETURN_WITH_NAME);
+    testSame(EXTERNS, js, CheckNullableReturn.NULLABLE_RETURN_WITH_NAME);
   }
 
   private void testBodyOk(String body) {
     testOk(createFunction(body));
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
     testOk(createShorthandFunctionInObjLit(body));
   }
 
   private void testBodyError(String body) {
     testError(createFunction(body));
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
     testError(createShorthandFunctionInObjLit(body));
   }
 }

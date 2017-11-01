@@ -35,6 +35,9 @@ class RhinoErrorReporter {
   static final DiagnosticType TYPE_PARSE_ERROR =
       DiagnosticType.warning("JSC_TYPE_PARSE_ERROR", "{0}");
 
+  static final DiagnosticType UNRECOGNIZED_TYPE_ERROR =
+      DiagnosticType.warning("JSC_UNRECOGNIZED_TYPE_ERROR", "{0}");
+
   // This is separate from TYPE_PARSE_ERROR because there are many instances of this warning
   // and it is unfeasible to fix them all right away.
   static final DiagnosticType JSDOC_MISSING_BRACES_WARNING =
@@ -59,6 +62,9 @@ class RhinoErrorReporter {
 
   static final DiagnosticType DUPLICATE_PARAM =
       DiagnosticType.error("JSC_DUPLICATE_PARAM", "Parse error. {0}");
+
+  static final DiagnosticType UNNECESSARY_ESCAPE =
+      DiagnosticType.disabled("JSC_UNNECESSARY_ESCAPE", "Parse error. {0}");
 
   static final DiagnosticType INVALID_PARAM =
       DiagnosticType.warning("JSC_INVALID_PARAM", "Parse error. {0}");
@@ -91,8 +97,7 @@ class RhinoErrorReporter {
 
   static final DiagnosticType ES6_TYPED =
       DiagnosticType.error("ES6_TYPED",
-          "{0}. Use --language_in=ECMASCRIPT6_TYPED " +
-          "to enable ES6 typed features.");
+          "{0}. Use --language_in=ECMASCRIPT6_TYPED to enable ES6 typed features.");
 
   static final DiagnosticType MISPLACED_TYPE_SYNTAX =
       DiagnosticType.error("MISPLACED_TYPE_SYNTAX",
@@ -119,12 +124,13 @@ class RhinoErrorReporter {
         ImmutableMap.<Pattern, DiagnosticType>builder()
             // Trailing comma
             .put(
-                Pattern.compile(
-                    "Trailing comma is not legal in an ECMA-262 object initializer"),
+                Pattern.compile("Trailing comma is not legal in an ECMA-262 object initializer"),
                 TRAILING_COMMA)
 
             // Duplicate parameter
             .put(replacePlaceHolders("Duplicate parameter name \"{0}\""), DUPLICATE_PARAM)
+
+            .put(Pattern.compile("Unnecessary escape:.*"), UNNECESSARY_ESCAPE)
 
             .put(Pattern.compile("^invalid param name.*"), INVALID_PARAM)
 
@@ -141,24 +147,23 @@ class RhinoErrorReporter {
 
             .put(
                 Pattern.compile(
-                    "^Keywords and reserved words" + " are not allowed as unquoted property.*"),
+                    "^Keywords and reserved words are not allowed as unquoted property.*"),
                 INVALID_ES3_PROP_NAME)
 
             .put(Pattern.compile("^Too many template parameters"), TOO_MANY_TEMPLATE_PARAMS)
 
             // Type annotation warnings.
             .put(
-                Pattern.compile(
-                    "^Bad type annotation\\. Type annotations should have curly braces.*"),
+                Pattern.compile(".*Type annotations should have curly braces.*"),
                 JSDOC_MISSING_BRACES_WARNING)
 
             .put(Pattern.compile("Missing type declaration\\."), JSDOC_MISSING_TYPE_WARNING)
 
+            // Unresolved types that aren't forward declared.
+            .put(Pattern.compile(".*Unknown type.*"), UNRECOGNIZED_TYPE_ERROR)
+
             // Type annotation errors.
-            .put(
-                Pattern.compile(
-                    "^Bad type annotation.*(?!Type annotations should have curly braces\\.)"),
-                TYPE_PARSE_ERROR)
+            .put(Pattern.compile("^Bad type annotation.*"), TYPE_PARSE_ERROR)
 
             // Parse tree too deep.
             .put(Pattern.compile("Too deep recursion while parsing"), PARSE_TREE_TOO_DEEP)

@@ -16,6 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Preconditions;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
@@ -27,11 +30,10 @@ import com.google.javascript.rhino.Node;
  * <p>This implementation is not thread-safe.</p>
  *
  */
-class SyntacticScopeCreator implements ScopeCreator {
+public class SyntacticScopeCreator implements ScopeCreator {
   private final AbstractCompiler compiler;
   private Scope scope;
   private InputId inputId;
-  private final RedeclarationHandler redeclarationHandler;
 
   // The arguments variable is special, in that it's declared in every local
   // scope, but not explicitly declared.
@@ -39,30 +41,21 @@ class SyntacticScopeCreator implements ScopeCreator {
 
   private final boolean isTyped;
 
-  private SyntacticScopeCreator(
-      AbstractCompiler compiler, RedeclarationHandler redeclarationHandler) {
-    this.compiler = compiler;
-    this.isTyped = false;
-    this.redeclarationHandler = redeclarationHandler;
-  }
-
   private SyntacticScopeCreator(AbstractCompiler compiler, boolean isTyped) {
     this.compiler = compiler;
     this.isTyped = isTyped;
-    this.redeclarationHandler = new DefaultRedeclarationHandler();
   }
 
-  static SyntacticScopeCreator makeUntyped(AbstractCompiler compiler) {
+  /**
+   * @deprecated Use Es6SyntacticScopeCreator instead.
+   */
+  @Deprecated
+  public static SyntacticScopeCreator makeUntyped(AbstractCompiler compiler) {
     return new SyntacticScopeCreator(compiler, false);
   }
 
   static SyntacticScopeCreator makeTyped(AbstractCompiler compiler) {
     return new SyntacticScopeCreator(compiler, true);
-  }
-
-  static SyntacticScopeCreator makeUntypedWithRedeclHandler(
-      AbstractCompiler compiler, RedeclarationHandler redeclarationHandler) {
-    return new SyntacticScopeCreator(compiler, redeclarationHandler);
   }
 
   @Override
@@ -105,10 +98,10 @@ class SyntacticScopeCreator implements ScopeCreator {
       }
 
       // Args: Declare function variables
-      Preconditions.checkState(args.isParamList());
+      checkState(args.isParamList());
       for (Node a = args.getFirstChild(); a != null;
            a = a.getNext()) {
-        Preconditions.checkState(a.isName());
+        checkState(a.isName());
         declareVar(a);
       }
 
@@ -116,7 +109,8 @@ class SyntacticScopeCreator implements ScopeCreator {
       scanVars(body);
     } else {
       // It's either a module or the global block
-      Preconditions.checkState(n.isModuleBody() || scope.getParent() == null);
+      Preconditions.checkState(n.isModuleBody() || scope.getParent() == null,
+          "Expected %s to be a module body, or %s to be the global scope.", n, scope);
       scanVars(n);
     }
   }
@@ -150,7 +144,7 @@ class SyntacticScopeCreator implements ScopeCreator {
         return;   // should not examine function's children
 
       case CATCH:
-        Preconditions.checkState(n.getChildCount() == 2, n);
+        Preconditions.checkState(n.hasTwoChildren(), n);
         // The first child is the catch var and the second child
         // is the code block.
 
@@ -165,7 +159,7 @@ class SyntacticScopeCreator implements ScopeCreator {
 
       case SCRIPT:
         inputId = n.getInputId();
-        Preconditions.checkNotNull(inputId);
+        checkNotNull(inputId);
         break;
       default:
         break;
@@ -184,36 +178,17 @@ class SyntacticScopeCreator implements ScopeCreator {
   }
 
   /**
-   * Interface for injectable duplicate handling.
-   */
-  interface RedeclarationHandler {
-    void onRedeclaration(
-        Scope s, String name, Node n, CompilerInput input);
-  }
-
-  /**
-   * The default handler for duplicate declarations.
-   */
-  static class DefaultRedeclarationHandler implements RedeclarationHandler {
-    @Override
-    public void onRedeclaration(Scope s, String name, Node n, CompilerInput input) {}
-  }
-
-  /**
    * Declares a variable.
    *
    * @param n The node corresponding to the variable name.
    */
   private void declareVar(Node n) {
-    Preconditions.checkState(n.isName(), n);
+    checkState(n.isName(), n);
 
     CompilerInput input = compiler.getInput(inputId);
     String name = n.getString();
-    if (scope.isDeclared(name, false)
-        || (scope.isLocal() && name.equals(ARGUMENTS))) {
-      redeclarationHandler.onRedeclaration(
-          scope, name, n, input);
-    } else {
+    if (!scope.isDeclared(name, false)
+        && !(scope.isLocal() && name.equals(ARGUMENTS))) {
       if (isTyped) {
         ((TypedScope) scope).declare(name, n, null, input);
       } else {

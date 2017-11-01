@@ -16,17 +16,20 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Sets;
 import com.google.javascript.jscomp.deps.DependencyInfo;
 import com.google.javascript.jscomp.deps.Es6SortedDependencies;
-
 import java.io.Serializable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -40,7 +43,7 @@ public final class JSModule implements DependencyInfo, Serializable {
   private static final long serialVersionUID = 1;
 
   /** Module name */
-  private final String name;
+  private String name;
 
   /** Source code inputs */
   private final List<CompilerInput> inputs = new ArrayList<>();
@@ -48,7 +51,11 @@ public final class JSModule implements DependencyInfo, Serializable {
   /** Modules that this module depends on */
   private final List<JSModule> deps = new ArrayList<>();
 
+  /** The length of the longest path starting from this module */
   private int depth;
+  /** The position of this module relative to all others in the AST. */
+  private int index;
+
   /**
    * Creates an instance.
    *
@@ -56,13 +63,21 @@ public final class JSModule implements DependencyInfo, Serializable {
    */
   public JSModule(String name) {
     this.name = name;
+    // Depth and index will be set to their correct values by the JSModuleGraph into which they
+    // are placed.
     this.depth = -1;
+    this.index = -1;
   }
 
   /** Gets the module name. */
   @Override
   public String getName() {
     return name;
+  }
+
+  /** Sets the module name. */
+  public void setName(String name) {
+    this.name = name;
   }
 
   @Override
@@ -121,14 +136,14 @@ public final class JSModule implements DependencyInfo, Serializable {
 
   /** Adds a source code input to this module directly after other. */
   public void addAfter(CompilerInput input, CompilerInput other) {
-    Preconditions.checkState(inputs.contains(other));
+    checkState(inputs.contains(other));
     inputs.add(inputs.indexOf(other), input);
     input.setModule(this);
   }
 
   /** Adds a dependency on another module. */
   public void addDependency(JSModule dep) {
-    Preconditions.checkNotNull(dep);
+    checkNotNull(dep);
     Preconditions.checkState(dep != this, "Cannot add dependency on self", this);
     deps.add(dep);
   }
@@ -174,12 +189,15 @@ public final class JSModule implements DependencyInfo, Serializable {
    * dependencies of this module.
    */
   public Set<JSModule> getAllDependencies() {
-    Set<JSModule> allDeps = new HashSet<>(deps);
+    // JSModule uses identity semantics
+    Set<JSModule> allDeps = Sets.newIdentityHashSet();
+    allDeps.addAll(deps);
     ArrayDeque<JSModule> stack = new ArrayDeque<>(deps);
 
     while (!stack.isEmpty()) {
       JSModule module = stack.pop();
-      for (JSModule dep : module.getDependencies()) {
+      List<JSModule> moduleDeps = module.deps;
+      for (JSModule dep : moduleDeps) {
         if (allDeps.add(dep)) {
           stack.push(dep);
         }
@@ -238,13 +256,19 @@ public final class JSModule implements DependencyInfo, Serializable {
   }
 
   /**
-   * Removes any references to nodes of the AST.  This method is needed to
-   * allow the ASTs to be garbage collected if the modules are kept around.
+   * Removes any references to nodes of the AST and resets fields used by JSModuleGraph.
+   *
+   * <p>This method is needed by some tests to allow modules to be reused and their ASTs garbage
+   * collected.
+   * @deprecated Fix tests to avoid reusing modules.
    */
-  public void clearAsts() {
+  @Deprecated
+  void resetThisModuleSoItCanBeReused() {
     for (CompilerInput input : inputs) {
       input.clearAst();
     }
+    depth = -1;
+    index = -1;
   }
 
   /**
@@ -267,6 +291,7 @@ public final class JSModule implements DependencyInfo, Serializable {
    * @param dep the depth to set
    */
   public void setDepth(int dep) {
+    checkArgument(dep >= 0, "invalid depth: %s", dep);
     this.depth = dep;
   }
 
@@ -275,5 +300,14 @@ public final class JSModule implements DependencyInfo, Serializable {
    */
   public int getDepth() {
     return depth;
+  }
+
+  public void setIndex(int index) {
+    checkArgument(index >= 0, "Invalid module index: %s", index);
+    this.index = index;
+  }
+
+  public int getIndex() {
+    return index;
   }
 }

@@ -17,17 +17,38 @@
 'require es6/symbol';
 'require es6/util/makeiterator';
 'require es6/weakmap';
+'require util/defines';
 'require util/owns';
 'require util/polyfill';
 
+
 /**
- * Whether to skip the conformance check and simply use the polyfill always.
- * @define {boolean}
+ * Internal record type for entries.
+ * @record
+ * @template KEY, VALUE
+ * @suppress {reportUnknownTypes}
  */
-$jscomp.ASSUME_NO_NATIVE_MAP = false;
+$jscomp.MapEntry = function() {
+  /** @type {!$jscomp.MapEntry<KEY, VALUE>} */
+  this.previous;
+  /** @type {!$jscomp.MapEntry<KEY, VALUE>} */
+  this.next;
+  /** @type {?Object} */
+  this.head;
+  /** @type {KEY} */
+  this.key;
+  /** @type {VALUE} */
+  this.value;
+};
 
-$jscomp.polyfill('Map', function(NativeMap) {
 
+$jscomp.polyfill('Map',
+    /**
+     * @param {*} NativeMap
+     * @return {*}
+     * @suppress {reportUnknownTypes}
+     */
+    function(NativeMap) {
   // Perform a conformance check to ensure correct native implementation.
   var isConformant = !$jscomp.ASSUME_NO_NATIVE_MAP && (function() {
     if (!NativeMap ||
@@ -71,34 +92,6 @@ $jscomp.polyfill('Map', function(NativeMap) {
 
 
   /**
-   * Internal record type for entries.
-   * @record
-   * @template KEY, VALUE
-   */
-  var MapEntry = function() {};
-
-
-  /** @type {!MapEntry<KEY, VALUE>} */
-  MapEntry.prototype.previous;
-
-
-  /** @type {!MapEntry<KEY, VALUE>} */
-  MapEntry.prototype.next;
-
-
-  /** @type {?Object} */
-  MapEntry.prototype.head;
-
-
-  /** @type {KEY} */
-  MapEntry.prototype.key;
-
-
-  /** @type {VALUE} */
-  MapEntry.prototype.value;
-
-
-  /**
    * Polyfill for the global Map data type.
    * @constructor
    * @struct
@@ -110,10 +103,10 @@ $jscomp.polyfill('Map', function(NativeMap) {
    */
   // TODO(sdh): fix param type if heterogeneous arrays ever supported.
   var PolyfillMap = function(opt_iterable) {
-    /** @private {!Object<!Array<!MapEntry<KEY, VALUE>>>} */
+    /** @private {!Object<!Array<!$jscomp.MapEntry<KEY, VALUE>>>} */
     this.data_ = {};
 
-    /** @private {!MapEntry<KEY, VALUE>} */
+    /** @private {!$jscomp.MapEntry<KEY, VALUE>} */
     this.head_ = createHead();
 
     // Note: this property should not be changed.  If we're willing to give up
@@ -200,20 +193,28 @@ $jscomp.polyfill('Map', function(NativeMap) {
 
   /** @override */
   PolyfillMap.prototype.entries = function() {
-    return makeIterator(
-        this, function(entry) { return [entry.key, entry.value]; });
+    return makeIterator(this, /** @return {!Array<(KEY|VALUE)>} */ function(
+        /** !$jscomp.MapEntry<KEY, VALUE> */ entry) {
+      return ([entry.key, entry.value]);
+    });
   };
 
 
   /** @override */
   PolyfillMap.prototype.keys = function() {
-    return makeIterator(this, function(entry) { return entry.key; });
+    return makeIterator(this, /** @return {KEY} */ function(
+        /** !$jscomp.MapEntry<KEY, VALUE> */ entry) {
+      return entry.key;
+    });
   };
 
 
   /** @override */
   PolyfillMap.prototype.values = function() {
-    return makeIterator(this, function(entry) { return entry.value; });
+    return makeIterator(this, /** @return {VALUE} */ function(
+        /** !$jscomp.MapEntry<KEY, VALUE> */ entry) {
+      return entry.value;
+    });
   };
 
 
@@ -241,9 +242,9 @@ $jscomp.polyfill('Map', function(NativeMap) {
    * @param {!PolyfillMap<KEY, VALUE>} map
    * @param {KEY} key
    * @return {{id: string,
-   *           list: (!Array<!MapEntry<KEY, VALUE>>|undefined),
+   *           list: (!Array<!$jscomp.MapEntry<KEY, VALUE>>|undefined),
    *           index: number,
-   *           entry: (!MapEntry<KEY, VALUE>|undefined)}}
+   *           entry: (!$jscomp.MapEntry<KEY, VALUE>|undefined)}}
    * @template KEY, VALUE
    */
   var maybeGetEntry = function(map, key) {
@@ -264,7 +265,7 @@ $jscomp.polyfill('Map', function(NativeMap) {
   /**
    * Maps over the entries with the given function.
    * @param {!PolyfillMap<KEY, VALUE>} map
-   * @param {function(!MapEntry<KEY, VALUE>): T} func
+   * @param {function(!$jscomp.MapEntry<KEY, VALUE>): T} func
    * @return {!IteratorIterable<T>}
    * @template KEY, VALUE, T
    * @private
@@ -289,12 +290,12 @@ $jscomp.polyfill('Map', function(NativeMap) {
 
   /**
    * Makes a new "head" element.
-   * @return {!MapEntry<KEY, VALUE>}
+   * @return {!$jscomp.MapEntry<KEY, VALUE>}
    * @template KEY, VALUE
    * @suppress {checkTypes} ignore missing key/value for head only
    */
   var createHead = function() {
-    var head = /** type {!MapEntry<KEY, VALUE>} */ ({});
+    var head = /** type {!$jscomp.MapEntry<KEY, VALUE>} */ ({});
     head.previous = head.next = head.head = head;
     return head;
   };
@@ -328,4 +329,4 @@ $jscomp.polyfill('Map', function(NativeMap) {
 
 
   return PolyfillMap;
-}, 'es6-impl', 'es3');
+}, 'es6', 'es3');

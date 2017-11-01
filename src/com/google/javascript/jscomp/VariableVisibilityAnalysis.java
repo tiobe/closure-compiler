@@ -16,10 +16,9 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.ReferenceCollection;
-import com.google.javascript.rhino.Node;
+import static com.google.common.base.Preconditions.checkArgument;
 
+import com.google.javascript.rhino.Node;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -96,9 +95,7 @@ class VariableVisibilityAnalysis implements CompilerPass {
   public VariableVisibility getVariableVisibility(Node declaringNameNode) {
     Node parent = declaringNameNode.getParent();
 
-    Preconditions.checkArgument(parent.isVar()
-        || parent.isFunction()
-        || parent.isParamList());
+    checkArgument(parent.isVar() || parent.isFunction() || parent.isParamList());
 
     return visibilityByDeclaringNameNode.get(declaringNameNode);
   }
@@ -110,9 +107,9 @@ class VariableVisibilityAnalysis implements CompilerPass {
   public void process(Node externs, Node root) {
     ReferenceCollectingCallback callback =
       new ReferenceCollectingCallback(compiler,
-          ReferenceCollectingCallback.DO_NOTHING_BEHAVIOR);
+          ReferenceCollectingCallback.DO_NOTHING_BEHAVIOR, new Es6SyntacticScopeCreator(compiler));
 
-    NodeTraversal.traverseEs6(compiler, root, callback);
+    callback.process(root);
 
     for (Var variable : callback.getAllSymbols()) {
       ReferenceCollection referenceCollection =
@@ -131,8 +128,7 @@ class VariableVisibilityAnalysis implements CompilerPass {
       } else if (variable.isGlobal()) {
         visibility = VariableVisibility.GLOBAL;
       } else {
-        throw new IllegalStateException("Un-handled variable visibility for " +
-            variable);
+        throw new IllegalStateException("Un-handled variable visibility for " + variable);
       }
 
       visibilityByDeclaringNameNode.put(variable.getNameNode(), visibility);

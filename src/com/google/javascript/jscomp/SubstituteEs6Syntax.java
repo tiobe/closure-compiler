@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
@@ -51,6 +52,14 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
           maybeSimplifyArrowFunctionBody(n, n.getLastChild());
         }
         break;
+      case STRING_KEY:
+        if (n.hasChildren()
+            && n.getFirstChild().isName()
+            && n.getFirstChild().getString().equals(n.getString())) {
+          n.removeFirstChild();
+          compiler.reportChangeToEnclosingScope(n);
+        }
+        break;
       default:
         break;
     }
@@ -60,12 +69,13 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
    * If possible, replace functions of the form ()=>{ return x; } with ()=>x
    */
   private void maybeSimplifyArrowFunctionBody(Node arrowFunction, Node body) {
-    Preconditions.checkArgument(arrowFunction.isArrowFunction());
-    if (!body.isBlock() || !body.hasOneChild() || !body.getFirstChild().isReturn()) {
+    checkArgument(arrowFunction.isArrowFunction());
+    if (!body.isNormalBlock() || !body.hasOneChild() || !body.getFirstChild().isReturn()) {
       return;
     }
     Node returnValue = body.getFirstChild().removeFirstChild();
-    arrowFunction.replaceChild(body, returnValue != null ? returnValue : IR.name("undefined"));
-    compiler.reportCodeChange();
+    Node replacement = returnValue != null ? returnValue : IR.name("undefined");
+    arrowFunction.replaceChild(body, replacement);
+    compiler.reportChangeToEnclosingScope(replacement);
   }
 }

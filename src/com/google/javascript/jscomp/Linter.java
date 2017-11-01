@@ -60,30 +60,24 @@ public class Linter {
   }
 
   static void lint(String filename) throws IOException {
-    lint(Paths.get(filename), false);
+    lint(Paths.get(filename), new Compiler(System.out));
   }
 
   static void fix(String filename) throws IOException {
-    lint(Paths.get(filename), true);
+     Compiler compiler = new Compiler(System.out);
+     FixingErrorManager errorManager = new FixingErrorManager();
+     compiler.setErrorManager(errorManager);
+     errorManager.setCompiler(compiler);
+
+     lint(Paths.get(filename), compiler);
+
+     ApplySuggestedFixes.applySuggestedFixesToFiles(errorManager.getAllFixes());
   }
 
-  private static void lint(Path path, boolean fix) throws IOException {
+ static void lint(Path path, Compiler compiler) throws IOException {
     SourceFile file = SourceFile.fromFile(path.toString());
-    Compiler compiler = new Compiler(System.out);
-
-    FixingErrorManager errorManager = null;
-    if (fix) {
-      errorManager = new FixingErrorManager();
-      compiler.setErrorManager(errorManager);
-      errorManager.setCompiler(compiler);
-    }
-
     CompilerOptions options = new CompilerOptions();
-    options.setLanguage(LanguageMode.ECMASCRIPT8);
-
-    // For a full compile, this would cause a crash, as the method name implies. But the passes
-    // in LintPassConfig can all handle untranspiled ES6.
-    options.setSkipTranspilationAndCrash(true);
+    options.setLanguage(LanguageMode.ECMASCRIPT_NEXT);
 
     options.setParseJsDocDocumentation(INCLUDE_DESCRIPTIONS_WITH_WHITESPACE);
     options.setCodingConvention(new GoogleCodingConvention());
@@ -92,7 +86,12 @@ public class Linter {
     // it contains some warnings we do want to report, such as JSDoc parse warnings.
     options.setWarningLevel(DiagnosticGroups.CHECK_TYPES, CheckLevel.WARNING);
 
+    options.setWarningLevel(DiagnosticGroups.JSDOC_MISSING_TYPE, CheckLevel.ERROR);
+    options.setWarningLevel(DiagnosticGroups.MISPLACED_MSG_ANNOTATION, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.UNNECESSARY_ESCAPE, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.UNUSED_LOCAL_VARIABLE, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.UNUSED_PRIVATE_PROPERTY, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.STRICT_MISSING_REQUIRE, CheckLevel.ERROR);
     options.setWarningLevel(DiagnosticGroups.EXTRA_REQUIRE, CheckLevel.ERROR);
     options.setWarningLevel(DiagnosticGroups.USE_OF_GOOG_BASE, CheckLevel.WARNING);
@@ -101,8 +100,5 @@ public class Linter {
     compiler.disableThreads();
     SourceFile externs = SourceFile.fromCode("<Linter externs>", "");
     compiler.compile(ImmutableList.<SourceFile>of(externs), ImmutableList.of(file), options);
-    if (fix) {
-      ApplySuggestedFixes.applySuggestedFixesToFiles(errorManager.getAllFixes());
-    }
   }
 }

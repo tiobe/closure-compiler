@@ -221,12 +221,16 @@ public final class Matchers {
     };
   }
 
+  public static Matcher googModule() {
+    return functionCall("goog.module");
+  }
+
   public static Matcher googRequire() {
     return functionCall("goog.require");
   }
 
   public static Matcher googModuleOrProvide() {
-    return anyOf(functionCall("goog.module"), functionCall("goog.provide"));
+    return anyOf(googModule(), functionCall("goog.provide"));
   }
 
   /**
@@ -247,12 +251,13 @@ public final class Matchers {
    */
   public static Matcher propertyAccess(final String name) {
     return new Matcher() {
-      @Override public boolean matches(Node node, NodeMetadata metadata) {
+      @Override
+      public boolean matches(Node node, NodeMetadata metadata) {
         if (node.isGetProp()) {
           if (name == null) {
             return true;
           }
-          if (name.equals(node.getQualifiedName())) {
+          if (node.matchesQualifiedName(name)) {
             return true;
           } else if (name.contains(".prototype.")) {
             return matchesPrototypeInstanceVar(node, metadata, name);
@@ -340,7 +345,7 @@ public final class Matchers {
         JSDocInfo jsDoc = node.getParent().isVar()
             ? node.getParent().getJSDocInfo() : node.getJSDocInfo();
         JSType jsType = node.getJSType();
-        return jsDoc != null && jsType != null
+        return jsDoc != null && jsDoc.hasType() && jsType != null
             && providedJsType.isEquivalentTo(jsType.restrictByNotNullOrUndefined());
       }
     };

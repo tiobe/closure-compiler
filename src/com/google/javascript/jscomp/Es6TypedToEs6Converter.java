@@ -15,9 +15,10 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.Es6ToEs3Converter.ClassDeclarationMetadata;
+import com.google.javascript.jscomp.Es6RewriteClass.ClassDeclarationMetadata;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
@@ -111,6 +112,9 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     NodeTraversal.traverseEs6(compiler, scriptRoot, scanner);
     NodeTraversal.traverseEs6(compiler, externs, this);
     NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    if (!compiler.hasHaltingErrors()) {
+      compiler.setFeatureSet(compiler.getFeatureSet().withoutTypes());
+    }
   }
 
   @Override
@@ -122,6 +126,10 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
 
   @Override
   public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
+    if (NodeUtil.isStatementParent(n)) {
+      pushOverloads();
+    }
+
     switch (n.getToken()) {
       case NAMESPACE:
         if (currNamespace == null && parent.getToken() != Token.DECLARE) {
@@ -129,12 +137,6 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
           return false;
         }
         currNamespace = nodeNamespaceMap.get(n);
-        pushOverloads();
-        return true;
-      case SCRIPT:
-      case INTERFACE:
-      case CLASS:
-        pushOverloads();
         return true;
       default:
         return true;
@@ -145,49 +147,49 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
   public void visit(NodeTraversal t, Node n, Node parent) {
     switch (n.getToken()) {
       case CLASS:
-        visitClass(n, parent);
-        popOverloads();
+        visitClass(t, n, parent);
         break;
       case INTERFACE:
-        visitInterface(n, parent);
-        popOverloads();
+        visitInterface(t, n, parent);
         break;
       case ENUM:
-        visitEnum(n, parent);
+        visitEnum(t, n, parent);
         break;
       case NAME:
       case REST:
-        maybeVisitColonType(n, n);
+        maybeVisitColonType(t, n, n);
         break;
       case FUNCTION:
-        visitFunction(n, parent);
+        visitFunction(t, n, parent);
         break;
       case TYPE_ALIAS:
         visitTypeAlias(t, n, parent);
         break;
       case DECLARE:
-        visitAmbientDeclaration(n, parent);
+        visitAmbientDeclaration(t, n, parent);
         break;
       case EXPORT:
-        visitExport(n, parent);
+        visitExport(t, n, parent);
         break;
       case NAMESPACE:
-        visitNamespaceDeclaration(n, parent);
-        popOverloads();
+        visitNamespaceDeclaration(t, n, parent);
         break;
       case VAR:
       case LET:
       case CONST:
-        visitVarInsideNamespace(n, parent);
+        visitVarInsideNamespace(t, n, parent);
         break;
       case SCRIPT:
-        popOverloads();
         break;
       default:
     }
+
+    if (NodeUtil.isStatementParent(n)) {
+      popOverloads();
+    }
   }
 
-  private void visitNamespaceDeclaration(Node n, Node parent) {
+  private void visitNamespaceDeclaration(NodeTraversal t, Node n, Node parent) {
     popNamespace(n, parent);
     for (Node name = NodeUtil.getRootOfQualifiedName(n.getFirstChild()); name != n;
         name = name.getParent()) {
@@ -202,7 +204,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       }
     }
 
-    replaceWithNodes(n, n.getLastChild().children());
+    replaceWithNodes(t, n, n.getLastChild().children());
   }
 
   private void maybeAddGenerics(Node n, Node jsDocNode) {
@@ -223,7 +225,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     }
   }
 
-  private void visitClass(Node n, Node parent) {
+  private void visitClass(NodeTraversal t, Node n, Node parent) {
     maybeAddGenerics(n, n);
     JSDocInfoBuilder doc = JSDocInfoBuilder.maybeCopyFrom(n.getJSDocInfo());
     Node interfaces = (Node) n.getProp(Node.IMPLEMENTS);
@@ -251,7 +253,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       }
 
       if (member.isIndexSignature()) {
-        doc.recordImplementedInterface(createIObject(member));
+        doc.recordImplementedInterface(createIObject(t, member));
         continue;
       }
 
@@ -266,15 +268,15 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
         return;
       }
 
-      metadata.insertNodeAndAdvance(createPropertyDefinition(member, metadata.fullClassName));
-      compiler.reportCodeChange();
+      metadata.insertNodeAndAdvance(createPropertyDefinition(t, member, metadata.fullClassName));
+      t.reportCodeChange();
     }
 
     n.setJSDocInfo(doc.build());
-    maybeCreateQualifiedDeclaration(n, parent);
+    maybeCreateQualifiedDeclaration(t, n, parent);
   }
 
-  private void visitInterface(Node n, Node parent) {
+  private void visitInterface(NodeTraversal t, Node n, Node parent) {
     maybeAddGenerics(n, n);
     Node name = n.getFirstChild();
     Node superTypes = name.getNext();
@@ -295,7 +297,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       }
 
       if (member.isIndexSignature()) {
-        doc.recordExtendedInterface(createIObject(member));
+        doc.recordExtendedInterface(createIObject(t, member));
       }
 
       // Synthesize a block for method signatures, or convert it to a member variable if optional.
@@ -309,7 +311,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       }
 
       if (member.isMemberVariableDef()) {
-        Node newNode = createPropertyDefinition(member, name.getString());
+        Node newNode = createPropertyDefinition(t, member, name.getString());
         insertionPoint.getParent().addChildAfter(newNode, insertionPoint);
         insertionPoint = newNode;
       }
@@ -322,11 +324,11 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     n.replaceChild(superTypes, empty);
     members.setToken(Token.CLASS_MEMBERS);
 
-    maybeCreateQualifiedDeclaration(n, parent);
-    compiler.reportCodeChange();
+    maybeCreateQualifiedDeclaration(t, n, parent);
+    t.reportCodeChange();
   }
 
-  private JSTypeExpression createIObject(Node indexSignature) {
+  private JSTypeExpression createIObject(NodeTraversal t, Node indexSignature) {
     Node indexType = convertWithLocation(indexSignature.getFirstChild()
         .getDeclaredTypeExpression());
     Node declaredType = convertWithLocation(indexSignature.getDeclaredTypeExpression());
@@ -336,11 +338,11 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     JSTypeExpression bang = new JSTypeExpression(new Node(Token.BANG, iObject)
         .useSourceInfoIfMissingFromForTree(indexSignature), indexSignature.getSourceFileName());
     indexSignature.detach();
-    compiler.reportCodeChange();
+    t.reportCodeChange();
     return bang;
   }
 
-  private Node createPropertyDefinition(Node member, String className) {
+  private Node createPropertyDefinition(NodeTraversal t, Node member, String className) {
     member.detach();
     className = maybePrependCurrNamespace(className);
     Node nameAccess = NodeUtil.newQName(compiler, className);
@@ -348,7 +350,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     Node qualifiedMemberAccess = getQualifiedMemberAccess(
         compiler, member, nameAccess, prototypeAccess);
     // Copy type information.
-    maybeVisitColonType(member, member);
+    maybeVisitColonType(t, member, member);
     maybeAddVisibility(member);
 
     qualifiedMemberAccess.setJSDocInfo(member.getJSDocInfo());
@@ -374,7 +376,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     }
   }
 
-  private void visitEnum(Node n, Node parent) {
+  private void visitEnum(NodeTraversal t, Node n, Node parent) {
     Node name = n.getFirstChild();
     Node members = n.getLastChild();
     double nextValue = 0;
@@ -402,10 +404,10 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
         builder.build()).useSourceInfoFromForTree(n);
     n.setJSDocInfo(null);
     parent.replaceChild(n, newDec);
-    compiler.reportCodeChange();
+    t.reportCodeChange();
   }
 
-  private void visitFunction(Node n, Node parent) {
+  private void visitFunction(NodeTraversal t, Node n, Node parent) {
     // For member functions (eg. class Foo<T> { f() {} }), the JSDocInfo
     // needs to go on the synthetic MEMBER_FUNCTION_DEF node.
     boolean isMemberFunctionDef = parent.isMemberFunctionDef();
@@ -416,9 +418,13 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     if (!name.isEmpty() && overloadStack.peek().containsKey(name)) {
       compiler.report(JSError.make(n, OVERLOAD_NOT_SUPPORTED));
       if (isMemberFunctionDef) {
+        t.reportCodeChange(parent.getParent());
         parent.detach();
+        NodeUtil.markFunctionsDeleted(parent, compiler);
       } else {
+        t.reportCodeChange(parent);
         n.detach();
+        NodeUtil.markFunctionsDeleted(n, compiler);
       }
       if (!processedOverloads.contains(overloadStack)) {
         Node original = overloadStack.peek().get(name);
@@ -433,7 +439,6 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
             convertWithLocation(TypeDeclarationsIR.namedType("Function")), n.getSourceFileName()));
         originalJsDocNode.setJSDocInfo(builder.build());
       }
-      compiler.reportCodeChange();
       return;
     }
     overloadStack.peek().put(name, n);
@@ -443,13 +448,13 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     // Return types are colon types on the function node. Optional member functions are handled
     // separately.
     if (!(isMemberFunctionDef && n.isOptionalEs6Typed())) {
-      maybeVisitColonType(n, jsDocNode);
+      maybeVisitColonType(t, n, jsDocNode);
     }
     if (n.getLastChild().isEmpty()) {
       n.replaceChild(n.getLastChild(), IR.block().useSourceInfoFrom(n));
     }
     if (!isMemberFunctionDef) {
-      maybeCreateQualifiedDeclaration(n, parent);
+      maybeCreateQualifiedDeclaration(t, n, parent);
     }
   }
 
@@ -466,7 +471,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     }
   }
 
-  private void maybeVisitColonType(Node n, Node jsDocNode) {
+  private void maybeVisitColonType(NodeTraversal t, Node n, Node jsDocNode) {
     Node type = n.getDeclaredTypeExpression();
     boolean hasColonType = type != null;
     if (n.isRest() && hasColonType) {
@@ -500,7 +505,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
 
     if (hasColonType) {
       n.setDeclaredTypeExpression(null);
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
   }
 
@@ -522,24 +527,24 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
         null,
         builder.build()).useSourceInfoFromForTree(n);
     parent.replaceChild(n, newDec1);
-    compiler.reportCodeChange();
+    t.reportCodeChange();
   }
 
-  private void visitAmbientDeclaration(Node n, Node parent) {
+  private void visitAmbientDeclaration(NodeTraversal t, Node n, Node parent) {
     if (!n.isFromExterns()) {
       compiler.report(JSError.make(n, DECLARE_IN_NON_EXTERNS));
     }
 
     Node insertionPoint = n;
     Node topLevel = parent;
-    boolean insideExport = parent.getToken() == Token.EXPORT;
+    boolean insideExport = parent.isExport();
     if (insideExport) {
       insertionPoint = parent;
       topLevel = parent.getParent();
     }
     // The node can have multiple children if transformed from an ambient namespace declaration.
     for (Node c : n.children()) {
-      if (c.getToken() == Token.CONST) {
+      if (c.isConst()) {
         JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(c.getJSDocInfo());
         builder.recordConstancy();
         c.setToken(Token.VAR);
@@ -554,12 +559,12 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       topLevel.addChildBefore(toAdd, insertionPoint);
     }
     insertionPoint.detach();
-    compiler.reportCodeChange();
+    t.reportCodeChange();
   }
 
-  private void visitExport(Node n, Node parent) {
+  private void visitExport(NodeTraversal t, Node n, Node parent) {
     if (currNamespace != null) {
-      replaceWithNodes(n, n.children());
+      replaceWithNodes(t, n, n.children());
     } else if (n.hasMoreThanOneChild()) {
       Node insertPoint = n;
       for (Node c = n.getSecondChild(); c != null; c = c.getNext()) {
@@ -573,11 +578,11 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
         parent.addChildAfter(toAdd, insertPoint);
         insertPoint = toAdd;
       }
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
   }
 
-  private void replaceWithNodes(Node n, Iterable<Node> replacements) {
+  private void replaceWithNodes(NodeTraversal t, Node n, Iterable<Node> replacements) {
     Node insertPoint = n;
     for (Node c : replacements) {
       Node detached = c.detach();
@@ -585,10 +590,10 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       insertPoint = detached;
     }
     n.detach();
-    compiler.reportCodeChange();
+    t.reportCodeChange();
   }
 
-  private void visitVarInsideNamespace(Node n, Node parent) {
+  private void visitVarInsideNamespace(NodeTraversal t, Node n, Node parent) {
     if (currNamespace != null) {
       Node insertPoint = n;
       for (Node child : n.children()) {
@@ -610,7 +615,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       }
 
       n.detach();
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
   }
 
@@ -647,7 +652,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
   }
 
   private Node convertDeclaredTypeToJSDoc(Node type) {
-    Preconditions.checkArgument(type instanceof TypeDeclarationNode);
+    checkArgument(type instanceof TypeDeclarationNode);
     switch (type.getToken()) {
       // "Primitive" types.
       case STRING_TYPE:
@@ -769,7 +774,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     return new Node(Token.BANG, IR.string(dotted));
   }
 
-  private void maybeCreateQualifiedDeclaration(Node n, Node parent) {
+  private void maybeCreateQualifiedDeclaration(NodeTraversal t, Node n, Node parent) {
     if (currNamespace != null) {
       Node name = n.getFirstChild();
       String oldName = name.getString();
@@ -787,7 +792,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
           n.getJSDocInfo()).useSourceInfoFromForTree(n);
       n.setJSDocInfo(null);
       parent.replaceChild(placeHolder, newDec);
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
   }
 
@@ -824,6 +829,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
 
     memberVariable.putBooleanProp(Node.OPT_ES6_TYPED, function.isOptionalEs6Typed());
     member.replaceWith(memberVariable);
+    NodeUtil.markFunctionsDeleted(member, compiler);
     return memberVariable;
   }
 
@@ -860,7 +866,7 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
       switch (parent.getToken()) {
         case DECLARE:
         case EXPORT:
-          if (parent.getParent().getToken() == Token.EXPORT) {
+          if (parent.getParent().isExport()) {
             parentModuleRoot = grandParent.getGrandparent();
           } else {
             parentModuleRoot = grandParent.getParent();
@@ -879,11 +885,10 @@ public final class Es6TypedToEs6Converter implements NodeTraversal.Callback, Hot
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
+        case ROOT:
         case SCRIPT:
         case NAMESPACE_ELEMENTS:
           return true;
-        case BLOCK:
-          return n.getFirstChild() != null && n.getFirstChild().isScript();
         case DECLARE:
           return n.getFirstChild().getToken() == Token.NAMESPACE;
         case EXPORT:

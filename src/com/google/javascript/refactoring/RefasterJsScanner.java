@@ -16,11 +16,11 @@
 
 package com.google.javascript.refactoring;
 
+import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Files;
 import com.google.common.io.Resources;
@@ -29,10 +29,10 @@ import com.google.javascript.jscomp.JsAst;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.TypeMatchingStrategy;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.TypeIRegistry;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
@@ -75,12 +75,12 @@ public final class RefasterJsScanner extends Scanner {
    * Loads the RefasterJs template. This must be called before the scanner is used.
    */
   public void loadRefasterJsTemplate(String refasterjsTemplate) throws IOException  {
-    Preconditions.checkState(
+    checkState(
         templateJs == null, "Can't load RefasterJs template since a template is already loaded.");
     this.templateJs =
         Thread.currentThread().getContextClassLoader().getResource(refasterjsTemplate) != null
-        ? Resources.toString(Resources.getResource(refasterjsTemplate), UTF_8)
-        : Files.toString(new File(refasterjsTemplate), UTF_8);
+            ? Resources.toString(Resources.getResource(refasterjsTemplate), UTF_8)
+            : Files.asCharSource(new File(refasterjsTemplate), UTF_8).read();
   }
 
   /**
@@ -96,7 +96,7 @@ public final class RefasterJsScanner extends Scanner {
    * Loads the RefasterJs template. This must be called before the scanner is used.
    */
   public void loadRefasterJsTemplateFromCode(String refasterJsTemplate) throws IOException  {
-    Preconditions.checkState(
+    checkState(
         templateJs == null, "Can't load RefasterJs template since a template is already loaded.");
     this.templateJs = refasterJsTemplate;
   }
@@ -116,7 +116,7 @@ public final class RefasterJsScanner extends Scanner {
       try {
         initialize(metadata.getCompiler());
       } catch (Exception e) {
-        Throwables.propagate(e);
+        throw new RuntimeException(e);
       }
     }
     matchedTemplate = null;
@@ -129,31 +129,48 @@ public final class RefasterJsScanner extends Scanner {
     return false;
   }
 
-  @Override public List<SuggestedFix> processMatch(Match match) {
+  @Override
+  public List<SuggestedFix> processMatch(Match match) {
     SuggestedFix.Builder fix = new SuggestedFix.Builder();
-    Node newNode = transformNode(
-        matchedTemplate.afterTemplate.getLastChild(),
-        matchedTemplate.matcher.getTemplateNodeToMatchMap());
+    // Only replace the original source with a version serialized from the AST if the after template
+    // is actually different. Otherwise, we might just add churn (e.g. single quotes into double
+    // quotes and whitespace).
+    if (matchedTemplate
+        .beforeTemplate
+        .getLastChild()
+        .isEquivalentTo(matchedTemplate.afterTemplate.getLastChild())) {
+      return ImmutableList.of();
+    }
+
+    HashMap<String, String> shortNames = new HashMap<>();
+    for (String require : matchedTemplate.getGoogRequiresToAdd()) {
+      fix.addGoogRequire(match, require);
+      shortNames.put(require, fix.getRequireName(match, require));
+    }
+
+    Node newNode =
+        transformNode(
+            matchedTemplate.afterTemplate.getLastChild(),
+            matchedTemplate.matcher.getTemplateNodeToMatchMap(),
+            shortNames);
     Node nodeToReplace = match.getNode();
     fix.attachMatchedNodeInfo(nodeToReplace, match.getMetadata().getCompiler());
     fix.replace(nodeToReplace, newNode, match.getMetadata().getCompiler());
-    // If the template is a multiline template, make sure to delete the same number of sibling nodes
-    // as the template has.
+    // If the template is a multiline template, make sure to delete the same number of sibling
+    // nodes as the template has.
     Node n = match.getNode().getNext();
     int count = matchedTemplate.beforeTemplate.getLastChild().getChildCount();
     for (int i = 1; i < count; i++) {
       Preconditions.checkNotNull(
-          n, "Found mismatched sibling count between before template and matched node.\n"
-          + "Template: %s\nMatch: %s",
-          matchedTemplate.beforeTemplate.getLastChild(), match.getNode());
+          n,
+          "Found mismatched sibling count between before template and matched node.\n"
+              + "Template: %s\nMatch: %s",
+          matchedTemplate.beforeTemplate.getLastChild(),
+          match.getNode());
       fix.delete(n);
       n = n.getNext();
     }
 
-    // Add/remove any goog.requires
-    for (String require : matchedTemplate.getGoogRequiresToAdd()) {
-      fix.addGoogRequire(match, require);
-    }
     for (String require : matchedTemplate.getGoogRequiresToRemove()) {
       fix.removeGoogRequire(match, require);
     }
@@ -161,10 +178,13 @@ public final class RefasterJsScanner extends Scanner {
   }
 
   /**
-   * Transforms the template node to a replacement node by mapping the template names to
-   * the ones that were matched against in the JsSourceMatcher.
+   * Transforms the template node to a replacement node by mapping the template names to the ones
+   * that were matched against in the JsSourceMatcher.
    */
-  private Node transformNode(Node templateNode, Map<String, Node> templateNodeToMatchMap) {
+  private Node transformNode(
+      Node templateNode,
+      Map<String, Node> templateNodeToMatchMap,
+      Map<String, String> shortNames) {
     Node clone = templateNode.cloneNode();
     if (templateNode.isName()) {
       String name = templateNode.getString();
@@ -190,8 +210,17 @@ public final class RefasterJsScanner extends Scanner {
         clone.putBooleanProp(Node.FREE_CALL, false);
       }
     }
+    if (templateNode.isQualifiedName()) {
+      String name = templateNode.getQualifiedName();
+      if (shortNames.containsKey(name)) {
+        String shortName = shortNames.get(name);
+        if (!shortName.equals(name)) {
+          return IR.name(shortNames.get(name));
+        }
+      }
+    }
     for (Node child : templateNode.children()) {
-      clone.addChildToBack(transformNode(child, templateNodeToMatchMap));
+      clone.addChildToBack(transformNode(child, templateNodeToMatchMap, shortNames));
     }
     return clone;
   }
@@ -201,10 +230,10 @@ public final class RefasterJsScanner extends Scanner {
    * finding all matching RefasterJs template functions in the file.
    */
   void initialize(AbstractCompiler compiler) throws Exception {
-    Preconditions.checkState(
+    checkState(
         !Strings.isNullOrEmpty(templateJs),
         "The template JS must be loaded before the scanner is used. "
-        + "Make sure that the template file is not empty.");
+            + "Make sure that the template file is not empty.");
     Node scriptRoot = new JsAst(SourceFile.fromCode(
         "template", templateJs)).getAstRoot(compiler);
 
@@ -220,7 +249,7 @@ public final class RefasterJsScanner extends Scanner {
           Preconditions.checkState(
               !beforeTemplates.containsKey(templateName),
               "Found existing template with the same name: %s", beforeTemplates.get(templateName));
-          Preconditions.checkState(
+          checkState(
               templateNode.getLastChild().hasChildren(),
               "Before templates are not allowed to be empty!");
           beforeTemplates.put(templateName, templateNode);
@@ -230,14 +259,26 @@ public final class RefasterJsScanner extends Scanner {
               !afterTemplates.containsKey(templateName),
               "Found existing template with the same name: %s", afterTemplates.get(templateName));
           afterTemplates.put(templateName, templateNode);
+        } else if (fnName.startsWith("do_not_change_")) {
+          String templateName = fnName.substring("do_not_change_".length());
+          Preconditions.checkState(
+              !beforeTemplates.containsKey(templateName),
+              "Found existing template with the same name: %s",
+              beforeTemplates.get(templateName));
+          Preconditions.checkState(
+              !afterTemplates.containsKey(templateName),
+              "Found existing template with the same name: %s",
+              afterTemplates.get(templateName));
+          beforeTemplates.put(templateName, templateNode);
+          afterTemplates.put(templateName, templateNode);
         }
       }
     }
 
-    Preconditions.checkState(
+    checkState(
         !beforeTemplates.isEmpty(),
         "Did not find any RefasterJs templates! Make sure that there are 2 functions defined "
-        + "with the same name, one with a \"before_\" prefix and one with a \"after_\" prefix");
+            + "with the same name, one with a \"before_\" prefix and one with a \"after_\" prefix");
 
     ImmutableList.Builder<RefasterJsTemplate> builder = ImmutableList.builder();
     for (String templateName : beforeTemplates.keySet()) {

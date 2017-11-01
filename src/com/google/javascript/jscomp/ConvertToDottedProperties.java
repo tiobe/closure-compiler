@@ -16,8 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 
@@ -47,21 +47,23 @@ class ConvertToDottedProperties extends AbstractPostOrderCallback
       case GETTER_DEF:
       case SETTER_DEF:
       case STRING_KEY:
-        if (NodeUtil.isValidPropertyName(LanguageMode.ECMASCRIPT3, n.getString())) {
-          n.putBooleanProp(Node.QUOTED_PROP, false);
-          compiler.reportCodeChange();
+        if (NodeUtil.isValidPropertyName(FeatureSet.ES3, n.getString())) {
+          if (n.getBooleanProp(Node.QUOTED_PROP)) {
+            n.putBooleanProp(Node.QUOTED_PROP, false);
+            compiler.reportChangeToEnclosingScope(n);
+          }
         }
         break;
 
       case GETELEM:
         Node left = n.getFirstChild();
         Node right = left.getNext();
-        if (right.isString() &&
-            NodeUtil.isValidPropertyName(LanguageMode.ECMASCRIPT3, right.getString())) {
+        if (right.isString() && NodeUtil.isValidPropertyName(FeatureSet.ES3, right.getString())) {
           n.removeChild(left);
           n.removeChild(right);
-          parent.replaceChild(n, IR.getprop(left, right));
-          compiler.reportCodeChange();
+          Node newGetProp = IR.getprop(left, right);
+          parent.replaceChild(n, newGetProp);
+          compiler.reportChangeToEnclosingScope(newGetProp);
         }
         break;
       default:

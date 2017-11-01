@@ -29,10 +29,11 @@ $jscomp.polyfill('Array.prototype.findIndex', function(orig) {
    * @param {THIS=} opt_thisArg
    * @return {number} The found value, or undefined.
    * @template VALUE, THIS
+   * @suppress {reportUnknownTypes}
    */
   var polyfill = function(callback, opt_thisArg) {
     return $jscomp.findInternal(this, callback, opt_thisArg).i;
   };
 
   return polyfill;
-}, 'es6-impl', 'es3');
+}, 'es6', 'es3');

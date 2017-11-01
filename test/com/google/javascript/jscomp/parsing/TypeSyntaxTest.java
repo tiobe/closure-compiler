@@ -39,7 +39,6 @@ import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Node.TypeDeclarationNode;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.TypeDeclarationsIR;
-
 import junit.framework.TestCase;
 
 /**
@@ -67,9 +66,7 @@ public final class TypeSyntaxTest extends TestCase {
 
   private void testNotEs6TypedFullError(String source, String error) {
     expectErrors(error);
-    parse(source, LanguageMode.ECMASCRIPT6);
-    expectErrors(error);
-    parse(source, LanguageMode.ECMASCRIPT6_STRICT);
+    parse(source, LanguageMode.ECMASCRIPT_2015);
   }
 
   private void testNotEs6Typed(String source, String... features) {
@@ -80,9 +77,7 @@ public final class TypeSyntaxTest extends TestCase {
               + ". Use --language_in=ECMASCRIPT6_TYPED to enable ES6 typed features.";
     }
     expectErrors(features);
-    parse(source, LanguageMode.ECMASCRIPT6);
-    expectErrors(features);
-    parse(source, LanguageMode.ECMASCRIPT6_STRICT);
+    parse(source, LanguageMode.ECMASCRIPT_2015);
   }
 
   public void testVariableDeclaration() {
@@ -778,11 +773,12 @@ public final class TypeSyntaxTest extends TestCase {
     assertDeclaredType(message, expectedType, varDecl.getFirstChild());
   }
 
-  private void assertDeclaredType(String message, TypeDeclarationNode expectedType, Node typed) {
+  private static void assertDeclaredType(
+      String message, TypeDeclarationNode expectedType, Node typed) {
     assertTreeEquals(message, expectedType, typed.getDeclaredTypeExpression());
   }
 
-  private void assertTreeEquals(String message, Node expected, Node actual) {
+  private static void assertTreeEquals(String message, Node expected, Node actual) {
     String treeDiff = expected.checkTreeEquals(actual);
     assertNull(message + ": " + treeDiff, treeDiff);
   }

@@ -23,7 +23,6 @@ import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Files;
 import com.google.javascript.jscomp.ErrorManager;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
@@ -47,7 +46,7 @@ import java.util.regex.Pattern;
 @GwtIncompatible("java.util.regex")
 public final class DepsFileParser extends JsFileLineParser {
 
-  private static Logger logger = Logger.getLogger(DepsFileParser.class.getName());
+  private static final Logger logger = Logger.getLogger(DepsFileParser.class.getName());
 
   /**
    * Pattern for matching JavaScript string literals. The group is:
@@ -129,7 +128,9 @@ public final class DepsFileParser extends JsFileLineParser {
    */
   public List<DependencyInfo> parseFileReader(String filePath, Reader reader) {
     depInfos = new ArrayList<>();
-    logger.fine("Parsing Dep: " + filePath);
+    if (logger.isLoggable(Level.FINE)) {
+      logger.fine("Parsing Dep: " + filePath);
+    }
     doParse(filePath, reader);
     return depInfos;
   }
@@ -146,8 +147,7 @@ public final class DepsFileParser extends JsFileLineParser {
   protected boolean parseLine(String line) throws ParseException {
     boolean hasDependencies = false;
 
-    // Quick sanity check that will catch most cases. This is a performance
-    // win for people with a lot of JS.
+    // Quick check that will catch most cases. This is a performance win for teams with a lot of JS.
     if (line.contains("addDependency")) {
       depMatcher.reset(line);
       // See if the line looks like: goog.addDependency(...)

@@ -30,7 +30,7 @@ public class Es6RewriteArrowFunction implements NodeTraversal.Callback, HotSwapC
   // The name of the vars that capture 'this' and 'arguments'
   // for converting arrow functions.
   private static final String ARGUMENTS_VAR = "$jscomp$arguments";
-  private static final String THIS_VAR = "$jscomp$this";
+  static final String THIS_VAR = "$jscomp$this";
 
   private static class ThisContext {
     final Node scopeBody;
@@ -116,18 +116,18 @@ public class Es6RewriteArrowFunction implements NodeTraversal.Callback, HotSwapC
     ThisContext thisContext = thisContextStack.peek();
 
     if (n.isArrowFunction()) {
-      visitArrowFunction(n, checkNotNull(thisContext));
+      visitArrowFunction(t, n, checkNotNull(thisContext));
     } else if (thisContext != null && thisContext.scopeBody == n) {
       thisContextStack.pop();
       addVarDecls(thisContext);
     }
   }
 
-  private void visitArrowFunction(Node n, ThisContext thisContext) {
+  private void visitArrowFunction(NodeTraversal t, Node n, ThisContext thisContext) {
     n.setIsArrowFunction(false);
     n.makeNonIndexable();
     Node body = n.getLastChild();
-    if (!body.isBlock()) {
+    if (!body.isNormalBlock()) {
       body.detach();
       body = IR.block(IR.returnNode(body)).useSourceInfoIfMissingFromForTree(body);
       n.addChildToBack(body);
@@ -138,7 +138,7 @@ public class Es6RewriteArrowFunction implements NodeTraversal.Callback, HotSwapC
     thisContext.needsThisVar = thisContext.needsThisVar || updater.changedThis;
     thisContext.needsArgumentsVar = thisContext.needsArgumentsVar || updater.changedArguments;
 
-    compiler.reportCodeChange();
+    t.reportCodeChange();
   }
 
   private void addVarDecls(ThisContext thisContext) {
@@ -153,11 +153,13 @@ public class Es6RewriteArrowFunction implements NodeTraversal.Callback, HotSwapC
       argumentsVar.setJSDocInfo(jsdoc.build());
       argumentsVar.useSourceInfoIfMissingFromForTree(scopeBody);
       scopeBody.addChildToFront(argumentsVar);
+      compiler.reportChangeToEnclosingScope(argumentsVar);
     }
     if (thisContext.needsThisVar) {
       Node name = IR.name(THIS_VAR);
       Node thisVar = IR.constNode(name, IR.thisNode());
       thisVar.useSourceInfoIfMissingFromForTree(scopeBody);
+      makeTreeNonIndexable(thisVar);
       if (thisContext.lastSuperStatement == null) {
         scopeBody.addChildToFront(thisVar);
       } else {
@@ -166,8 +168,15 @@ public class Es6RewriteArrowFunction implements NodeTraversal.Callback, HotSwapC
         //     if (...) { super(); arrow function } else { super(); }
         scopeBody.addChildAfter(thisVar, thisContext.lastSuperStatement);
       }
+      compiler.reportChangeToEnclosingScope(thisVar);
     }
-    compiler.reportCodeChange();
+  }
+
+  private void makeTreeNonIndexable(Node n) {
+    n.makeNonIndexable();
+    for (Node child : n.children()) {
+      makeTreeNonIndexable(child);
+    }
   }
 
   private static class UpdateThisAndArgumentsReferences implements NodeTraversal.Callback {
@@ -183,6 +192,7 @@ public class Es6RewriteArrowFunction implements NodeTraversal.Callback, HotSwapC
     public void visit(NodeTraversal t, Node n, Node parent) {
       if (n.isThis()) {
         Node name = IR.name(THIS_VAR).srcref(n);
+        name.makeNonIndexable();
         if (compiler.getOptions().preservesDetailedSourceInfo()) {
           name.setOriginalName("this");
         }

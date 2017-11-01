@@ -16,6 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.collect.HashMultimap;
@@ -29,7 +32,6 @@ import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.TypeI;
 import com.google.javascript.rhino.TypeIRegistry;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -194,8 +196,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
-    // TODO(johnlenz): Determine if it is necessary to support ".call" or
-    // ".apply".
+    // TODO(johnlenz): Determine if it is necessary to support ".call" or ".apply".
     switch (n.getToken()) {
       case NEW: // e.g. new Error('msg');
       case CALL: // e.g. Error('msg');
@@ -269,7 +270,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
    */
   private Config findMatchingClass(
       TypeI callClassType, Collection<String> declarationNames) {
-    if (!callClassType.isBottom() && !callClassType.isUnknownType()) {
+    if (!callClassType.isBottom() && !callClassType.isSomeUnknownType()) {
       for (String declarationName : declarationNames) {
         String className = getClassFromDeclarationName(declarationName);
         TypeI methodClassType = registry.getType(className);
@@ -286,8 +287,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
    * Replace the parameters specified in the config, if possible.
    */
   private void doSubstitutions(NodeTraversal t, Config config, Node n) {
-    Preconditions.checkState(
-        n.isNew() || n.isCall());
+    checkState(n.isNew() || n.isCall());
 
     if (!config.isReplaceAll()) {
       // Note: the first child is the function, but the parameter id is 1 based.
@@ -352,13 +352,13 @@ class ReplaceStrings extends AbstractPostOrderCallback
         return expr;
     }
 
-    Preconditions.checkNotNull(key);
-    Preconditions.checkNotNull(replacementString);
+    checkNotNull(key);
+    checkNotNull(replacementString);
     recordReplacement(key);
 
     replacement.useSourceInfoIfMissingFromForTree(expr);
     parent.replaceChild(expr, replacement);
-    compiler.reportCodeChange();
+    t.reportCodeChange();
     return replacement;
   }
 
@@ -382,7 +382,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
    */
   private void recordReplacement(String key) {
     Result result = results.get(key);
-    Preconditions.checkState(result != null);
+    checkState(result != null);
 
     result.didReplacement = true;
   }
@@ -423,7 +423,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
    */
   private static String getMethodFromDeclarationName(String fullDeclarationName) {
     String[] parts = fullDeclarationName.split("\\.prototype\\.");
-    Preconditions.checkState(parts.length == 1 || parts.length == 2);
+    checkState(parts.length == 1 || parts.length == 2);
     if (parts.length == 2) {
       return parts[1];
     }
@@ -435,7 +435,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
    */
   private static String getClassFromDeclarationName(String fullDeclarationName) {
     String[] parts = fullDeclarationName.split("\\.prototype\\.");
-    Preconditions.checkState(parts.length == 1 || parts.length == 2);
+    checkState(parts.length == 1 || parts.length == 2);
     if (parts.length == 2) {
       return parts[0];
     }
@@ -474,7 +474,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
     int colon = function.indexOf(EXCLUSION_PREFIX);
 
     // TODO(johnlenz): Make parsing precondition checks JSErrors reports.
-    Preconditions.checkState(first != -1 && last != -1);
+    checkState(first != -1 && last != -1);
 
     String name = function.substring(0, first);
     String params = function.substring(first + 1, last);
@@ -485,12 +485,11 @@ class ReplaceStrings extends AbstractPostOrderCallback
     for (String param : parts) {
       paramCount++;
       if (param.equals(REPLACE_ALL_MARKER)) {
-        Preconditions.checkState(paramCount == 1 && parts.length == 1);
+        checkState(paramCount == 1 && parts.length == 1);
         replacementParameters.add(Config.REPLACE_ALL_VALUE);
       } else if (param.equals(REPLACE_ONE_MARKER)) {
         // TODO(johnlenz): Support multiple.
-        Preconditions.checkState(!replacementParameters.contains(
-            Config.REPLACE_ALL_VALUE));
+        checkState(!replacementParameters.contains(Config.REPLACE_ALL_VALUE));
         replacementParameters.add(paramCount);
       } else {
         // TODO(johnlenz): report an error.
@@ -498,7 +497,7 @@ class ReplaceStrings extends AbstractPostOrderCallback
       }
     }
 
-    Preconditions.checkState(!replacementParameters.isEmpty());
+    checkState(!replacementParameters.isEmpty());
 
     return new Config(
         name,

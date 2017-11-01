@@ -35,10 +35,12 @@ public final class DartSuperAccessorsPassTest extends CompilerTestCase {
       "[method]()", "*[generator]()", "get [prop]()", "set [prop](v)");
 
   private PropertyRenamingPolicy propertyRenaming;
+
   @Override
-  public void setUp() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
-    runTypeCheckAfterProcessing = true;
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
+    enableRunTypeCheckAfterProcessing();
     propertyRenaming = PropertyRenamingPolicy.ALL_UNQUOTED;
   }
 
@@ -48,7 +50,7 @@ public final class DartSuperAccessorsPassTest extends CompilerTestCase {
   }
 
   @Override
-  NoninjectingCompiler getLastCompiler() {
+  protected NoninjectingCompiler getLastCompiler() {
     return (NoninjectingCompiler) super.getLastCompiler();
   }
 
@@ -63,22 +65,9 @@ public final class DartSuperAccessorsPassTest extends CompilerTestCase {
     return options;
   }
 
-  protected final PassFactory makePassFactory(
-      String name, final CompilerPass pass) {
-    return new PassFactory(name, true/* one-time pass */) {
-      @Override
-      protected CompilerPass create(AbstractCompiler compiler) {
-        return pass;
-      }
-    };
-  }
-
   @Override
-  public CompilerPass getProcessor(final Compiler compiler) {
-    PhaseOptimizer optimizer = new PhaseOptimizer(compiler, null, null);
-    optimizer.addOneTimePass(
-        makePassFactory("dartSuperAccessors", new DartSuperAccessorsPass(compiler)));
-    return optimizer;
+  protected CompilerPass getProcessor(final Compiler compiler) {
+    return new DartSuperAccessorsPass(compiler);
   }
 
   @Override

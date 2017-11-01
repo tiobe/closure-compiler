@@ -365,6 +365,11 @@ Document.prototype.compatMode;
 
 Document.prototype.contentType;
 /** @type {string} */ Document.prototype.cookie;
+
+/**
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/Document/defaultView
+ * @type {?Window}
+ */
 Document.prototype.defaultView;
 
 /**
@@ -896,7 +901,8 @@ BoxObject.prototype.width;
 /**
  * @param {Element} element
  * @param {?string=} pseudoElt
- * @return {CSSStyleDeclaration}
+ * @return {?CSSStyleDeclaration}
  * @nosideeffects
+ * @see https://bugzilla.mozilla.org/show_bug.cgi?id=548397
  */
 function getComputedStyle(element, pseudoElt) {}

@@ -18,7 +18,6 @@ package com.google.javascript.jscomp.deps;
 
 import com.google.common.base.Joiner;
 import java.util.Arrays;
-import java.util.regex.Pattern;
 
 /**
  * Static methods related to module names.
@@ -58,10 +57,11 @@ public class ModuleNames {
 
   static String toJSIdentifier(String path) {
     return stripJsExtension(path)
-        .replaceAll("^\\." + Pattern.quote(MODULE_SLASH), "")
+        .replaceFirst("^\\./", "")
         .replace(MODULE_SLASH, "$")
         .replace('\\', '$')
         .replace('@', '$')
+        .replace('+', '$')
         .replace('-', '_')
         .replace(':', '_')
         .replace('.', '_')
@@ -69,6 +69,10 @@ public class ModuleNames {
   }
 
   static String toModuleName(String path) {
+    if (path.startsWith(MODULE_SLASH)) {
+      path = path.substring(1);
+    }
+
     return "module$" + toJSIdentifier(path);
   }
 
@@ -85,7 +89,7 @@ public class ModuleNames {
    * If no segment could be consumed for "..", retains the segment.
    */
   static String canonicalizePath(String path) {
-    String[] parts = path.split(Pattern.quote(MODULE_SLASH));
+    String[] parts = path.split(MODULE_SLASH);
     String[] buffer = new String[parts.length];
     int position = 0;
     int available = 0;

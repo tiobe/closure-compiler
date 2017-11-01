@@ -16,11 +16,11 @@
 
 package com.google.javascript.refactoring;
 
+import static com.google.common.base.Preconditions.checkState;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Multimaps;
@@ -74,12 +74,12 @@ public final class ApplySuggestedFixes {
 
     Map<String, String> filenameToCodeMap = new HashMap<>();
     for (String filename : filenames) {
-      filenameToCodeMap.put(filename, Files.toString(new File(filename), UTF_8));
+      filenameToCodeMap.put(filename, Files.asCharSource(new File(filename), UTF_8).read());
     }
 
     Map<String, String> newCode = applySuggestedFixesToCode(fixes, filenameToCodeMap);
     for (Map.Entry<String, String> entry : newCode.entrySet()) {
-      Files.write(entry.getValue(), new File(entry.getKey()), UTF_8);
+      Files.asCharSink(new File(entry.getKey()), UTF_8).write(entry.getValue());
     }
   }
 
@@ -122,7 +122,7 @@ public final class ApplySuggestedFixes {
     for (CodeReplacement replacement : sortedReplacements) {
       sb.append(code, lastIndex, replacement.getStartPosition());
       sb.append(replacement.getNewContent());
-      lastIndex = replacement.getStartPosition() + replacement.getLength();
+      lastIndex = replacement.getEndPosition();
     }
     if (lastIndex <= code.length()) {
       sb.append(code, lastIndex, code.length());
@@ -137,7 +137,7 @@ public final class ApplySuggestedFixes {
    * by ORDER_CODE_REPLACEMENTS.
    */
   private static void validateNoOverlaps(List<CodeReplacement> replacements) {
-    Preconditions.checkState(ORDER_CODE_REPLACEMENTS.isOrdered(replacements));
+    checkState(ORDER_CODE_REPLACEMENTS.isOrdered(replacements));
     if (containsOverlaps(replacements)) {
       throw new IllegalArgumentException(
           "Found overlap between code replacements!\n" + Joiner.on("\n\n").join(replacements));
@@ -149,13 +149,13 @@ public final class ApplySuggestedFixes {
    * order sorted by start position, as sorted by ORDER_CODE_REPLACEMENTS.
    */
   private static boolean containsOverlaps(List<CodeReplacement> replacements) {
-    Preconditions.checkState(ORDER_CODE_REPLACEMENTS.isOrdered(replacements));
+    checkState(ORDER_CODE_REPLACEMENTS.isOrdered(replacements));
     int start = -1;
     for (CodeReplacement replacement : replacements) {
       if (replacement.getStartPosition() < start) {
         return true;
       }
-      start = Math.max(start, replacement.getStartPosition() + replacement.getLength());
+      start = Math.max(start, replacement.getEndPosition());
     }
     return false;
   }
@@ -174,7 +174,7 @@ public final class ApplySuggestedFixes {
     }
 
     private boolean canPut(SuggestedFix fix) {
-      for (String filename : fix.getReplacements().keys()) {
+      for (String filename : fix.getReplacements().keySet()) {
         List<CodeReplacement> replacements = new ArrayList<>(map.get(filename));
         replacements.addAll(fix.getReplacements().get(filename));
         replacements = ORDER_CODE_REPLACEMENTS.sortedCopy(replacements);

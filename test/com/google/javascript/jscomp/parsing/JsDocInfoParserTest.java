@@ -16,11 +16,11 @@
 
 package com.google.javascript.jscomp.parsing;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.jscomp.parsing.JsDocInfoParser.BAD_TYPE_WIKI_LINK;
 import static com.google.javascript.jscomp.testing.NodeSubject.assertNode;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.SourceFile;
@@ -29,6 +29,7 @@ import com.google.javascript.jscomp.parsing.Config.LanguageMode;
 import com.google.javascript.jscomp.parsing.Config.RunMode;
 import com.google.javascript.jscomp.parsing.Config.StrictMode;
 import com.google.javascript.jscomp.parsing.ParserRunner.ParseResult;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Marker;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
@@ -181,6 +182,24 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
     JSDocInfo info = parse("@typedef \n {(string|number)}*/");
     assertThat(info.hasTypedefType()).isTrue();
     assertTypeEquals(createUnionType(NUMBER_TYPE, STRING_TYPE), info.getTypedefType());
+  }
+
+  // https://github.com/google/closure-compiler/issues/2543
+  public void testTypedefType4() {
+    JSDocInfo info = parse(LINE_JOINER.join(
+        "@typedef {{",
+        " *  boo: ?,",
+        " *  goo: ?",
+        " * }}",
+        " */"));
+    assertThat(info.hasTypedefType()).isTrue();
+
+    JSType recordType =
+        createRecordTypeBuilder()
+            .addProperty("boo", UNKNOWN_TYPE, null)
+            .addProperty("goo", UNKNOWN_TYPE, null)
+            .build();
+    assertTypeEquals(recordType, info.getTypedefType());
   }
 
   public void testParseStringType1() {
@@ -449,89 +468,97 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
     testParseType("(number|?)", "?");
   }
 
+  public void testParseTemplatizedUnknown1() {
+    parse("@ type {?<?>} */", "illegal use of unknown JSDoc tag \"\"; ignoring it");
+  }
+
+  public void testParseTemplatizedUnknown2() {
+    parse("@ type {{b: ?<?>}} */", "illegal use of unknown JSDoc tag \"\"; ignoring it");
+  }
+
   public void testParseFunctionalType1() {
-    testParseType("function (): number");
+    testParseType("function(): number");
   }
 
   public void testParseFunctionalType2() {
-    testParseType("function (number, string): boolean");
+    testParseType("function(number, string): boolean");
   }
 
   public void testParseFunctionalType3() {
     testParseType(
-        "function(this:Array)", "function (this:Array): ?");
+        "function(this:Array)", "function(this:Array): ?");
   }
 
   public void testParseFunctionalType4() {
-    testParseType("function (...number): boolean");
+    testParseType("function(...number): boolean");
   }
 
   public void testParseFunctionalType5() {
-    testParseType("function (number, ...string): boolean");
+    testParseType("function(number, ...string): boolean");
   }
 
   public void testParseFunctionalType6() {
     testParseType(
-        "function (this:Date, number): (boolean|number|string)");
+        "function(this:Date, number): (boolean|number|string)");
   }
 
   public void testParseFunctionalType7() {
-    testParseType("function()", "function (): ?");
+    testParseType("function()", "function(): ?");
   }
 
   public void testParseFunctionalType9() {
     testParseType(
         "function(this:Array,!Date,...(boolean?))",
-        "function (this:Array, Date, ...(boolean|null)): ?");
+        "function(this:Array, Date, ...(boolean|null)): ?");
   }
 
   public void testParseFunctionalType10() {
     testParseType(
         "function(...(Object?)):boolean?",
-        "function (...(Object|null)): (boolean|null)");
+        "function(...(Object|null)): (boolean|null)");
   }
 
   public void testParseFunctionalType12() {
     testParseType(
         "function(...)",
-        "function (...?): ?");
+        "function(...?): ?");
   }
 
   public void testParseFunctionalType13() {
     testParseType(
         "function(...): void",
-        "function (...?): undefined");
+        "function(...?): undefined");
   }
 
   public void testParseFunctionalType14() {
-    testParseType("function (*, string, number): boolean");
+    testParseType("function(*, string, number): boolean");
   }
 
   public void testParseFunctionalType15() {
-    testParseType("function (?, string): boolean");
+    testParseType("function(?, string): boolean");
   }
 
   public void testParseFunctionalType16() {
-    testParseType("function (string, ?): ?");
+    testParseType("function(string, ?): ?");
   }
 
   public void testParseFunctionalType17() {
-    testParseType("(function (?): ?|number)");
+    testParseType("(function(?): ?|number)");
   }
 
   public void testParseFunctionalType18() {
-    testParseType("function (?): (?|number)", "function (?): ?");
+    testParseType("function (?): (?|number)", "function(?): ?");
   }
 
   public void testParseFunctionalType19() {
     testParseType(
         "function(...?): void",
-        "function (...?): undefined");
+        "function(...?): undefined");
   }
 
   public void testStructuralConstructor() {
     JSType type = testParseType(
-        "function (new:Object)", "function (new:Object): ?");
+        "function (new:Object)", "function(new:Object): ?");
     assertThat(type.isConstructor()).isTrue();
     assertThat(type.isNominalConstructor()).isFalse();
   }
@@ -540,7 +567,7 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
     JSType type = testParseType(
         "function (new:?)",
         // toString skips unknowns, but isConstructor reveals the truth.
-        "function (): ?");
+        "function(): ?");
     assertThat(type.isConstructor()).isTrue();
     assertThat(type.isNominalConstructor()).isFalse();
   }
@@ -1780,6 +1807,18 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
     assertThat(parse("@externs*/")).isNull();
   }
 
+  public void testParseTypeSummary1() {
+    assertThat(parseFileOverview("@typeSummary*/").isTypeSummary()).isTrue();
+  }
+
+  public void testParseTypeSummary2() {
+    parseFileOverview("@typeSummary\n@typeSummary*/", "extra @typeSummary tag");
+  }
+
+  public void testParseTypeSummary3() {
+    assertThat(parse("@typeSummary*/")).isNull();
+  }
+
   public void testParseNoCompile1() {
     assertThat(parseFileOverview("@nocompile*/").isNoCompile()).isTrue();
   }
@@ -1811,16 +1850,16 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
   }
 
   public void testRegression2() {
-    String comment =
-        " * @return {boolean} whatever\n" +
-        " * but important\n" +
-        " *\n" +
-        " * @param {number} index the index of blah\n" +
-        " * some more comments here\n" +
-        " * @param name the name of the guy\n" +
-        " *\n" +
-        " * @protected\n" +
-        " */";
+    String comment = LINE_JOINER.join(
+        " * @return {boolean} whatever",
+        " * but important",
+        " *",
+        " * @param {number} index the index of blah",
+        " * some more comments here",
+        " * @param name the name of the person",
+        " *",
+        " * @protected",
+        " */");
 
     JSDocInfo info = parse(comment, MISSING_TYPE_DECL_WARNING_TEXT);
 
@@ -3187,6 +3226,13 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
         "Bad type annotation. @template tag missing type name." + BAD_TYPE_WIKI_LINK);
   }
 
+  /** This is unusual, but allowed. */
+  public void testParserWithLowercaseTemplateTypeName() {
+    parse("@template t */");
+    parse("@template s,t */");
+    parse("@template key,value */");
+  }
+
   public void testParserWithTypeTransformationNewline() {
     parse("@template R := \n 'string' =:*/");
   }
@@ -4230,9 +4276,9 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
         "   */\n" +
         "  function f(x) {}");
     Node script = parseFull(sourceFile.getCode());
-    Preconditions.checkState(script.isScript());
+    checkState(script.isScript());
     Node fn = script.getFirstChild();
-    Preconditions.checkState(fn.isFunction());
+    checkState(fn.isFunction());
     JSDocInfo jsdoc = fn.getJSDocInfo();
 
     assertThat(jsdoc.getOriginalCommentPosition()).isEqualTo(6);
@@ -4294,6 +4340,38 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
 
   public void testParsePolymerBehaviorExtra() {
     parse("@polymerBehavior \n@polymerBehavior*/", "extra @polymerBehavior tag");
+  }
+
+  public void testParsePolymer() {
+    assertThat(parse("@polymer*/").isPolymer()).isTrue();
+  }
+
+  public void testParsePolymerExtra() {
+    parse("@polymer \n@polymer*/", "extra @polymer tag");
+  }
+
+  public void testParseCustomElement() {
+    assertThat(parse("@customElement*/").isCustomElement()).isTrue();
+  }
+
+  public void testParseCustomElementExtra() {
+    parse("@customElement \n@customElement*/", "extra @customElement tag");
+  }
+
+  public void testParseMixinClass() {
+    assertThat(parse("@mixinClass*/").isMixinClass()).isTrue();
+  }
+
+  public void testParseMixinClassExtra() {
+    parse("@mixinClass \n@mixinClass*/", "extra @mixinClass tag");
+  }
+
+  public void testParseMixinFunction() {
+    assertThat(parse("@mixinFunction*/").isMixinFunction()).isTrue();
+  }
+
+  public void testParseMixinFunctionExtra() {
+    parse("@mixinFunction \n@mixinFunction*/", "extra @mixinFunction tag");
   }
 
   public void testParseWizaction1() {
@@ -4493,9 +4571,9 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
             + " * @desc this is a description\n"
             + " *****/\n"
             + "function x() {}");
-    Preconditions.checkState(script.isScript());
+    checkState(script.isScript());
     Node fn = script.getFirstChild();
-    Preconditions.checkState(fn.isFunction());
+    checkState(fn.isFunction());
 
     JSDocInfo info = fn.getJSDocInfo();
     assertThat(info.getBlockDescription()).isEqualTo(
@@ -4513,11 +4591,8 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
    * @param endCharno The ending character of the text.
    * @return The marker, for chaining purposes.
    */
-  private JSDocInfo.Marker assertDocumentationInMarker(JSDocInfo.Marker marker,
-                                                       String description,
-                                                       int startCharno,
-                                                       int endLineno,
-                                                       int endCharno) {
+  private static JSDocInfo.Marker assertDocumentationInMarker(
+      JSDocInfo.Marker marker, String description, int startCharno, int endLineno, int endCharno) {
     assertThat(marker.getDescription()).isNotNull();
     assertThat(marker.getDescription().getItem()).isEqualTo(description);
 
@@ -4536,13 +4611,16 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
    *
    * @param typeName The name of the type expected in the type field.
    * @param startCharno The starting character of the type declaration.
-   * @param hasBrackets Whether the type in the type field is expected
-   *     to have brackets.
+   * @param hasBrackets Whether the type in the type field is expected to have brackets.
    * @return The marker, for chaining purposes.
    */
-  private JSDocInfo.Marker assertTypeInMarker(
-      JSDocInfo.Marker marker, String typeName,
-      int startLineno, int startCharno, int endLineno, int endCharno,
+  private static JSDocInfo.Marker assertTypeInMarker(
+      JSDocInfo.Marker marker,
+      String typeName,
+      int startLineno,
+      int startCharno,
+      int endLineno,
+      int endCharno,
       boolean hasBrackets) {
     assertThat(marker.getType()).isNotNull();
     assertThat(marker.getType().getItem().isString()).isTrue();
@@ -4569,8 +4647,8 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
    * @param startCharno The starting character of the text.
    * @return The marker, for chaining purposes.
    */
-  private JSDocInfo.Marker assertNameInMarker(JSDocInfo.Marker marker,
-      String name, int startLine, int startCharno) {
+  private static JSDocInfo.Marker assertNameInMarker(
+      JSDocInfo.Marker marker, String name, int startLine, int startCharno) {
     assertThat(marker.getNameNode()).isNotNull();
     assertThat(marker.getNameNode().getItem().getString()).isEqualTo(name);
 
@@ -4584,41 +4662,35 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
   }
 
   /**
-   * Asserts that an annotation marker of a given annotation name
-   * is found in the given JSDocInfo.
+   * Asserts that an annotation marker of a given annotation name is found in the given JSDocInfo.
    *
    * @param jsdoc The JSDocInfo in which to search for the annotation marker.
-   * @param annotationName The name/type of the annotation for which to
-   *   search. Example: "author" for an "@author" annotation.
+   * @param annotationName The name/type of the annotation for which to search. Example: "author"
+   *     for an "@author" annotation.
    * @param startLineno The expected starting line number of the marker.
    * @param startCharno The expected character on the starting line.
    * @return The marker found, for further testing.
    */
-  private JSDocInfo.Marker assertAnnotationMarker(JSDocInfo jsdoc,
-                                                  String annotationName,
-                                                  int startLineno,
-                                                  int startCharno) {
+  private static JSDocInfo.Marker assertAnnotationMarker(
+      JSDocInfo jsdoc, String annotationName, int startLineno, int startCharno) {
     return assertAnnotationMarker(jsdoc, annotationName, startLineno,
                                   startCharno, 0);
   }
 
   /**
-   * Asserts that the index-th annotation marker of a given annotation name
-   * is found in the given JSDocInfo.
+   * Asserts that the index-th annotation marker of a given annotation name is found in the given
+   * JSDocInfo.
    *
    * @param jsdoc The JSDocInfo in which to search for the annotation marker.
-   * @param annotationName The name/type of the annotation for which to
-   *   search. Example: "author" for an "@author" annotation.
+   * @param annotationName The name/type of the annotation for which to search. Example: "author"
+   *     for an "@author" annotation.
    * @param startLineno The expected starting line number of the marker.
    * @param startCharno The expected character on the starting line.
    * @param index The index of the marker.
    * @return The marker found, for further testing.
    */
-  private JSDocInfo.Marker assertAnnotationMarker(JSDocInfo jsdoc,
-                                                  String annotationName,
-                                                  int startLineno,
-                                                  int startCharno,
-                                                  int index) {
+  private static JSDocInfo.Marker assertAnnotationMarker(
+      JSDocInfo jsdoc, String annotationName, int startLineno, int startCharno, int index) {
 
     Collection<JSDocInfo.Marker> markers = jsdoc.getMarkers();
 
@@ -4649,7 +4721,7 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
     return null;
   }
 
-  private <T> void assertContains(Collection<T> collection, T item) {
+  private static <T> void assertContains(Collection<T> collection, T item) {
     assertThat(collection).contains(item);
   }
 
@@ -4718,12 +4790,14 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
             Config.StrictMode.SLOPPY);
 
     StaticSourceFile file = new SimpleSourceFile("testcode", false);
+    Node templateNode = IR.script();
+    templateNode.setStaticSourceFile(file);
 
     JsDocInfoParser jsdocParser = new JsDocInfoParser(
         stream(comment),
         comment,
         0,
-        file,
+        templateNode,
         config,
         errorReporter);
 
@@ -4742,7 +4816,7 @@ public final class JsDocInfoParserTest extends BaseJSTypeTestCase {
     }
   }
 
-  private Node parseType(String typeComment) {
+  private static Node parseType(String typeComment) {
     return JsDocInfoParser.parseTypeString(typeComment);
   }
 

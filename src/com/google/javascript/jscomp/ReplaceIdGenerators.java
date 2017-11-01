@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.primitives.Booleans;
@@ -25,7 +26,6 @@ import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -258,7 +258,7 @@ class ReplaceIdGenerators implements CompilerPass {
 
   private static NameSupplier createNameSupplier(
       RenameStrategy renameStrategy, RenamingMap mappings) {
-    Preconditions.checkState(renameStrategy == RenameStrategy.MAPPED);
+    checkState(renameStrategy == RenameStrategy.MAPPED);
     return new MappedNameSupplier(mappings);
   }
 
@@ -374,7 +374,7 @@ class ReplaceIdGenerators implements CompilerPass {
         String rename = getObfuscatedName(
             arg, callName, nameGenerator, arg.getString());
         parent.replaceChild(n, IR.string(rename));
-        compiler.reportCodeChange();
+        t.reportCodeChange();
       } else if (arg.isObjectLit()) {
         for (Node key : arg.children()) {
           if (key.isMemberFunctionDef()) {
@@ -398,7 +398,7 @@ class ReplaceIdGenerators implements CompilerPass {
         }
         arg.detach();
         parent.replaceChild(n, arg);
-        compiler.reportCodeChange();
+        t.reportCodeChange();
       } else {
         compiler.report(t.makeError(n, INVALID_GENERATOR_PARAMETER));
       }
@@ -435,7 +435,7 @@ class ReplaceIdGenerators implements CompilerPass {
   }
 
   static String getIdForGeneratorNode(boolean consistent, Node n) {
-    Preconditions.checkState(n.isString() || n.isStringKey(), n);
+    checkState(n.isString() || n.isStringKey(), n);
     if (consistent) {
       return n.getString();
     } else {

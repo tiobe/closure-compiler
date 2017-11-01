@@ -41,7 +41,7 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     // Arrow functions without blocked body cannot have declarations in the body
-    if (!n.isFunction() || !n.getLastChild().isBlock()) {
+    if (!n.isFunction() || !n.getLastChild().isNormalBlock()) {
       return;
     }
 
@@ -76,7 +76,8 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
             oldName, oldName + "$" + compiler.getUniqueNameIdSupplier().get());
       }
     }
-    new NodeTraversal(compiler, new Es6RenameReferences(renameTable))
+    new NodeTraversal(
+            compiler, new Es6RenameReferences(renameTable), new Es6SyntacticScopeCreator(compiler))
         .traverseInnerNode(block, block.getParent(), fScope);
   }
 

@@ -103,7 +103,6 @@ class ShadowVariables implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-
     // The algorithm is divided into two stages:
     //
     // 1. Information gathering (variable usage, upward referencing)
@@ -180,10 +179,11 @@ class ShadowVariables implements CompilerPass {
 
       // Since we don't shadow global, there is nothing to be done in the
       // first immediate local scope as well.
-      if ((t.getScopeRoot().isFunction()
-              && NodeUtil.getEnclosingFunction(t.getScopeRoot().getParent()) == null)
-          || (NodeUtil.isFunctionBlock(t.getScopeRoot())
-              && NodeUtil.getEnclosingFunction(t.getScopeRoot().getGrandparent()) == null)) {
+      Node scopeRoot = t.getScopeRoot();
+      if ((scopeRoot.isFunction()
+              && NodeUtil.getEnclosingFunction(scopeRoot.getParent()) == null)
+          || (NodeUtil.isFunctionBlock(scopeRoot)
+              && NodeUtil.getEnclosingFunction(scopeRoot.getGrandparent()) == null)) {
         return;
       }
 
@@ -201,15 +201,16 @@ class ShadowVariables implements CompilerPass {
           continue;
         }
 
-        // Try to look for the best shadow for the current candidate.
-        Assignment bestShadow = findBestShadow(s, var);
-        if (bestShadow == null) {
-          continue;
-        }
-
         // The name assignment being shadowed.
         Assignment localAssignment = assignments.get(var.getName());
         if (localAssignment == null) {
+          continue;
+        }
+        // Try to run this check last as it is more expensive than the above checks.
+
+        // Try to look for the best shadow for the current candidate.
+        Assignment bestShadow = findBestShadow(s, var);
+        if (bestShadow == null) {
           continue;
         }
 
@@ -244,7 +245,7 @@ class ShadowVariables implements CompilerPass {
     private Assignment findBestShadow(Scope curScope, Var var) {
       // Search for the candidate starting from the most used local.
       for (Assignment assignment : varsByFrequency) {
-        if (assignment.oldName.startsWith(RenameVars.LOCAL_VAR_PREFIX)) {
+        if (assignment.isLocal) {
           if (!scopeUpRefMap.containsEntry(curScope.getRootNode(), assignment.oldName)) {
             if (curScope.isDeclared(assignment.oldName, true)) {
               // Don't shadow if the scopes are the same eg.:
@@ -285,7 +286,7 @@ class ShadowVariables implements CompilerPass {
       // declaring scope of the best shadow variable.
       Var shadowed = s.getVar(toShadow.oldName);
       if (shadowed != null) {
-        if (s.isFunctionScope() && s.getRootNode().getLastChild().isBlock()) {
+        if (s.isFunctionScope() && s.getRootNode().getLastChild().isNormalBlock()) {
           scopeUpRefMap.put(s.getRootNode().getLastChild(), toShadow.oldName);
           scopeUpRefMap.remove(s.getRootNode().getLastChild(), original.oldName);
         }

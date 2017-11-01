@@ -36,14 +36,10 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
 
   SideEffectsAnalysis currentAnalysis = null;
 
-  Compiler currentCompiler = null;
-
   Node currentJsRoot = null;
 
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    currentCompiler = compiler;
-
     currentAnalysis = new SideEffectsAnalysis(compiler,
         currentLocationAbstractionIdentifier);
 
@@ -52,8 +48,7 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
       @Override
       public void process(Node externs, Node root) {
 
-        if (currentLocationAbstractionIdentifier ==
-          LocationAbstractionMode.VISIBILITY_BASED) {
+        if (currentLocationAbstractionIdentifier == LocationAbstractionMode.VISIBILITY_BASED) {
 
           // Run var when using the visibility abstraction
           // because it is unsound if it fails.
@@ -70,11 +65,10 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
   }
 
   @Override
-  public void setUp() throws Exception {
+  protected void setUp() throws Exception {
     super.setUp();
 
     currentAnalysis = null;
-    currentCompiler = null;
   }
 
   public void testDegenerateSafeMoves() {
@@ -325,7 +319,7 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
         "  dest: 3;",
         "}"));
 
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     // Source makes a taggedTemplate Call.
     assertUnsafeMoveVisibility(LINE_JOINER.join(
         "function taggedTemplate(){};",
@@ -603,9 +597,9 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
 
     currentLocationAbstractionIdentifier = locationAbstractionIdentifier;
 
-    testSame(SHARED_EXTERNS, js, null);
+    testSame(SHARED_EXTERNS, js);
 
-    currentJsRoot = currentCompiler.jsRoot;
+    currentJsRoot = getLastCompiler().jsRoot;
 
     return currentAnalysis;
   }
@@ -614,7 +608,7 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
   private Node findLabeledStatement(String label) {
     LabeledStatementSearcher s = new LabeledStatementSearcher(label);
 
-    NodeTraversal.traverseEs6(currentCompiler, currentCompiler.jsRoot, s);
+    NodeTraversal.traverseEs6(getLastCompiler(), getLastCompiler().jsRoot, s);
     assertNotNull("Label " + label + " should be in the source code", s.found);
 
     return s.found;
@@ -635,9 +629,7 @@ public final class SideEffectsAnalysisTest extends CompilerTestCase {
     }
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      if (n.isLabel() &&
-          target.equals(n.getFirstChild().getString())) {
-
+      if (n.isLabel() && target.equals(n.getFirstChild().getString())) {
         found = n.getLastChild();
       }
     }

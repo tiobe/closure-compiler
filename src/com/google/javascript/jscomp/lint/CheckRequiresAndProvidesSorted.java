@@ -15,8 +15,10 @@
  */
 package com.google.javascript.jscomp.lint;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Function;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Ordering;
 import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.CodePrinter;
@@ -40,11 +42,13 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
     implements HotSwapCompilerPass {
   public static final DiagnosticType REQUIRES_NOT_SORTED =
       DiagnosticType.warning("JSC_REQUIRES_NOT_SORTED",
-      "goog.require() statements are not sorted. The correct order is:\n\n{0}\n");
+      "goog.require() statements are not sorted."
+          + " The correct order is:\n\n{0}\n");
 
   public static final DiagnosticType PROVIDES_NOT_SORTED =
       DiagnosticType.warning("JSC_PROVIDES_NOT_SORTED",
-          "goog.provide() statements are not sorted. The correct order is:\n\n{0}\n");
+          "goog.provide() statements are not sorted."
+              + " The correct order is:\n\n{0}\n");
 
   public static final DiagnosticType PROVIDES_AFTER_REQUIRES =
       DiagnosticType.warning(
@@ -79,24 +83,51 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
       new Function<Node, String>() {
         @Override
         public String apply(Node n) {
+          String key = null;
+          boolean isForwardDeclare = false;
           if (NodeUtil.isNameDeclaration(n)) {
             if (n.getFirstChild().isName()) {
-              // Case 1: var x = goog.require('w.x');
-              return n.getFirstChild().getString();
+              // Case 1:
+              //   var x = goog.require('w.x');
+              // or
+              //   var x = goog.forwardDeclare('w.x');
+              key = n.getFirstChild().getString();
+              if (n.getFirstFirstChild()
+                  .getFirstChild()
+                  .matchesQualifiedName("goog.forwardDeclare")) {
+                isForwardDeclare = true;
+              }
             } else if (n.getFirstChild().isDestructuringLhs()) {
               // Case 2: var {y} = goog.require('w.x');
-              // All case 2 nodes should come after all case 1 nodes.
+              // All case 2 nodes should come after all case 1 nodes. ('{' sorts after a-z)
               Node pattern = n.getFirstFirstChild();
-              Preconditions.checkState(pattern.isObjectPattern(), pattern);
-              return "{" + pattern.getFirstChild().getString();
+              checkState(pattern.isObjectPattern(), pattern);
+              Node call = n.getFirstChild().getLastChild();
+              checkState(call.isCall(), call);
+              checkState(
+                  call.getFirstChild().matchesQualifiedName("goog.require"), call.getFirstChild());
+              if (!pattern.hasChildren()) {
+                key = "{";
+              } else {
+                key = "{" + pattern.getFirstChild().getString();
+              }
             }
           } else if (n.isExprResult()) {
-            // Case 3: goog.require('a.b.c');
+            // Case 3, one of:
+            //   goog.provide('a.b.c');
+            //   goog.require('a.b.c');
+            //   goog.forwardDeclare('a.b.c');
             // All case 3 nodes should come after case 1 and 2 nodes, so prepend
             // '|' which sorts after '{'
-            return "|" + n.getFirstChild().getLastChild().getString();
+            key = "|" + n.getFirstChild().getLastChild().getString();
+            if (n.getFirstFirstChild().matchesQualifiedName("goog.forwardDeclare")) {
+              isForwardDeclare = true;
+            }
+          } else {
+            throw new IllegalArgumentException("Unexpected node " + n);
           }
-          throw new IllegalArgumentException("Unexpected node " + n);
+          // Make sure all forwardDeclares come after all requires.
+          return (isForwardDeclare ? "z" : "a") + checkNotNull(key);
         }
       };
 
@@ -131,17 +162,23 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
       case CALL:
         Node callee = n.getFirstChild();
         if (!callee.matchesQualifiedName("goog.require")
+            && !callee.matchesQualifiedName("goog.forwardDeclare")
             && !callee.matchesQualifiedName("goog.provide")
             && !callee.matchesQualifiedName("goog.module")) {
           return;
         }
 
         if (parent.isExprResult() && NodeUtil.isTopLevel(parent.getParent())) {
-          String namespace = n.getLastChild().getString();
+          Node namespaceNode = n.getLastChild();
+          if (!namespaceNode.isString()) {
+            return;
+          }
+          String namespace = namespaceNode.getString();
           if (namespace == null) {
             return;
           }
-          if (callee.matchesQualifiedName("goog.require")) {
+          if (callee.matchesQualifiedName("goog.require")
+              || callee.matchesQualifiedName("goog.forwardDeclare")) {
             requires.add(parent);
           } else {
             if (!requires.isEmpty()) {
@@ -152,7 +189,8 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
             }
           }
         } else if (NodeUtil.isNameDeclaration(parent.getParent())
-            && callee.matchesQualifiedName("goog.require")) {
+            && (callee.matchesQualifiedName("goog.require")
+                || callee.matchesQualifiedName("goog.forwardDeclare"))) {
           requires.add(parent.getParent());
         }
         break;

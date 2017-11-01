@@ -19,11 +19,19 @@ package com.google.javascript.jscomp;
 import com.google.javascript.jscomp.AnalyzePrototypeProperties.NameInfo;
 import com.google.javascript.jscomp.AnalyzePrototypeProperties.Symbol;
 import com.google.javascript.rhino.Node;
-
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * Removes unused properties from prototypes.
+ *
+ * NOTE: When canModifyExterns is true, this pass removes unused prototype properties
+ * in externs. This helped code size in the past, before type-based optimizations existed
+ * (and can help now for things that are not disambiguated), but is unsafe.
+ * For example, it can remove a polyfilled method that is not used in the source, but is
+ * used by the external code, so the call is not visible to the compiler.
+ * Therefore, the default for canModifyExterns is false, even though that increases code size
+ * for some projects.
  *
  * @author nicksantos@google.com (Nick Santos)
  */
@@ -57,8 +65,12 @@ class RemoveUnusedPrototypeProperties implements CompilerPass {
   @Override
   public void process(Node externRoot, Node root) {
     AnalyzePrototypeProperties analyzer =
-        new AnalyzePrototypeProperties(compiler,
-            null /* no module graph */, canModifyExterns, anchorUnusedVars);
+        new AnalyzePrototypeProperties(
+            compiler,
+            null /* no module graph */,
+            canModifyExterns,
+            anchorUnusedVars,
+            false /* rootScopeUsesAreGlobal */);
     analyzer.process(externRoot, root);
     // Remove all properties under a given name if the property name is
     // never referenced.
@@ -68,7 +80,9 @@ class RemoveUnusedPrototypeProperties implements CompilerPass {
           // Code-change reporting happens at the remove methods
           declaration.remove(compiler);
         }
-        logger.fine("Removed unused prototype property: " + nameInfo.name);
+        if (logger.isLoggable(Level.FINE)) {
+          logger.fine("Removed unused prototype property: " + nameInfo.name);
+        }
       }
     }
   }

@@ -23,6 +23,9 @@ import com.google.common.base.Suppliers;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.google.javascript.jscomp.bundle.TranspilationException;
+import java.nio.file.Path;
 import java.util.Objects;
 
 /**
@@ -53,8 +56,19 @@ public final class CachingTranspiler implements Transpiler {
   }
 
   @Override
-  public TranspileResult transpile(String path, String code) {
-    return cache.getUnchecked(new Key(path, code));
+  public TranspileResult transpile(Path path, String code) {
+    try {
+      return cache.getUnchecked(new Key(path, code));
+    } catch (UncheckedExecutionException e) {
+      if (e.getCause() instanceof TranspilationException) {
+        // If transpilation fails due to a parse error we can get an UncheckedExecutionException.
+        // This is because BaseTranspiler wraps the parse error as an TranspilationException.
+        // TODO(joeltine): This might better as a checked exception?
+        throw new TranspilationException(e);
+      } else {
+        throw e;
+      }
+    }
   }
 
   @Override
@@ -63,9 +77,9 @@ public final class CachingTranspiler implements Transpiler {
   }
 
   private static final class Key {
-    private final String path;
+    private final Path path;
     private final String code;
-    Key(String path, String code) {
+    Key(Path path, String code) {
       this.path = checkNotNull(path);
       this.code = checkNotNull(code);
     }

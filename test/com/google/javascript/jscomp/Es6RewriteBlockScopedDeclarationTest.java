@@ -16,8 +16,6 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.TypeValidator.TYPE_MISMATCH_WARNING;
-
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 
 /**
@@ -25,12 +23,14 @@ import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
  *
  * @author moz@google.com (Michael Zhou)
  */
-public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase {
+public final class Es6RewriteBlockScopedDeclarationTest extends TypeICompilerTestCase {
+
   @Override
-  public void setUp() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
-    runTypeCheckAfterProcessing = true;
-    compareJsDoc = true;
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
+    enableRunTypeCheckAfterProcessing();
+    this.mode = TypeInferenceMode.NEITHER;
   }
 
   @Override
@@ -41,7 +41,7 @@ public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase
   }
 
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new Es6RewriteBlockScopedDeclaration(compiler);
   }
 
@@ -206,6 +206,26 @@ public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase
             "}"));
   }
 
+  public void testRenameConflict() {
+    test(
+        LINE_JOINER.join(
+            "function f() {",
+            "  let x = 1;",
+            "  let x$0 = 2;",
+            "  {",
+            "    let x = 3;",
+            "  }",
+            "}"),
+        LINE_JOINER.join(
+            "function f() {",
+            "  var x = 1;",
+            "  var x$0 = 2;",
+            "  {",
+            "    var x$1 = 3;",
+            "  }",
+            "}"));
+  }
+
   public void testForOfLoop() {
     test(
         LINE_JOINER.join(
@@ -221,6 +241,26 @@ public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase
             "  var x = 5;",
             "  for(var x$0 of [1,2,3]) {",
             "    console.log(x$0);",
+            "  }",
+            "  console.log(x);",
+            "}"));
+
+    test(
+        LINE_JOINER.join(
+            "function f() {",
+            "  let x = 5;",
+            "  for (let x of [1,2,3]) {",
+            "    let x = 123;",
+            "    console.log(x);",
+            "  }",
+            "  console.log(x);",
+            "}"),
+        LINE_JOINER.join(
+            "function f() {",
+            "  var x = 5;",
+            "  for(var x$0 of [1,2,3]) {",
+            "    var x$1 = 123;",
+            "    console.log(x$1);",
             "  }",
             "  console.log(x);",
             "}"));
@@ -1116,24 +1156,24 @@ public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase
   }
 
   public void testTypeAnnotationsOnLetConst() {
-    enableTypeCheck();
+    this.mode = TypeInferenceMode.BOTH;
 
-    testWarning("/** @type {number} */ let x = 5; x = 'str';", TYPE_MISMATCH_WARNING);
-    testWarning("let /** number */ x = 5; x = 'str';", TYPE_MISMATCH_WARNING);
-    testWarning("let /** @type {number} */ x = 5; x = 'str';", TYPE_MISMATCH_WARNING);
+    Diagnostic mismatch =
+        warningOtiNti(TypeValidator.TYPE_MISMATCH_WARNING, NewTypeInference.MISTYPED_ASSIGN_RHS);
 
-    testWarning("/** @type {number} */ const x = 'str';", TYPE_MISMATCH_WARNING);
-    testWarning("const /** number */ x = 'str';", TYPE_MISMATCH_WARNING);
-    testWarning("const /** @type {number} */ x = 'str';", TYPE_MISMATCH_WARNING);
-    testWarning(
-        "const /** @type {string} */ x = 3, /** @type {number} */ y = 3;", TYPE_MISMATCH_WARNING);
-    testWarning(
-        "const /** @type {string} */ x = 'str', /** @type {string} */ y = 3;",
-        TYPE_MISMATCH_WARNING);
+    test(srcs("/** @type {number} */ let x = 5; x = 'str';"), mismatch);
+    test(srcs("let /** number */ x = 5; x = 'str';"), mismatch);
+    test(srcs("let /** @type {number} */ x = 5; x = 'str';"), mismatch);
+
+    test(srcs("/** @type {number} */ const x = 'str';"), mismatch);
+    test(srcs("const /** number */ x = 'str';"), mismatch);
+    test(srcs("const /** @type {number} */ x = 'str';"), mismatch);
+    test(srcs("const /** @type {string} */ x = 3, /** @type {number} */ y = 3;"), mismatch);
+    test(srcs("const /** @type {string} */ x = 'str', /** @type {string} */ y = 3;"), mismatch);
   }
 
   public void testDoWhileForOfCapturedLetAnnotated() {
-    enableTypeCheck();
+    this.mode = TypeInferenceMode.BOTH;
 
     test(
         LINE_JOINER.join(
@@ -1152,22 +1192,27 @@ public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase
             "}"),
         null);
 
-    testWarning(
-        LINE_JOINER.join(
-            "while (true) {",
-            "  /** @type {number} */ let x = 5;",
-            "  (function() { x++; })();",
-            "  x = 'str';",
-            "}"),
-        TYPE_MISMATCH_WARNING);
+    // TODO(sdh): NTI does not detect the type mismatch in the transpiled code,
+    // since the $jscomp$loop$0 object does not have its type inferred until after
+    // the mistyped assignment.
+    test(
+        srcs(
+            lines(
+                "while (true) {",
+                "  /** @type {number} */ let x = 5;",
+                "  (function() { x++; })();",
+                "  x = 'str';",
+                "}")),
+        warningOtiNti(TypeValidator.TYPE_MISMATCH_WARNING, null));
 
-    testWarning(
-        LINE_JOINER.join(
-            "for (/** @type {number} */ let x = 5;;) {",
-            "  (function() { x++; })();",
-            "  x = 'str';",
-            "}"),
-        TYPE_MISMATCH_WARNING);
+    test(
+        srcs(
+            lines(
+                "for (/** @type {number} */ let x = 5;;) {",
+                "  (function() { x++; })();",
+                "  x = 'str';",
+                "}")),
+        warningOtiNti(TypeValidator.TYPE_MISMATCH_WARNING, null));
   }
 
   public void testLetForInitializers() {
@@ -1332,6 +1377,13 @@ public final class Es6RewriteBlockScopedDeclarationTest extends CompilerTestCase
         "    }",
         "  } catch (e$2) { e$2--; }",
         "}"));
+  }
+
+  public void testBlockScopedGeneratorFunction() {
+    // Functions defined in a block get translated to a var
+    test(
+        "{ function *f() {yield 1;} }",
+        "{ var f = function*() { yield 1; }; }");
   }
 
   public void testExterns() {

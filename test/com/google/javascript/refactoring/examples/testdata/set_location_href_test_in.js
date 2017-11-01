@@ -18,7 +18,6 @@
 
 goog.provide('refactoring_testcase');
 
-goog.require('test_dependency');
 
 /**
  * @param {!Location} target The target.
@@ -27,6 +26,14 @@ goog.require('test_dependency');
 refactoring_testcase.test_location_href = function(target, val) {
   // Should match.
   target.href = val;
+};
+
+/**
+ * @param {!Location} target The Target.
+ */
+refactoring_testcase.location_href_string_literal = function(target) {
+  // Shouldn't match.
+  target.href = 'foo';
 };
 
 /**

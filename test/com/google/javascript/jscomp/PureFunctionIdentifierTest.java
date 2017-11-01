@@ -20,7 +20,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
@@ -32,155 +31,154 @@ import java.util.List;
  * @author johnlenz@google.com (John Lenz)
  */
 
-public final class PureFunctionIdentifierTest extends CompilerTestCase {
-  private static final List<String> NO_PURE_CALLS = ImmutableList.<String>of();
-
-  List<String> noSideEffectCalls = new ArrayList<>();
-  List<String> localResultCalls = new ArrayList<>();
+public final class PureFunctionIdentifierTest extends TypeICompilerTestCase {
+  List<String> noSideEffectCalls;
+  List<String> localResultCalls;
 
   boolean regExpHaveSideEffects = true;
 
-  private static final String TEST_EXTERNS = LINE_JOINER.join(
-      "var window; window.setTimeout;",
-      "/**@nosideeffects*/ function externSENone(){}",
+  private static final String TEST_EXTERNS =
+      CompilerTypeTestCase.DEFAULT_EXTERNS + LINE_JOINER.join(
+          "var window; window.setTimeout;",
+          "/**@nosideeffects*/ function externSENone(){}",
 
-      "/**@modifies{this}*/ function externSEThis(){}",
+          "/**@modifies{this}*/ function externSEThis(){}",
 
-      "/**@constructor",
-      " * @modifies{this}*/",
-      "function externObjSEThis(){}",
+          "/**@constructor",
+          " * @modifies{this}*/",
+          "function externObjSEThis(){}",
 
-      "/**",
-      " * @param {string} s id.",
-      " * @return {string}",
-      " * @modifies{this}",
-      " */",
-      "externObjSEThis.prototype.externObjSEThisMethod = function(s) {};",
+          "/**",
+          " * @param {string} s id.",
+          " * @return {string}",
+          " * @modifies{this}",
+          " */",
+          "externObjSEThis.prototype.externObjSEThisMethod = function(s) {};",
 
-      "/**",
-      " * @param {string} s id.",
-      " * @return {string}",
-      " * @modifies{arguments}",
-      " */",
-      "externObjSEThis.prototype.externObjSEThisMethod2 = function(s) {};",
+          "/**",
+          " * @param {string} s id.",
+          " * @return {string}",
+          " * @modifies{arguments}",
+          " */",
+          "externObjSEThis.prototype.externObjSEThisMethod2 = function(s) {};",
 
-      "/**@nosideeffects*/function Error(){}",
+          "/**@nosideeffects*/function Error(){}",
 
-      "function externSef1(){}",
+          "function externSef1(){}",
 
-      "/**@nosideeffects*/function externNsef1(){}",
+          "/**@nosideeffects*/function externNsef1(){}",
 
-      "var externSef2 = function(){};",
+          "var externSef2 = function(){};",
 
-      "/**@nosideeffects*/var externNsef2 = function(){};",
+          "/**@nosideeffects*/var externNsef2 = function(){};",
 
-      "var externNsef3 = /**@nosideeffects*/function(){};",
+          "var externNsef3 = /**@nosideeffects*/function(){};",
 
-      "var externObj;",
+          "var externObj;",
 
-      "externObj.sef1 = function(){};",
+          "externObj.sef1 = function(){};",
 
-      "/**@nosideeffects*/externObj.nsef1 = function(){};",
+          "/**@nosideeffects*/externObj.nsef1 = function(){};",
 
-      "externObj.nsef2 = /**@nosideeffects*/function(){};",
+          "externObj.nsef2 = /**@nosideeffects*/function(){};",
 
-      "externObj.partialFn;",
+          "externObj.partialFn;",
 
-      "externObj.partialSharedFn;",
+          "externObj.partialSharedFn;",
 
-      "var externObj2;",
+          "var externObj2;",
 
-      "externObj2.partialSharedFn = /**@nosideeffects*/function(){};",
+          "externObj2.partialSharedFn = /**@nosideeffects*/function(){};",
 
-      "/**@constructor*/function externSefConstructor(){}",
+          "/**@constructor*/function externSefConstructor(){}",
 
-      "externSefConstructor.prototype.sefFnOfSefObj = function(){};",
+          "externSefConstructor.prototype.sefFnOfSefObj = function(){};",
 
-      "externSefConstructor.prototype.nsefFnOfSefObj = ",
-      "  /**@nosideeffects*/function(){};",
+          "externSefConstructor.prototype.nsefFnOfSefObj = ",
+          "  /**@nosideeffects*/function(){};",
 
-      "externSefConstructor.prototype.externShared = function(){};",
+          "externSefConstructor.prototype.externShared = function(){};",
 
-      "/**@constructor@nosideeffects*/function externNsefConstructor(){}",
+          "/**@constructor@nosideeffects*/function externNsefConstructor(){}",
 
-      "externNsefConstructor.prototype.sefFnOfNsefObj = function(){};",
+          "externNsefConstructor.prototype.sefFnOfNsefObj = function(){};",
 
-      "externNsefConstructor.prototype.nsefFnOfNsefObj = ",
-      "  /**@nosideeffects*/function(){};",
+          "externNsefConstructor.prototype.nsefFnOfNsefObj = ",
+          "  /**@nosideeffects*/function(){};",
 
-      "externNsefConstructor.prototype.externShared = ",
-      "  /**@nosideeffects*/function(){};",
+          "externNsefConstructor.prototype.externShared = ",
+          "  /**@nosideeffects*/function(){};",
 
-      "/**@constructor @nosideeffects*/function externNsefConstructor2(){}",
-      "externNsefConstructor2.prototype.externShared = ",
-      "  /**@nosideeffects*/function(){};",
+          "/**@constructor @nosideeffects*/function externNsefConstructor2(){}",
+          "externNsefConstructor2.prototype.externShared = ",
+          "  /**@nosideeffects*/function(){};",
 
-      "externNsefConstructor.prototype.sharedPartialSef;",
-      "/**@nosideeffects*/externNsefConstructor.prototype.sharedPartialNsef;",
+          "externNsefConstructor.prototype.sharedPartialSef;",
+          "/**@nosideeffects*/externNsefConstructor.prototype.sharedPartialNsef;",
 
-      // An externs definition with a stub before.
-      "/**@constructor*/function externObj3(){}",
+          // An externs definition with a stub before.
+          "/**@constructor*/function externObj3(){}",
 
-      "externObj3.prototype.propWithStubBefore;",
+          "externObj3.prototype.propWithStubBefore;",
 
-      "/**",
-      " * @param {string} s id.",
-      " * @return {string}",
-      " * @nosideeffects",
-      " */",
-      "externObj3.prototype.propWithStubBefore = function(s) {};",
+          "/**",
+          " * @param {string} s id.",
+          " * @return {string}",
+          " * @nosideeffects",
+          " */",
+          "externObj3.prototype.propWithStubBefore = function(s) {};",
 
-      // useless JsDoc
-      "/**",
-      " * @see {foo}",
-      " */",
-      "externObj3.prototype.propWithStubBeforeWithJSDoc;",
+          // useless JsDoc
+          "/**",
+          " * @see {foo}",
+          " */",
+          "externObj3.prototype.propWithStubBeforeWithJSDoc;",
 
-      "/**",
-      " * @param {string} s id.",
-      " * @return {string}",
-      " * @nosideeffects",
-      " */",
-      "externObj3.prototype.propWithStubBeforeWithJSDoc = function(s) {};",
+          "/**",
+          " * @param {string} s id.",
+          " * @return {string}",
+          " * @nosideeffects",
+          " */",
+          "externObj3.prototype.propWithStubBeforeWithJSDoc = function(s) {};",
 
-      // An externs definition with a stub after.
-      "/**@constructor*/function externObj4(){}",
+          // An externs definition with a stub after.
+          "/**@constructor*/function externObj4(){}",
 
-      "/**",
-      " * @param {string} s id.",
-      " * @return {string}",
-      " * @nosideeffects",
-      " */",
-      "externObj4.prototype.propWithStubAfter = function(s) {};",
+          "/**",
+          " * @param {string} s id.",
+          " * @return {string}",
+          " * @nosideeffects",
+          " */",
+          "externObj4.prototype.propWithStubAfter = function(s) {};",
 
-      "externObj4.prototype.propWithStubAfter;",
+          "externObj4.prototype.propWithStubAfter;",
 
-      "/**",
-      " * @param {string} s id.",
-      " * @return {string}",
-      " * @nosideeffects",
-      " */",
-      "externObj4.prototype.propWithStubAfterWithJSDoc = function(s) {};",
+          "/**",
+          " * @param {string} s id.",
+          " * @return {string}",
+          " * @nosideeffects",
+          " */",
+          "externObj4.prototype.propWithStubAfterWithJSDoc = function(s) {};",
 
-      // useless JsDoc
-      "/**",
-      " * @see {foo}",
-      " */",
-      "externObj4.prototype.propWithStubAfterWithJSDoc;",
-      "var goog = {reflect: {}};",
-      "goog.reflect.cache = function(a, b, c, opt_d) {};",
+          // useless JsDoc
+          "/**",
+          " * @see {foo}",
+          " */",
+          "externObj4.prototype.propWithStubAfterWithJSDoc;",
+          "var goog = {};",
+          "goog.reflect = {};",
+          "goog.reflect.cache = function(a, b, c, opt_d) {};",
 
 
-      "/** @nosideeffects */",
-      "externObj.prototype.duplicateExternFunc = function() {}",
-      "externObj2.prototype.duplicateExternFunc = function() {}",
+          "/** @nosideeffects */",
+          "externObj.prototype.duplicateExternFunc = function() {};",
+          "externObj2.prototype.duplicateExternFunc = function() {};",
 
-      "externObj.prototype['weirdDefinition'] = function() {}"
-  );
+          "externObj.prototype['weirdDefinition'] = function() {};"
+          );
 
   public PureFunctionIdentifierTest() {
-    super(CompilerTypeTestCase.DEFAULT_EXTERNS + TEST_EXTERNS);
-    enableTypeCheck();
+    super(TEST_EXTERNS);
   }
 
   @Override
@@ -190,11 +188,85 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    ignoreWarnings(NewTypeInference.GLOBAL_THIS, NewTypeInference.INEXISTENT_PROPERTY);
+  }
+
+  @Override
   protected void tearDown() throws Exception {
     super.tearDown();
-    noSideEffectCalls.clear();
-    localResultCalls.clear();
     regExpHaveSideEffects = true;
+  }
+
+  /**
+   * Run PureFunctionIdentifier, then gather a list of calls that are
+   * marked as having no side effects.
+   */
+  private class NoSideEffectCallEnumerator
+  extends AbstractPostOrderCallback implements CompilerPass {
+    private final Compiler compiler;
+
+    NoSideEffectCallEnumerator(Compiler compiler) {
+      this.compiler = compiler;
+    }
+
+    @Override
+    public void process(Node externs, Node root) {
+      noSideEffectCalls = new ArrayList<>();
+      localResultCalls = new ArrayList<>();
+      compiler.setHasRegExpGlobalReferences(regExpHaveSideEffects);
+      compiler.getOptions().setUseTypesForLocalOptimization(true);
+      NameBasedDefinitionProvider defFinder = new NameBasedDefinitionProvider(compiler, true);
+      defFinder.process(externs, root);
+
+      PureFunctionIdentifier pureFunctionIdentifier =
+          new PureFunctionIdentifier(compiler, defFinder);
+      pureFunctionIdentifier.process(externs, root);
+
+      // Ensure that debug report computation doesn't crash.
+      pureFunctionIdentifier.getDebugReport();
+
+      NodeTraversal.traverseEs6(compiler, externs, this);
+      NodeTraversal.traverseEs6(compiler, root, this);
+    }
+
+    @Override
+    public void visit(NodeTraversal t, Node n, Node parent) {
+      if (n.isNew()) {
+        if (!NodeUtil.constructorCallHasSideEffects(n)) {
+          noSideEffectCalls.add(generateNameString(n.getFirstChild()));
+        }
+      } else if (n.isCall()) {
+        if (!NodeUtil.functionCallHasSideEffects(n, compiler)) {
+          noSideEffectCalls.add(generateNameString(n.getFirstChild()));
+        }
+        if (NodeUtil.callHasLocalResult(n)) {
+          localResultCalls.add(generateNameString(n.getFirstChild()));
+        }
+      }
+    }
+
+    private String generateNameString(Node node) {
+      if (node.isOr()) {
+        return "(" + generateNameString(node.getFirstChild())
+            + " || " + generateNameString(node.getLastChild()) + ")";
+      } else if (node.isHook()) {
+        return "(" + generateNameString(node.getSecondChild())
+            + " : " + generateNameString(node.getLastChild()) + ")";
+      } else {
+        String result = node.getQualifiedName();
+        if (result == null) {
+          if (node.isFunction()) {
+            result = node.toString(false, false, false).trim();
+          } else {
+            result = node.getFirstChild().toString(false, false, false);
+            result += " " + node.getLastChild().toString(false, false, false);
+          }
+        }
+        return result;
+      }
+    }
   }
 
   public void testIssue303() throws Exception {
@@ -210,7 +282,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "};",
         "(new F()).setLocation('http://www.google.com/');"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testIssue303b() throws Exception {
@@ -228,7 +300,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "  (new F()).setLocation('http://www.google.com/');",
         "} window['x'] = x;"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAnnotationInExterns_new1() throws Exception {
@@ -236,7 +308,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testAnnotationInExterns_new2() throws Exception {
-    assertPureCallsMarked("externSEThis()", NO_PURE_CALLS);
+    assertNoPureCalls("externSEThis()");
   }
 
   public void testAnnotationInExterns_new3() throws Exception {
@@ -330,11 +402,11 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testAnnotationInExterns1() throws Exception {
-    assertPureCallsMarked("externSef1()", NO_PURE_CALLS);
+    assertNoPureCalls("externSef1()");
   }
 
   public void testAnnotationInExterns2() throws Exception {
-    assertPureCallsMarked("externSef2()", NO_PURE_CALLS);
+    assertNoPureCalls("externSef2()");
   }
 
   public void testAnnotationInExterns3() throws Exception {
@@ -350,7 +422,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testNamespaceAnnotationInExterns1() throws Exception {
-    assertPureCallsMarked("externObj.sef1()", NO_PURE_CALLS);
+    assertNoPureCalls("externObj.sef1()");
   }
 
   public void testNamespaceAnnotationInExterns2() throws Exception {
@@ -362,7 +434,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testNamespaceAnnotationInExterns4() throws Exception {
-    assertPureCallsMarked("externObj.partialFn()", NO_PURE_CALLS);
+    assertNoPureCalls("externObj.partialFn()");
   }
 
   public void testNamespaceAnnotationInExterns5() throws Exception {
@@ -375,22 +447,22 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     assertPureCallsMarked(
         templateSrc.replace("<fnName>", "notPartialFn"), ImmutableList.of("o.notPartialFn"));
 
-    assertPureCallsMarked(templateSrc.replace("<fnName>", "partialFn"), NO_PURE_CALLS);
+    assertNoPureCalls(templateSrc.replace("<fnName>", "partialFn"));
   }
 
   public void testNamespaceAnnotationInExterns6() throws Exception {
-    assertPureCallsMarked("externObj.partialSharedFn()", NO_PURE_CALLS);
+    assertNoPureCalls("externObj.partialSharedFn()");
   }
 
   public void testConstructorAnnotationInExterns1() throws Exception {
-    assertPureCallsMarked("new externSefConstructor()", NO_PURE_CALLS);
+    assertNoPureCalls("new externSefConstructor()");
   }
 
   public void testConstructorAnnotationInExterns2() throws Exception {
     String source = LINE_JOINER.join(
         "var a = new externSefConstructor();",
         "a.sefFnOfSefObj()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testConstructorAnnotationInExterns3() throws Exception {
@@ -404,7 +476,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     String source = LINE_JOINER.join(
         "var a = new externSefConstructor();",
         "a.externShared()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testConstructorAnnotationInExterns5() throws Exception {
@@ -487,7 +559,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testAnnotationInExternStubs3() throws Exception {
-    assertPureCallsMarked("propWithAnnotatedStubAfter('a');", NO_PURE_CALLS);
+    assertNoPureCalls("propWithAnnotatedStubAfter('a');");
   }
 
   public void testAnnotationInExternStubs4() throws Exception {
@@ -505,11 +577,19 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         " */",
         "externObj5.prototype.propWithAnnotatedStubAfter;");
 
-    testSame(externs,
+    this.mode = TypeInferenceMode.OTI_ONLY;
+    testSame(
+        externs,
         "o.prototype.propWithAnnotatedStubAfter",
-        TypeValidator.DUP_VAR_DECLARATION_TYPE_MISMATCH, false);
+        TypeValidator.DUP_VAR_DECLARATION_TYPE_MISMATCH);
     assertThat(noSideEffectCalls).isEmpty();
-    noSideEffectCalls.clear();
+
+    this.mode = TypeInferenceMode.NTI_ONLY;
+    testSame(
+        TEST_EXTERNS + externs,
+        "o.prototype.propWithAnnotatedStubAfter",
+        GlobalTypeInfoCollector.REDECLARED_PROPERTY);
+    assertThat(noSideEffectCalls).isEmpty();
   }
 
   public void testAnnotationInExternStubs5() throws Exception {
@@ -531,11 +611,17 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         " */",
         "externObj5.prototype.propWithAnnotatedStubAfter;");
 
+    this.mode = TypeInferenceMode.OTI_ONLY;
     testSame(externs,
         "o.prototype.propWithAnnotatedStubAfter",
-        TypeValidator.DUP_VAR_DECLARATION, false);
-    assertEquals(NO_PURE_CALLS, noSideEffectCalls);
-    noSideEffectCalls.clear();
+        TypeValidator.DUP_VAR_DECLARATION);
+    assertThat(noSideEffectCalls).isEmpty();
+
+    this.mode = TypeInferenceMode.NTI_ONLY;
+    testSame(TEST_EXTERNS + externs,
+        "o.prototype.propWithAnnotatedStubAfter",
+        GlobalTypeInfoCollector.REDECLARED_PROPERTY);
+    assertThat(noSideEffectCalls).isEmpty();
   }
 
   public void testNoSideEffectsSimple() throws Exception {
@@ -626,17 +712,13 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         prefix + "var a = {foo : 1}; return a.foo" + suffix, fReturnsNonLocal);
 
     // read from extern
-    checkLocalityOfMarkedCalls(prefix + "return externObj" + suffix, NO_PURE_CALLS);
+    checkLocalityOfMarkedCalls(prefix + "return externObj" + suffix, ImmutableList.<String>of());
     checkLocalityOfMarkedCalls(
         "function inner(x) { x.foo = 3; }" /* to suppress missing property */ +
-        prefix + "return externObj.foo" + suffix, NO_PURE_CALLS);
+        prefix + "return externObj.foo" + suffix, ImmutableList.<String>of());
   }
 
-  /**
-   * Note that this works because object literals are always seen as local according to {@link
-   * NodeUtil#evaluatesToLocalValue}
-   */
-  public void testReturnLocalityTaintLiteralWithGlobal() {
+  public void testReturnLocalityTaintObjectLiteralWithGlobal() {
     // return empty object literal.  This is completely local
     String source = LINE_JOINER.join(
         "function f() { return {} }",
@@ -645,11 +727,27 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     checkLocalityOfMarkedCalls(source, ImmutableList.of("f"));
     // return obj literal with global taint.
     source = LINE_JOINER.join(
+        "var global = new Object();",
+        "function f() { return {'asdf': global} }",
+        "f();");
+    checkLocalityOfMarkedCalls(source, ImmutableList.<String>of());
+  }
+
+  public void testReturnLocalityTaintArrayLiteralWithGlobal() {
+    String source =
+        LINE_JOINER.join(
+            "function f() { return []; }",
+            "f();",
+            "function g() { return [1, {}]; }",
+            "g();");
+    checkLocalityOfMarkedCalls(source, ImmutableList.of("f", "g"));
+    // return obj literal with global taint.
+    source =
+        LINE_JOINER.join(
             "var global = new Object();",
-            "function f() { return {'asdf': global} }",
-            "f();"
-        );
-    checkLocalityOfMarkedCalls(source, ImmutableList.of("f"));
+            "function f() { return [2 ,global]; }",
+            "f();");
+    checkLocalityOfMarkedCalls(source, ImmutableList.<String>of());
   }
 
   public void testReturnLocalityMultipleDefinitionsSameName() {
@@ -670,21 +768,21 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     assertPureCallsMarked(prefix + "externObj.nsef1()" + suffix,
                      ImmutableList.of("externObj.nsef1", "f"));
 
-    assertPureCallsMarked(prefix + "externSef1()" + suffix, NO_PURE_CALLS);
-    assertPureCallsMarked(prefix + "externObj.sef1()" + suffix, NO_PURE_CALLS);
+    assertNoPureCalls(prefix + "externSef1()" + suffix);
+    assertNoPureCalls(prefix + "externObj.sef1()" + suffix);
   }
 
   public void testApply() throws Exception {
     String source = LINE_JOINER.join(
         "function f() {return 42}",
-        "f.apply()");
+        "f.apply(null)");
     assertPureCallsMarked(source, ImmutableList.of("f.apply"));
   }
 
   public void testCall() throws Exception {
     String source = LINE_JOINER.join(
         "function f() {return 42}",
-        "f.call()");
+        "f.call(null)");
     assertPureCallsMarked(source, ImmutableList.of("f.call"));
   }
 
@@ -692,17 +790,17 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     String source = LINE_JOINER.join(
         "var dict = {'func': function() {}};",
         "function f() { var s = dict['func'];}",
-        "f.apply()"
+        "f.apply(null)"
     );
     assertPureCallsMarked(source, ImmutableList.of("f.apply"));
 
-    // Not marked becuase the definition cannot be found so unknown side effects.
+    // Not marked because the definition cannot be found so unknown side effects.
     source = LINE_JOINER.join(
         "var dict = {'func': function() {}};",
         "function f() { var s = dict['func'].apply();}",
-        "f.apply()"
+        "f.apply(null)"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
 
     // Not marked becuase the definition cannot be found so unknown side effects.
     source = LINE_JOINER.join(
@@ -711,7 +809,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function f() { var s = (dict['func'] || pure)();}",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
 
     // Not marked becuase the definition cannot be found so unknown side effects.
     source = LINE_JOINER.join(
@@ -720,7 +818,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
             , "function f() { var s = (condition ? dict['func'] : pure)();}"
             , "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testInference1() throws Exception {
@@ -739,7 +837,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function g() {a=2}",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testInference3() throws Exception {
@@ -758,12 +856,11 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var g = function() {a=2};",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testInference5() throws Exception {
     String source = LINE_JOINER.join(
-        "var goog = {};",
         "goog.f = function() {return goog.g()};",
         "goog.g = function() {return 42};",
         "goog.f()"
@@ -774,12 +871,11 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   public void testInference6() throws Exception {
     String source = LINE_JOINER.join(
         "var a = 1;",
-        "var goog = {};",
         "goog.f = function() {goog.g()};",
         "goog.g = function() {a=2};",
         "goog.f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testLocalizedSideEffects1() throws Exception {
@@ -803,7 +899,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "}",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testLocalizedSideEffects3() throws Exception {
@@ -814,7 +910,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function f() {var x = g; x.foo++};",
         "f();"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testLocalizedSideEffects4() throws Exception {
@@ -834,7 +930,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function f() {var x = g; x[0] = 1;};",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testLocalizedSideEffects6() throws Exception {
@@ -865,14 +961,14 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   public void testLocalizedSideEffects8() throws Exception {
     // Returning a local object that has been modified
     // is not a global side-effect.
-    // TODO(johnlenz): Not yet. Propagate local object information.
-    String source = LINE_JOINER.join(
-        "/** @constructor A */ function A() {};",
-        "function f() {",
-        "  var a = new A; a.foo = 1; return a;",
-        "}",
-        "f()"
-    );
+    // TODO(tdeegan): Not yet. Propagate local object information.
+    String source =
+        LINE_JOINER.join(
+            "/** @constructor A */ function A() {};",
+            "function f() {",
+            "  var a = new A; a.foo = 1; return a;",
+            "}",
+            "f()");
     assertPureCallsMarked(source, ImmutableList.of("A"));
   }
 
@@ -905,20 +1001,25 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testLocalizedSideEffects11() throws Exception {
+    // TODO(tdeegan): updateA is side effect free.
     // Calling a function of a local object that taints this.
-    String source = LINE_JOINER.join(
-        "/** @constructor */ function A() {}",
-        "A.prototype.update = function() { this.x = 1; };",
-        "/** @constructor */ function B() { ",
-        "  this.a_ = new A();",
-        "}",
-        "B.prototype.updateA = function() {",
-        "  var b = this.a_;",
-        "  b.update();",
-        "};",
-        "var x = new B();",
-        "x.updateA();"
-    );
+    String source =
+        LINE_JOINER.join(
+            "/** @constructor */",
+            "function A() {}",
+            "A.prototype.update = function() { this.x = 1; };",
+            "",
+            "/** @constructor */",
+            "function B() { ",
+            "  this.a_ = new A();",
+            "}",
+            "B.prototype.updateA = function() {",
+            "  var b = this.a_;",
+            "  b.update();",
+            "};",
+            "",
+            "var x = new B();",
+            "x.updateA();");
     assertPureCallsMarked(source, ImmutableList.of("A", "B"));
   }
 
@@ -943,7 +1044,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var x = 1;",
         "function f() {x++}",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testUnaryOperators3() throws Exception {
@@ -958,7 +1059,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var x = {foo : 0};",
         "function f() {x.foo++}",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testUnaryOperators5() throws Exception {
@@ -973,7 +1074,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var x = {};",
         "function f() {delete x}",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testDeleteOperator2() throws Exception {
@@ -987,77 +1088,77 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     String source = LINE_JOINER.join(
         "var f = externNsef1 || externNsef2;",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testOrOperator2() throws Exception {
     String source = LINE_JOINER.join(
         "var f = function(){} || externNsef2;",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testOrOperator3() throws Exception {
     String source = LINE_JOINER.join(
         "var f = externNsef2 || function(){};",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testOrOperators4() throws Exception {
     String source = LINE_JOINER.join(
         "var f = function(){} || function(){};",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAndOperator1() throws Exception {
     String source = LINE_JOINER.join(
         "var f = externNsef1 && externNsef2;",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAndOperator2() throws Exception {
     String source = LINE_JOINER.join(
         "var f = function(){} && externNsef2;",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAndOperator3() throws Exception {
     String source = LINE_JOINER.join(
         "var f = externNsef2 && function(){};",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAndOperators4() throws Exception {
     String source = LINE_JOINER.join(
         "var f = function(){} && function(){};",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testHookOperator1() throws Exception {
     String source = LINE_JOINER.join(
         "var f = true ? externNsef1 : externNsef2;",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testHookOperator2() throws Exception {
     String source = LINE_JOINER.join(
         "var f = true ? function(){} : externNsef2;",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testHookOperator3() throws Exception {
     String source = LINE_JOINER.join(
         "var f = true ? externNsef2 : function(){};",
         "f()");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testHookOperators4() throws Exception {
@@ -1158,7 +1259,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "sideEffectCaller();"
     );
     // Can't tell which f is being called so it assumes both.
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAmbiguousDefinitionsCall() throws Exception {
@@ -1170,7 +1271,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "sideEffectCaller();"
     );
     // Can't tell which f is being called so it assumes both.
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAmbiguousDefinitionsAllPropagationTypes() throws Exception {
@@ -1190,10 +1291,11 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var globalVar = 1;",
         "A.modifiesThis = function() { this.x = 5; };",
         "/**@constructor*/function Constructor() { Constructor.modifiesThis.call(this); };",
-        "Constructor.prototype.modifiesThis = function() {};",
+        "Constructor.modifiesThis = function() {};",
         "new Constructor();",
         "A.modifiesThis();"
     );
+
     // Can't tell which modifiesThis is being called so it assumes both.
     assertPureCallsMarked(source, ImmutableList.<String>of("Constructor"));
   }
@@ -1240,7 +1342,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
             "B.a = function() {};",
             "var b = function(x) {C.a(x)};",
             "b({});");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAmbiguousDefinitionsMutatesLocalArgument() throws Exception {
@@ -1260,7 +1362,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
   }
 
   public void testAmbiguousExternDefinitions() {
-    assertPureCallsMarked("x.duplicateExternFunc()", NO_PURE_CALLS);
+    assertNoPureCalls("x.duplicateExternFunc()");
 
     // nsef1 is defined as no side effect in the externs.
     String source = LINE_JOINER.join(
@@ -1269,7 +1371,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "A.nsef1 = function () {global = 2;};",
         "externObj.nsef1();"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   /**
@@ -1284,7 +1386,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "B.x = function() {}",
         "B.x();"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAmbiguousDefinitionsDoubleDefinition2() {
@@ -1294,7 +1396,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "a = function() {}",
         "B.x(); a();"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testAmbiguousDefinitionsDoubleDefinition3() {
@@ -1325,6 +1427,16 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "B.x(); a(); b();"
     );
     assertPureCallsMarked(source, ImmutableList.of("b"));
+  }
+
+  public void testAmbiguousDefinitionsDoubleDefinition6() {
+    String source = LINE_JOINER.join(
+            "var SetCustomData1 = function SetCustomData2(element, dataName, dataValue) {",
+            "    var x = element['_customData'];",
+            "    x[dataName] = dataValue;",
+            "}",
+            "SetCustomData1(window, \"foo\", \"bar\");");
+    assertNoPureCalls(source);
   }
 
   public void testCallBeforeDefinition() throws Exception {
@@ -1380,7 +1492,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function f() {return new A}",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testConstructorThatModifiesGlobal2() throws Exception {
@@ -1390,7 +1502,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function f() {return new A}",
         "f()"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testCallFunctionThatModifiesThis() throws Exception {
@@ -1415,7 +1527,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     String source = LINE_JOINER.join(
         "function f(x) { x.y = 1; }",
         "f(window);");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testMutatesArguments3() throws Exception {
@@ -1424,7 +1536,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "function f(x) { x.y = 1; }",
         "function g(x) { f(x); }",
         "g({});");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testMutatesArguments4() throws Exception {
@@ -1444,7 +1556,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "  g();",
         "}",
         "f(window);");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testMutatesArgumentsArray1() throws Exception {
@@ -1459,14 +1571,46 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     String source = LINE_JOINER.join(
         "function f(x) { arguments[0].y = 1; }",
         "f({});");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testMutatesArgumentsArray3() throws Exception {
     String source = LINE_JOINER.join(
         "function f(x) { arguments[0].y = 1; }",
         "f(x);");
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
+  }
+
+  public void testCallGenerator1() {
+    this.mode = TypeInferenceMode.NEITHER; // type check for yield not yet implemented
+    String source =
+        LINE_JOINER.join(
+            "var x = 0;",
+            "function* f() {",
+            "  x = 2",
+            "  while (true) {",
+            "    yield x;",
+            "  }",
+            "}",
+            "var g = f();");
+    assertNoPureCalls(source);
+    Node lastRoot = getLastCompiler().getRoot().getLastChild();
+    Node call = findQualifiedNameNode("f", lastRoot).getParent();
+    assertThat(call.isNoSideEffectsCall()).isFalse();
+    assertEquals(
+        new Node.SideEffectFlags().setReturnsTainted().valueOf(), call.getSideEffectFlags());
+  }
+
+  public void testCallGenerator2() {
+    this.mode = TypeInferenceMode.NEITHER; // type check for yield not yet implemented
+    String source = LINE_JOINER.join(
+            "function* f() {",
+            "  while (true) {",
+            "    yield 1;",
+            "  }",
+            "}",
+            "var g = f();");
+    assertPureCallsMarked(source, ImmutableList.of("f"));
   }
 
   public void testCallFunctionFOrG() throws Exception {
@@ -1537,7 +1681,7 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     );
 
     regExpHaveSideEffects = true;
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
     regExpHaveSideEffects = false;
     assertPureCallsMarked(source, ImmutableList.of(
         "REGEXP STRING exec", "k"));
@@ -1567,13 +1711,13 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
     );
 
     // This should be "(Error || FUNCTION)" but isn't.
-    assertPureCallsMarked(source, NO_PURE_CALLS);
+    assertNoPureCalls(source);
   }
 
   public void testFunctionProperties1() throws Exception {
     String source = LINE_JOINER.join(
         "/** @constructor */",
-        "function F() {}",
+        "function F() { this.bar; }",
         "function g() {",
         "  this.bar = function() { alert(3); };",
         "}",
@@ -1581,14 +1725,16 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "g.call(x);",
         "x.bar();"
     );
-    assertPureCallsMarked(source, ImmutableList.of("F"));
-
-    Node lastRoot = getLastCompiler().getRoot();
-    Node call = findQualifiedNameNode("g.call", lastRoot).getParent();
-    assertEquals(
-        new Node.SideEffectFlags()
-        .clearAllFlags().setMutatesArguments().valueOf(),
-        call.getSideEffectFlags());
+    assertPureCallsMarked(source, ImmutableList.of("F"), new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot();
+        Node call = findQualifiedNameNode("g.call", lastRoot).getParent();
+        assertEquals(
+            new Node.SideEffectFlags()
+                .clearAllFlags().setMutatesArguments().valueOf(),
+            call.getSideEffectFlags());
+      }
+    });
   }
 
   public void testCallCache() throws Exception {
@@ -1596,11 +1742,14 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var valueFn = function() {};",
         "goog.reflect.cache(externObj, \"foo\", valueFn)"
     );
-    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache"));
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(call.isNoSideEffectsCall()).isTrue();
-    assertThat(call.mayMutateGlobalStateOrThrow()).isFalse();
+    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache"), new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot().getLastChild();
+        Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+        assertThat(call.isNoSideEffectsCall()).isTrue();
+        assertThat(call.mayMutateGlobalStateOrThrow()).isFalse();
+      }
+    });
   }
 
   public void testCallCache_withKeyFn() throws Exception {
@@ -1609,20 +1758,26 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var keyFn = function(v) { return v };",
         "goog.reflect.cache(externObj, \"foo\", valueFn, keyFn)"
     );
-    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache"));
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(call.isNoSideEffectsCall()).isTrue();
-    assertThat(call.mayMutateGlobalStateOrThrow()).isFalse();
+    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache"), new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot().getLastChild();
+        Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+        assertThat(call.isNoSideEffectsCall()).isTrue();
+        assertThat(call.mayMutateGlobalStateOrThrow()).isFalse();
+      }
+    });
   }
 
   public void testCallCache_anonymousFn() throws Exception {
     String source = "goog.reflect.cache(externObj, \"foo\", function(v) { return v })";
-    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache"));
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(call.isNoSideEffectsCall()).isTrue();
-    assertThat(call.mayMutateGlobalStateOrThrow()).isFalse();
+    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache"), new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot().getLastChild();
+        Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+        assertThat(call.isNoSideEffectsCall()).isTrue();
+        assertThat(call.mayMutateGlobalStateOrThrow()).isFalse();
+      }
+    });
   }
 
   public void testCallCache_anonymousFn_hasSideEffects() throws Exception {
@@ -1630,11 +1785,14 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var x = 0;",
         "goog.reflect.cache(externObj, \"foo\", function(v) { return (x+=1) })"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(call.isNoSideEffectsCall()).isFalse();
-    assertThat(call.mayMutateGlobalStateOrThrow()).isTrue();
+    assertNoPureCalls(source, new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot().getLastChild();
+        Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+        assertThat(call.isNoSideEffectsCall()).isFalse();
+        assertThat(call.mayMutateGlobalStateOrThrow()).isTrue();
+      }
+    });
   }
 
   public void testCallCache_hasSideEffects() throws Exception {
@@ -1643,11 +1801,14 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var valueFn = function() { return (x+=1); };",
         "goog.reflect.cache(externObj, \"foo\", valueFn)"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(call.isNoSideEffectsCall()).isFalse();
-    assertThat(call.mayMutateGlobalStateOrThrow()).isTrue();
+    assertNoPureCalls(source, new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot().getLastChild();
+        Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+        assertThat(call.isNoSideEffectsCall()).isFalse();
+        assertThat(call.mayMutateGlobalStateOrThrow()).isTrue();
+      }
+    });
   }
 
   public void testCallCache_withKeyFn_hasSideEffects() throws Exception {
@@ -1657,11 +1818,14 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var valueFn = function(v) { return v };",
         "goog.reflect.cache(externObj, \"foo\", valueFn, keyFn)"
     );
-    assertPureCallsMarked(source, NO_PURE_CALLS);
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(call.isNoSideEffectsCall()).isFalse();
-    assertThat(call.mayMutateGlobalStateOrThrow()).isTrue();
+    assertNoPureCalls(source, new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        Node lastRoot = compiler.getRoot().getLastChild();
+        Node call = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+        assertThat(call.isNoSideEffectsCall()).isFalse();
+        assertThat(call.mayMutateGlobalStateOrThrow()).isTrue();
+      }
+    });
   }
 
   public void testCallCache_propagatesSideEffects() throws Exception {
@@ -1670,111 +1834,57 @@ public final class PureFunctionIdentifierTest extends CompilerTestCase {
         "var helper = function(x) { return goog.reflect.cache(externObj, x, valueFn); };",
         "helper(10);"
     );
-    assertPureCallsMarked(source, ImmutableList.of("goog.reflect.cache", "helper"));
-    Node lastRoot = getLastCompiler().getRoot().getLastChild();
-    Node cacheCall = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
-    assertThat(cacheCall.isNoSideEffectsCall()).isTrue();
-    assertThat(cacheCall.mayMutateGlobalStateOrThrow()).isFalse();
+    assertPureCallsMarked(
+        source,
+        ImmutableList.of("goog.reflect.cache", "helper"),
+        new Postcondition() {
+          @Override public void verify(Compiler compiler) {
+            Node lastRoot = compiler.getRoot().getLastChild();
+            Node cacheCall = findQualifiedNameNode("goog.reflect.cache", lastRoot).getParent();
+            assertThat(cacheCall.isNoSideEffectsCall()).isTrue();
+            assertThat(cacheCall.mayMutateGlobalStateOrThrow()).isFalse();
 
-    Node helperCall = Iterables.getLast(findQualifiedNameNodes("helper", lastRoot)).getParent();
-    assertThat(helperCall.isNoSideEffectsCall()).isTrue();
-    assertThat(helperCall.mayMutateGlobalStateOrThrow()).isFalse();
+            Node helperCall =
+                Iterables.getLast(findQualifiedNameNodes("helper", lastRoot)).getParent();
+            assertThat(helperCall.isNoSideEffectsCall()).isTrue();
+            assertThat(helperCall.mayMutateGlobalStateOrThrow()).isFalse();
+          }
+        });
+  }
+
+  void assertNoPureCalls(String source) {
+    assertPureCallsMarked(source, ImmutableList.<String>of(), null);
+  }
+
+  void assertNoPureCalls(String source, Postcondition post) {
+    assertPureCallsMarked(source, ImmutableList.<String>of(), post);
   }
 
   void assertPureCallsMarked(String source, List<String> expected) {
-    assertPureCallsMarked(source, expected, LanguageMode.ECMASCRIPT6);
-    assertPureCallsMarked(source, expected, LanguageMode.ECMASCRIPT5);
+    assertPureCallsMarked(source, expected, null);
   }
 
-  void assertPureCallsMarked(String source, List<String> expected, LanguageMode mode) {
-    setAcceptedLanguage(mode);
-    testSame(source);
-    assertEquals(expected, noSideEffectCalls);
-    noSideEffectCalls.clear();
+  void assertPureCallsMarked(String source, final List<String> expected, final Postcondition post) {
+    testSame(srcs(source), new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        assertEquals(expected, noSideEffectCalls);
+        if (post != null) {
+          post.verify(compiler);
+        }
+      }
+    });
   }
 
-  void checkLocalityOfMarkedCalls(String source, List<String> expected) {
-    checkLocalityOfMarkedCalls(source, expected, LanguageMode.ECMASCRIPT6);
-    checkLocalityOfMarkedCalls(source, expected, LanguageMode.ECMASCRIPT5);
-  }
-
-  void checkLocalityOfMarkedCalls(String source, List<String> expected, LanguageMode mode) {
-    setAcceptedLanguage(mode);
-    testSame(source);
-    assertEquals(expected, localResultCalls);
-    localResultCalls.clear();
+  void checkLocalityOfMarkedCalls(String source, final List<String> expected) {
+    testSame(srcs(source), new Postcondition() {
+      @Override public void verify(Compiler unused) {
+        assertEquals(expected, localResultCalls);
+      }
+    });
   }
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new NoSideEffectCallEnumerator(compiler);
-  }
-
-  /**
-   * Run PureFunctionIdentifier, then gather a list of calls that are
-   * marked as having no side effects.
-   */
-  private class NoSideEffectCallEnumerator
-      extends AbstractPostOrderCallback implements CompilerPass {
-    private final Compiler compiler;
-
-    NoSideEffectCallEnumerator(Compiler compiler) {
-      this.compiler = compiler;
-    }
-
-    @Override
-    public void process(Node externs, Node root) {
-      compiler.setHasRegExpGlobalReferences(regExpHaveSideEffects);
-      compiler.getOptions().setUseTypesForLocalOptimization(true);
-      NameBasedDefinitionProvider defFinder = new NameBasedDefinitionProvider(compiler, true);
-      defFinder.process(externs, root);
-
-      PureFunctionIdentifier pureFunctionIdentifier =
-          new PureFunctionIdentifier(compiler, defFinder);
-      pureFunctionIdentifier.process(externs, root);
-
-      // Ensure that debug report computation doesn't crash.
-      pureFunctionIdentifier.getDebugReport();
-
-      NodeTraversal.traverseEs6(compiler, externs, this);
-      NodeTraversal.traverseEs6(compiler, root, this);
-    }
-
-    @Override
-    public void visit(NodeTraversal t, Node n, Node parent) {
-      if (n.isNew()) {
-        if (!NodeUtil.constructorCallHasSideEffects(n)) {
-          noSideEffectCalls.add(generateNameString(n.getFirstChild()));
-        }
-      } else if (n.isCall()) {
-        if (!NodeUtil.functionCallHasSideEffects(n, compiler)) {
-          noSideEffectCalls.add(generateNameString(n.getFirstChild()));
-        }
-        if (NodeUtil.callHasLocalResult(n)) {
-          localResultCalls.add(generateNameString(n.getFirstChild()));
-        }
-      }
-    }
-
-    private String generateNameString(Node node) {
-      if (node.isOr()) {
-        return "(" + generateNameString(node.getFirstChild()) +
-            " || " + generateNameString(node.getLastChild()) + ")";
-      } else if (node.isHook()) {
-        return "(" + generateNameString(node.getSecondChild()) +
-            " : " + generateNameString(node.getLastChild()) + ")";
-      } else {
-        String result = node.getQualifiedName();
-        if (result == null) {
-          if (node.isFunction()) {
-            result = node.toString(false, false, false).trim();
-          } else {
-            result = node.getFirstChild().toString(false, false, false);
-            result += " " + node.getLastChild().toString(false, false, false);
-          }
-        }
-        return result;
-      }
-    }
   }
 }

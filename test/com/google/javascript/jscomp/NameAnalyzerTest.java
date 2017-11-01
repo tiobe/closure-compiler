@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
 
 /**
@@ -25,26 +26,49 @@ import com.google.javascript.rhino.Node;
 
 public final class NameAnalyzerTest extends CompilerTestCase {
 
-  private static String kExterns =
-      "var window, top;" +
-      "var document;" +
-      "var Function;" +
-      "var Array;" +
-      "var externfoo; methods.externfoo;";
+  private static final String EXTERNS =
+      lines(
+          "var window, top;",
+          "var document;",
+          "var Function;",
+          "var Array;",
+          "var externfoo; methods.externfoo;");
 
   public NameAnalyzerTest() {
-    super(kExterns);
-  }
-
-  @Override
-  protected void setUp() {
-    super.enableNormalize();
+    super(EXTERNS);
   }
 
   @Override
   protected int getNumRepetitions() {
     // pass reaches steady state after 1 iteration.
     return 1;
+  }
+
+  @Override
+  protected CompilerPass getProcessor(Compiler compiler) {
+    return new MarkNoSideEffectCallsAndNameAnalyzerRunner(compiler);
+  }
+
+  private static class MarkNoSideEffectCallsAndNameAnalyzerRunner implements CompilerPass {
+    MarkNoSideEffectCalls markNoSideEffectCalls;
+    NameAnalyzer analyzer;
+    MarkNoSideEffectCallsAndNameAnalyzerRunner(Compiler compiler) {
+      this.markNoSideEffectCalls = new MarkNoSideEffectCalls(compiler);
+      this.analyzer = new NameAnalyzer(compiler, true, null);
+    }
+
+    @Override
+    public void process(Node externs, Node root) {
+      markNoSideEffectCalls.process(externs, root);
+      analyzer.process(externs, root);
+    }
+  }
+
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
+    enableNormalize();
   }
 
   public void testRemoveVarDeclaration1() {
@@ -80,6 +104,93 @@ public final class NameAnalyzerTest extends CompilerTestCase {
     test("var a;var b = 0, c = a = b = 1", "");
   }
 
+  public void testRemoveLetDeclaration1() {
+    test("let foo = 3;", "");
+  }
+
+  public void testRemoveLetDeclaration2() {
+    test("let foo = 3, bar = 4; externfoo = foo;",
+         "let foo = 3; externfoo = foo;");
+  }
+
+  public void testRemoveLetDeclaration3() {
+    test("let a = f(), b = 1, c = 2; b; c", "f();let b = 1, c = 2; b; c");
+  }
+
+  public void testRemoveLetDeclaration4() {
+    test("let a = 0, b = f(), c = 2; a; c", "let a = 0;f();let c = 2; a; c");
+  }
+
+  public void testRemoveLetDeclaration5() {
+    test("let a = 0, b = 1, c = f(); a; b", "let a = 0, b = 1; f(); a; b");
+  }
+
+  public void testRemoveLetDeclaration6() {
+    test("let a = 0, b = a = 1; a", "let a = 0; a = 1; a");
+  }
+
+  public void testRemoveLetDeclaration7() {
+    test("let a = 0, b = a = 1", "");
+  }
+
+  public void testRemoveLetDeclaration8() {
+    test("let a;let b = 0, c = a = b = 1", "");
+  }
+
+  public void testRemoveLetDeclaration9() {
+    // The variable inside the block doesn't get removed (but does get renamed by Normalize).
+    test(
+        "let x = 1; if (true) { let x = 2; x; }",
+        "if (true) { let x$jscomp$1 = 2; x$jscomp$1; }");
+  }
+
+  // Let/const defined variables in blocks are not global so NameAnalyzer doesn't remove them.
+  public void testDontRemoveLetInBlock1() {
+    testSame(
+        LINE_JOINER.join(
+            "if (true) {",
+            "  let x = 1; alert(x);",
+            "}"));
+
+    testSame(
+        LINE_JOINER.join(
+            "if (true) {",
+            "  let x = 1;",
+            "}"));
+  }
+
+  public void testDontRemoveLetInBlock2() {
+    testSame(
+        LINE_JOINER.join(
+            "if (true) {",
+            "  let x = 1; alert(x);",
+            "} else {",
+            "  let x = 1; alert(x);",
+            "}"));
+
+    testSame(
+        LINE_JOINER.join(
+            "if (true) {",
+            "  let x = 1;",
+            "} else {",
+            "  let x = 1;",
+            "}"));
+  }
+
+  public void testRemoveConstDeclaration1() {
+    test("const a = 4;", "");
+  }
+
+  public void testRemoveConstDeclaration2() {
+    testSame("const a = 4; window.x = a;");
+  }
+
+  public void testRemoveConstDeclaration3() {
+    // The variable inside the block doesn't get removed (but does get renamed by Normalize).
+    test(
+        "const x = 1; if (true) { const x = 2; x; }",
+        "if (true) { const x$jscomp$1 = 2; x$jscomp$1; }");
+  }
 
   public void testRemoveDeclaration1() {
     test("var a;var b = 0, c = a = b = 1", "");
@@ -183,7 +294,7 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testSideEffectClassification1() {
-    test("foo();", "foo();");
+    testSame("foo();");
   }
 
   public void testSideEffectClassification2() {
@@ -203,7 +314,7 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testSideEffectClassification6() {
-    test("function sef(){} sef();", "function sef(){} sef();");
+    testSame("function sef(){} sef();");
   }
 
   public void testSideEffectClassification7() {
@@ -213,11 +324,19 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   public void testNoSideEffectAnnotation1() {
     test("function f(){} var a = f();",
          "function f(){} f()");
+
+    test("function f(){} let a = f();",
+        "function f(){} f()");
+
+    test("function f(){} const a = f();",
+        "function f(){} f()");
   }
 
   public void testNoSideEffectAnnotation2() {
-    test("/**@nosideeffects*/function f(){}", "var a = f();",
-         "", null, null);
+    test(
+        "/**@nosideeffects*/function f(){}",
+        "var a = f();",
+        "");
   }
 
   public void testNoSideEffectAnnotation3() {
@@ -227,7 +346,7 @@ public final class NameAnalyzerTest extends CompilerTestCase {
 
   public void testNoSideEffectAnnotation4() {
     test("var f = /**@nosideeffects*/function(){};", "var a = f();",
-         "", null, null);
+         "");
   }
 
   public void testNoSideEffectAnnotation5() {
@@ -237,31 +356,31 @@ public final class NameAnalyzerTest extends CompilerTestCase {
 
   public void testNoSideEffectAnnotation6() {
     test("f = /**@nosideeffects*/function(){};", "var a = f();",
-         "", null, null);
+         "");
   }
 
   public void testNoSideEffectAnnotation7() {
     test("f = /**@nosideeffects*/function(){};",
          "f = function(){};" +
          "var a = f();",
-         "f = function(){}; f();", null, null);
+         "f = function(){}; f();");
   }
 
   public void testNoSideEffectAnnotation8() {
     test("f = function(){};" +
          "f = /**@nosideeffects*/function(){};",
          "var a = f();",
-         "f();", null, null);
+         "f();");
   }
 
   public void testNoSideEffectAnnotation9() {
     test("f = /**@nosideeffects*/function(){};" +
          "f = /**@nosideeffects*/function(){};",
          "var a = f();",
-         "", null, null);
+         "");
 
     test("f = /**@nosideeffects*/function(){};", "var a = f();",
-         "", null, null);
+         "");
   }
 
   public void testNoSideEffectAnnotation10() {
@@ -270,8 +389,10 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testNoSideEffectAnnotation11() {
-    test("var o = {}; o.f = /**@nosideeffects*/function(){};",
-         "var a = o.f();", "", null, null);
+    test(
+        "var o = {}; o.f = /**@nosideeffects*/function(){};",
+        "var a = o.f();",
+        "");
   }
 
   public void testNoSideEffectAnnotation12() {
@@ -280,14 +401,20 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testNoSideEffectAnnotation13() {
-    test("/**@nosideeffects*/function c(){}", "var a = new c",
-         "", null, null);
+    test(
+        "/**@nosideeffects*/function c(){}",
+        "var a = new c",
+        "");
   }
 
   public void testNoSideEffectAnnotation14() {
-    String common = "function c(){};" +
-        "c.prototype.f = /**@nosideeffects*/function(){};";
-    test(common, "var o = new c; var a = o.f()", "new c", null, null);
+    String externs =
+        "function c(){};"
+        + "c.prototype.f = /**@nosideeffects*/function(){};";
+    test(
+        externs,
+        "var o = new c; var a = o.f()",
+        "new c");
   }
 
   public void testNoSideEffectAnnotation15() {
@@ -299,8 +426,7 @@ public final class NameAnalyzerTest extends CompilerTestCase {
     test("/**@nosideeffects*/function c(){}" +
          "c.prototype.f = /**@nosideeffects*/function(){};",
          "var a = (new c).f()",
-         "",
-         null, null);
+         "");
   }
 
   public void testFunctionPrototype() {
@@ -363,6 +489,60 @@ public final class NameAnalyzerTest extends CompilerTestCase {
              "a.b.prototype = {x: function() { f(); }}; new a.b().x();");
   }
 
+  public void testEs6Class() {
+    test("class C {}", "");
+
+    test("class C {constructor() {} }", "");
+
+    testSame("class C {} var c = new C(); g(c);");
+
+    testSame(
+        LINE_JOINER.join(
+            "class C {",
+            "  constructor() {",
+            "    this.x = 1;",
+            "  }",
+            "  add() {",
+            "    this.x++",
+            "  }",
+            "}",
+            "var c = new C;",
+            "c.add();"));
+
+    test("class C{} class D{} var d = new D;", "class D{} new D;");
+
+    testSame("{class C{} }"); // global classes only
+    testSame("{class C{} var c = new C; f(c)}");
+
+    testSame("function f() { return class C {} } f();");
+    testSame("export class C {}");
+
+    // class expressions
+
+    test("var c = class{}", "");
+    testSame("var c = class{}; g(c);");
+
+    test("var c = class C {}", "");
+    testSame("var c = class C{}; g(c);");
+  }
+
+  public void testEs6ClassExtends() {
+    testSame("class D {} class C extends D {} var c = new C; c.g();");
+    test("class D {} class C extends D {}" , "");
+  }
+
+  /** @bug 67430253 */
+  public void testEs6ClassExtendsQualifiedName1() {
+    testSame("var ns = {}; ns.Class1 = class {}; class Class2 extends ns.Class1 {}; use(Class2);");
+  }
+
+  /** @bug 67430253 */
+  public void testEs6ClassExtendsQualifiedName2() {
+    test(
+        "var ns = {}; ns.Class1 = class {}; use(ns.Class1); class Class2 extends ns.Class1 {}",
+        "var ns = {}; ns.Class1 = class {}; use(ns.Class1);");
+  }
+
   public void testAssignmentToThisPrototype() {
     testSame("Function.prototype.inherits = function(parentCtor) {" +
              "  function tempCtor() {};" +
@@ -409,40 +589,30 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testInherits1() {
-    test("var a = {}; var b = {}; b.inherits(a)", "");
-  }
-
-  public void testInherits2() {
     test("var a = {}; var b = {}; var goog = {}; goog.inherits(b, a)", "");
   }
 
-  public void testInherits3() {
+  public void testInherits2() {
     testSame("var a = {}; this.b = {}; b.inherits(a);");
   }
 
-  public void testInherits4() {
+  public void testInherits3() {
     testSame("var a = {}; this.b = {}; var goog = {}; goog.inherits(b, a);");
   }
 
-  public void testInherits5() {
-    test("this.a = {}; var b = {}; b.inherits(a);",
-         "this.a = {}");
-  }
-
-  public void testInherits6() {
+  public void testInherits4() {
     test("this.a = {}; var b = {}; var goog = {}; goog.inherits(b, a);",
          "this.a = {}");
   }
 
-  public void testInherits7() {
-    testSame("var a = {}; this.b = {}; var goog = {};" +
-        " goog.inherits = function() {}; goog.inherits(b, a);");
-  }
-
-  public void testInherits8() {
-    // Make sure that exceptions aren't thrown if inherits() is used as
-    // an R-value
-    test("this.a = {}; var b = {}; var c = b.inherits(a);", "this.a = {};");
+  public void testInherits5() {
+    testSame(
+        LINE_JOINER.join(
+            "var a = {};",
+            "this.b = {};",
+            "var goog = {};",
+            "goog.inherits = function() {};",
+            "goog.inherits(b, a);"));
   }
 
   public void testMixin1() {
@@ -646,8 +816,12 @@ public final class NameAnalyzerTest extends CompilerTestCase {
     test("var foo = {};while(e)foo.bar=function(){};", "while(e);");
   }
 
-  public void testFor() {
+  public void testForIn() {
     test("var foo = {};for(e in x)foo.bar=function(){};", "for(e in x);");
+  }
+
+  public void testForOf() {
+    test("var foo = {};for(e of x)foo.bar=function(){};", "for(e of x);");
   }
 
   public void testDo() {
@@ -770,6 +944,32 @@ public final class NameAnalyzerTest extends CompilerTestCase {
 
   public void testSetterInForIn6() {
     testSame("var foo = {};for(e in foo);");
+  }
+
+  public void testSetterInForOf1() {
+    test("var foo = {}; var bar; for(e of bar = foo.a);",
+         "var foo = {}; for(e of foo.a);");
+  }
+
+  public void testSetterInForOf2() {
+    testSame("var foo = {}; var bar; for(e of bar = foo.a); bar");
+  }
+
+  public void testSetterInForOf3() {
+    testSame("var foo = {}; var bar; for(e of bar = foo.a); bar.b = 3");
+  }
+
+  public void testSetterInForOf4() {
+    testSame("var foo = {}; var bar; for (e of bar = foo.a); bar.b = 3; foo.a");
+  }
+
+  public void testSetterInForOf5() {
+    test("var foo = {}; var bar; for (e of foo.a) { bar = e } bar.b = 3; foo.a",
+         "var foo={};for(e of foo.a);foo.a");
+  }
+
+  public void testSetterInForOf6() {
+    testSame("var foo = {};for(e of foo);");
   }
 
   public void testSetterInIfPredicate() {
@@ -1078,7 +1278,7 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testRhsReference5() {
-    test("var a = 1, b = 5; a; foo(b)", "var a = 1, b = 5; a; foo(b)");
+    testSame("var a = 1, b = 5; a; foo(b)");
   }
 
   public void testRhsAssign1() {
@@ -1250,7 +1450,7 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   // Currently this crashes the compiler because it erroneoursly removes var x
-  // and later a sanity check fails.
+  // and later a validity check fails.
   public void testAssignWithCall2() {
     test("var fun, x; (123, fun = function(){ x; })();",
         "(123, function(){ x; })();");
@@ -1744,35 +1944,27 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testNoRemoveWindowPropertyAlias4() {
-    // TODO(johnlenz): fix this. "self_" should remain.
-    test(
-        "var self_ = window['gbar'] || {};\n" +
-        "self_.qs = function() {};",
-        "");
+    testSame(LINE_JOINER.join(
+        "var self_ = window['gbar'] || {};",
+        "self_.qs = function() {};"));
  }
 
   public void testNoRemoveWindowPropertyAlias4a() {
-    // TODO(johnlenz): fix this. "self_" should remain.
-    test(
-        "var self_; self_ = window.gbar || {};\n" +
-        "self_.qs = function() {};",
-        "");
+    testSame(LINE_JOINER.join(
+        "var self_; self_ = window.gbar || {};",
+        "self_.qs = function() {};"));
  }
 
   public void testNoRemoveWindowPropertyAlias5() {
-    // TODO(johnlenz): fix this. "self_" should remain.
-    test(
-        "var self_ = window || {};\n" +
-        "self_['qs'] = function() {};",
-        "");
+    testSame(LINE_JOINER.join(
+        "var self_ = window || {};",
+        "self_['qs'] = function() {};"));
   }
 
   public void testNoRemoveWindowPropertyAlias5a() {
-    // TODO(johnlenz): fix this.
-    test(
-        "var self_; self_ = window || {};\n" +
-        "self_['qs'] = function() {};",
-        "");
+    testSame(LINE_JOINER.join(
+        "var self_; self_ = window || {};",
+        "self_['qs'] = function() {};"));
   }
 
   public void testNoRemoveWindowPropertyAlias6() {
@@ -1957,20 +2149,15 @@ public final class NameAnalyzerTest extends CompilerTestCase {
   }
 
   public void testAliasInstanceof5() {
-    // TODO(johnlenz): fix this. "b" should remain.
-    test(
-      "function Foo() {}" +
-      "function Bar() {}" +
-      "var b = x ? Foo : Bar;" +
-      "var y = new Foo();" +
-      "if (y instanceof b) {}",
-      "function Foo() {}" +
-      "var y = new Foo;" +
-      "if (false){}");
+    testSame(LINE_JOINER.join(
+      "function Foo() {}",
+      "function Bar() {}",
+      "var b = x ? Foo : Bar;",
+      "var y = new Foo();",
+      "if (y instanceof b) {}"));
   }
 
-  // We cannot leave x.a.prototype there because it will
-  // fail sanity var check.
+  // We cannot leave x.a.prototype there because it will fail ValidityCheck.checkVars.
   public void testBrokenNamespaceWithPrototypeAssignment() {
     test("var x = {}; x.a.prototype = 1", "");
   }
@@ -2075,23 +2262,178 @@ public final class NameAnalyzerTest extends CompilerTestCase {
         "hackhack['Vb'] = 1;");
   }
 
-  @Override
-  protected CompilerPass getProcessor(Compiler compiler) {
-    return new MarkNoSideEffectCallsAndNameAnalyzerRunner(compiler);
+  public void testBug37975351a() {
+    // The original repro case from the bug.
+    testSame(LINE_JOINER.join(
+        "function noop() {}",
+        "var x = window['magic'];",
+        "var FormData = window['FormData'] || noop;",
+        "function f() { return x instanceof FormData; }",
+        "console.log(f());"));
   }
 
-  private static class MarkNoSideEffectCallsAndNameAnalyzerRunner implements CompilerPass {
-    MarkNoSideEffectCalls markNoSideEffectCalls;
-    NameAnalyzer analyzer;
-    MarkNoSideEffectCallsAndNameAnalyzerRunner(Compiler compiler) {
-      this.markNoSideEffectCalls = new MarkNoSideEffectCalls(compiler);
-      this.analyzer = new NameAnalyzer(compiler, true, null);
-    }
+  public void testBug37975351b() {
+    // The simplified repro that still repro'd the problem.
+    testSame(LINE_JOINER.join(
+        "var FormData = window['FormData'] || function() {};",
+        "function f() { return window['magic'] instanceof FormData; }",
+        "console.log(f());"));
+  }
 
-    @Override
-    public void process(Node externs, Node root) {
-      markNoSideEffectCalls.process(externs, root);
-      analyzer.process(externs, root);
-    }
+  public void testBug37975351c() {
+    // This simpliification did not reproduce the problematic behavior.
+    testSame(LINE_JOINER.join(
+        "var FormData = window['FormData'];",
+        "function f() { return window['magic'] instanceof FormData; }",
+        "console.log(f());"));
+  }
+
+  public void testBug30868041() {
+    // TODO(johnlenz): fix this, "x" should remain or the reference to "x" should also be removed
+    // as-is this pass has a prerequisite that the peephole passes have already remove
+    // side-effect free statements like this.
+    test(
+        LINE_JOINER.join(
+            "function Base() {};",
+            "/** @nosideeffects */",
+            "Base.prototype.foo =  function() {",
+            "}",
+            "var x = new Base();",
+            "x.foo()"),
+        LINE_JOINER.join(
+            "function Base() {};",
+            "/** @nosideeffects */",
+            "Base.prototype.foo =  function() {",
+            "}",
+            "new Base();",
+            "x.foo()"));
+  }
+
+  public void testGenerators() {
+    test("function* g() {yield 1}", "");
+
+    testSame("function* g() {yield 1} var g = g(); g.next().value()");
+  }
+
+  /**
+   * Just check that we don't crash in this case.
+   * @bug 65489464
+   */
+  public void testSpread() {
+    test(
+        LINE_JOINER.join(
+            "const ns = {};",
+            "",
+            "const X = [];",
+            "",
+            "ns.Y = [{}, ...X];"),
+        "");
+  }
+
+  public void testObjectDestructuring() {
+    test(
+        "var {a: a, x: y} = {a:1, x:2} ",
+        "({a:1,x:2})");
+
+    test(
+        "var {a: a, x: y} = {a:1, x:2}; f(a);",
+        "var {a: a} = {a:1, x:2}; f(a);");
+
+    test(
+        "var {a: a, x: y} = {a:1, x:2}; f(y);",
+        "var {x:y} = {a:1, x:2}; f(y);");
+
+    test(
+        "var {a: a, x: y = 3} = {a:1, x:2}; f(y);",
+        "var {x:y = 3} = {a:1, x:2}; f(y);");
+
+    test(
+        "var {a: a, x: y = 3} = {a:1}; f(y);",
+        "var {x:y = 3} = {a:1}; f(y);");
+
+    test(
+        "function f() {} var {a: a, x: y} = f()",
+        "function f() {} f();");
+
+    test(
+        "function f() {} var {a: a, x: y} = f(); g(a)",
+        "function f() {} var {a: a} = f(); g(a)");
+
+    test(
+        "function f() {} var {a: a, x: y} = f(); g(y)",
+        "function f() {} var {x: y} = f(); g(y)");
+
+    // complicated destructuring cases
+    // TODO(blickly): Look into adding a pass to completely remove empty destructuring patterns
+    test(
+        "var {a: a, b: [{c: d}]} = o;",
+        "var {b: [{}]} = o; ");
+
+    test(
+        "var {a: a, b: {c: d}} = o; f(d)",
+        "var {b: {c: d}} = o; f(d)");
+
+    test(
+        "var {a: a, b: [key]} = o;",
+        "var {b: [key]} = o; ");
+
+    test(
+        "var {a: a, [key]: foo} = o;",
+        "var {[key]: foo} = o; ");
+
+    test(
+        "var { a: a, b: { c: { d: y}}} = o",
+        "var {b: { c: {}}} = o");
+
+    test(
+        "var {[foo()] : { p : x } } = o;",
+        "var {[foo()] : {} } = o;");
+
+    testSame(
+        "var {x = foo()} = o;");
+
+    testSame("var {p : x = foo()} = o;");
+  }
+
+  public void testArrayDestructuring() {
+    testSame("var [a, b = 3, ...c] = [1, 2, 3]");
+
+    testSame("var [a, b = 3, ...c] = [1, 2, 3]; f(b);");
+
+    testSame("var [a, b = 3, ...c] = [1, 2, 3]; f(c);");
+
+    testSame("var a, b, c; [a, b, ...c] = [1, 2, 3]");
+
+    testSame("var [a, [b, [c, d]]] = [1, [2, [[[3, 4], 5], 6]]];");
+  }
+
+  public void testBlock() {
+    // Currently after normalization this becomes {var f = function f() {}}
+    // Will no longer be able to be removed after that normalize change
+    test("{function g() {}}", "{}");
+
+    testSame("{function g() {} g()}");
+
+    testSame("function g() {} {let a = g(); f(a)}");
+  }
+
+  public void testTemplateLit() {
+    test("let a = `hello`", "");
+    test("var name = 'foo'; let a = `hello ${name}`", "");
+    test(
+        LINE_JOINER.join(
+            "function Base() {}",
+            "Base.prototype.foo =  `hello`;"
+        ),
+      "");
+
+    test(
+        LINE_JOINER.join(
+            "var bar = 'foo';",
+            "function Base() {}",
+            "Base.prototype.foo =  `foo ${bar}`;"
+        ),
+        "");
+
   }
 }

@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 
@@ -66,7 +67,7 @@ class StatementFusion extends AbstractPeepholeOptimization {
       Node end = n.getLastChild();
       Node result = fuseIntoOneStatement(n, start, end);
       fuseExpressionIntoControlFlowStatement(result, n.getLastChild());
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(n);
     }
     return n;
   }
@@ -88,12 +89,12 @@ class StatementFusion extends AbstractPeepholeOptimization {
       }
       if (cur.getNext() != next) {
         cur = fuseIntoOneStatement(n, cur, next);
-        reportCodeChange();
+        compiler.reportChangeToEnclosingScope(cur);
       }
       if (cur.isExprResult() &&
           next != null && isFusableControlStatement(next)) {
         fuseExpressionIntoControlFlowStatement(cur, next);
-        reportCodeChange();
+        compiler.reportChangeToEnclosingScope(next);
         next = next.getNext();
       }
       cur = next;
@@ -104,7 +105,7 @@ class StatementFusion extends AbstractPeepholeOptimization {
 
   private boolean canFuseIntoOneStatement(Node block) {
     // If we are favoring semi-colon, we shouldn't fuse script blocks.
-    if (!favorsCommaOverSemiColon && !block.isBlock()) {
+    if (!favorsCommaOverSemiColon && !block.isNormalBlock()) {
       return false;
     }
 
@@ -135,13 +136,11 @@ class StatementFusion extends AbstractPeepholeOptimization {
         // We don't want to add a new return value.
         return n.hasChildren();
       case FOR:
-        if (NodeUtil.isForIn(n)) {
-          // Avoid cases where we have for(var x = foo() in a) { ....
-          return !mayHaveSideEffects(n.getFirstChild());
-        } else {
-          // Avoid cases where we have for(var x;_;_) { ....
-          return !n.getFirstChild().isVar();
-        }
+        // Avoid cases where we have for(var x;_;_) { ....
+        return !n.getFirstChild().isVar();
+      case FOR_IN:
+        // Avoid cases where we have for(var x = foo() in a) { ....
+        return !mayHaveSideEffects(n.getFirstChild());
       case LABEL:
         return isFusableControlStatement(n.getLastChild());
       case BLOCK:
@@ -186,8 +185,7 @@ class StatementFusion extends AbstractPeepholeOptimization {
 
   private static void fuseExpressionIntoControlFlowStatement(
       Node before, Node control) {
-    Preconditions.checkArgument(before.isExprResult(),
-        "before must be expression result");
+    checkArgument(before.isExprResult(), "before must be expression result");
 
     // Now we are just left with two statements. The comma tree of the first
     // n - 1 statements (which can be used in an expression) and the last
@@ -198,16 +196,13 @@ class StatementFusion extends AbstractPeepholeOptimization {
       case THROW:
       case SWITCH:
       case EXPR_RESULT:
+      case FOR:
         before.getParent().removeChild(before);
         fuseExpressionIntoFirstChild(before.removeFirstChild(), control);
         return;
-      case FOR:
+      case FOR_IN:
         before.getParent().removeChild(before);
-        if (NodeUtil.isForIn(control)) {
-          fuseExpressionIntoSecondChild(before.removeFirstChild(), control);
-        } else {
-          fuseExpressionIntoFirstChild(before.removeFirstChild(), control);
-        }
+        fuseExpressionIntoSecondChild(before.removeFirstChild(), control);
         return;
       case LABEL:
         fuseExpressionIntoControlFlowStatement(before, control.getLastChild());

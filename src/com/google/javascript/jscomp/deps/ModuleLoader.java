@@ -19,23 +19,19 @@ package com.google.javascript.jscomp.deps;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.annotations.GwtIncompatible;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Iterables;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.ErrorHandler;
 import com.google.javascript.jscomp.JSError;
 import java.nio.file.Paths;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.SortedMap;
-import java.util.TreeMap;
 import javax.annotation.Nullable;
 
 /**
@@ -55,25 +51,24 @@ public final class ModuleLoader {
   /** The default module root, the current directory. */
   public static final String DEFAULT_FILENAME_PREFIX = "." + MODULE_SLASH;
 
-  public static final DiagnosticType LOAD_WARNING = DiagnosticType.warning(
-      "JSC_ES6_MODULE_LOAD_WARNING",
-      "Failed to load module \"{0}\"");
+  public static final DiagnosticType LOAD_WARNING =
+      DiagnosticType.error("JSC_JS_MODULE_LOAD_WARNING", "Failed to load module \"{0}\"");
 
-  @Nullable private final ErrorHandler errorHandler;
+  public static final DiagnosticType INVALID_MODULE_PATH =
+      DiagnosticType.error(
+          "JSC_INVALID_MODULE_PATH", "Invalid module path \"{0}\" for resolution mode \"{1}\"");
+
+  private final ErrorHandler errorHandler;
 
   /** Root URIs to match module roots against. */
   private final ImmutableList<String> moduleRootPaths;
   /** The set of all known input module URIs (including trailing .js), after normalization. */
   private final ImmutableSet<String> modulePaths;
 
-  /** Named modules found in node_modules folders */
-  private final ImmutableSortedMap<String, ImmutableSet<String>> nodeModulesRegistry;
-
-  /** Named modules found in node_modules folders */
-  private ImmutableMap<String, String> packageJsonMainEntries;
-
   /** Used to canonicalize paths before resolution. */
   private final PathResolver pathResolver;
+
+  private final ModuleResolver moduleResolver;
 
   /**
    * Creates an instance of the module loader which can be used to locate ES6 and CommonJS modules.
@@ -84,34 +79,55 @@ public final class ModuleLoader {
       @Nullable ErrorHandler errorHandler,
       Iterable<String> moduleRoots,
       Iterable<? extends DependencyInfo> inputs,
-      PathResolver pathResolver) {
+      PathResolver pathResolver,
+      ResolutionMode resolutionMode,
+      Map<String, String> packageJsonMainEntries) {
     checkNotNull(moduleRoots);
     checkNotNull(inputs);
     checkNotNull(pathResolver);
     this.pathResolver = pathResolver;
-    this.errorHandler = errorHandler;
+    this.errorHandler = errorHandler == null ? new NoopErrorHandler() : errorHandler;
     this.moduleRootPaths = createRootPaths(moduleRoots, pathResolver);
     this.modulePaths =
         resolvePaths(
             Iterables.transform(Iterables.transform(inputs, UNWRAP_DEPENDENCY_INFO), pathResolver),
             moduleRootPaths);
 
-    this.packageJsonMainEntries = ImmutableMap.of();
-
-    this.nodeModulesRegistry = buildRegistry(this.modulePaths);
+    switch (resolutionMode) {
+      case BROWSER:
+        this.moduleResolver =
+            new BrowserModuleResolver(this.modulePaths, this.moduleRootPaths, this.errorHandler);
+        break;
+      case NODE:
+        this.moduleResolver =
+            new NodeModuleResolver(
+                this.modulePaths, this.moduleRootPaths, packageJsonMainEntries, this.errorHandler);
+        break;
+      default:
+        throw new RuntimeException("Unexpected resolution mode " + resolutionMode);
+    }
   }
 
-  public ModuleLoader(@Nullable ErrorHandler errorHandler,
-      Iterable<String> moduleRoots, Iterable<? extends DependencyInfo> inputs) {
-    this(errorHandler, moduleRoots, inputs, PathResolver.RELATIVE);
+  public ModuleLoader(
+      @Nullable ErrorHandler errorHandler,
+      Iterable<String> moduleRoots,
+      Iterable<? extends DependencyInfo> inputs,
+      ResolutionMode resolutionMode) {
+    this(errorHandler, moduleRoots, inputs, PathResolver.RELATIVE, resolutionMode);
   }
 
+  public ModuleLoader(
+      @Nullable ErrorHandler errorHandler,
+      Iterable<String> moduleRoots,
+      Iterable<? extends DependencyInfo> inputs,
+      PathResolver pathResolver,
+      ResolutionMode resolutionMode) {
+    this(errorHandler, moduleRoots, inputs, pathResolver, resolutionMode, null);
+  }
+
+  @VisibleForTesting
   public Map<String, String> getPackageJsonMainEntries() {
-    return this.packageJsonMainEntries;
-  }
-
-  public void setPackageJsonMainEntries(Map<String, String> packageJsonMainEntries) {
-    this.packageJsonMainEntries = ImmutableMap.copyOf(packageJsonMainEntries);
+    return this.moduleResolver.getPackageJsonMainEntries();
   }
 
   /**
@@ -149,135 +165,54 @@ public final class ModuleLoader {
     }
 
     /**
-     * Find a CommonJS module {@code requireName}. See
+     * Find a JS module {@code requireName}. See
      * https://nodejs.org/api/modules.html#modules_all_together
      *
      * @return The normalized module URI, or {@code null} if not found.
      */
-    public ModulePath resolveCommonJsModule(String requireName) {
-      String loadAddress;
+    @Nullable
+    public ModulePath resolveJsModule(String moduleAddress) {
+      return resolveJsModule(moduleAddress, null, -1, -1);
+    }
 
-      // * the immediate name require'd
-      if (isAbsoluteIdentifier(requireName) || isRelativeIdentifier(requireName)) {
-        loadAddress = resolveCommonJsModuleFileOrDirectory(requireName);
-      } else {
-        loadAddress = resolveCommonJsModuleFromRegistry(requireName);
-      }
+    /**
+     * Find a JS module {@code requireName}. See
+     * https://nodejs.org/api/modules.html#modules_all_together
+     *
+     * @return The normalized module URI, or {@code null} if not found.
+     */
+    @Nullable
+    public ModulePath resolveJsModule(
+        String moduleAddress, String sourcename, int lineno, int colno) {
+      String loadAddress =
+          moduleResolver.resolveJsModule(this.path, moduleAddress, sourcename, lineno, colno);
+
       if (loadAddress != null) {
         return new ModulePath(loadAddress);
       }
-      return null;
-    }
-
-    private String resolveCommonJsModuleFile(String requireName) {
-      String[] extensions = {"", ".js", ".json"};
-
-      // Load as a file
-      for (int i = 0; i < extensions.length; i++) {
-        String loadAddress = locate(requireName + extensions[i]);
-        if (loadAddress != null) {
-          return loadAddress;
-        }
-      }
-
-      return null;
-    }
-
-    private String resolveCommonJsModuleFileOrDirectory(String requireName) {
-      String loadAddress = resolveCommonJsModuleFile(requireName);
-      if (loadAddress == null) {
-        loadAddress = resolveCommonJsModuleDirectory(requireName);
-      }
-      return loadAddress;
-    }
-
-    private String resolveCommonJsModuleDirectory(String requireName) {
-      String[] extensions = {
-        MODULE_SLASH + "package.json", MODULE_SLASH + "index.js", MODULE_SLASH + "index.json"
-      };
-
-      // Load as a file
-      for (int i = 0; i < extensions.length; i++) {
-        String loadAddress = locate(requireName + extensions[i]);
-        if (loadAddress != null) {
-          if (i == 0) {
-            if (packageJsonMainEntries.containsKey(loadAddress)) {
-              return resolveCommonJsModuleFile(packageJsonMainEntries.get(loadAddress));
-            }
-          } else {
-            return loadAddress;
-          }
-        }
-      }
-
-      return null;
-    }
-
-    private String resolveCommonJsModuleFromRegistry(String requireName) {
-      for (Map.Entry<String, ImmutableSet<String>> nodeModulesFolder :
-          nodeModulesRegistry.entrySet()) {
-        if (!this.path.startsWith(nodeModulesFolder.getKey())) {
-          continue;
-        }
-
-        // Load as a file
-        String fullModulePath = nodeModulesFolder.getKey() + "node_modules/" + requireName;
-        String loadAddress = resolveCommonJsModuleFile(fullModulePath);
-        if (loadAddress != null) {
-          return loadAddress;
-        }
-
-        // Load as a directory
-        loadAddress = resolveCommonJsModuleDirectory(fullModulePath);
-        if (loadAddress != null) {
-          return loadAddress;
-        }
-      }
 
       return null;
     }
 
     /**
-     * Find an ES6 module {@code moduleName} relative to {@code context}.
-     * @return The normalized module URI, or {@code null} if not found.
+     * Treats the module address as a path and returns the name of that module. Does not verify that
+     * there is actually a JS file at the provided URI.
+     *
+     * <p>Primarily used for per-file ES6 module transpilation
      */
-    public ModulePath resolveEs6Module(String moduleName) {
-      // Allow module names with or without the ".js" extension.
-      if (!moduleName.endsWith(".js")) {
-        moduleName += ".js";
+    public ModulePath resolveModuleAsPath(String moduleAddress) {
+      if (!moduleAddress.endsWith(".js")) {
+        moduleAddress += ".js";
       }
-      String resolved = locateNoCheck(moduleName);
-      if (!modulePaths.contains(resolved) && errorHandler != null) {
-        errorHandler.report(CheckLevel.WARNING, JSError.make(LOAD_WARNING, moduleName));
-      }
-      return new ModulePath(resolved);
-    }
-
-    /**
-     * Locates the module with the given name, but returns successfully even if
-     * there is no JS file corresponding to the returned URI.
-     */
-    private String locateNoCheck(String name) {
-      String path = ModuleNames.escapePath(name);
-      if (isRelativeIdentifier(name)) {
+      String path = ModuleNames.escapePath(moduleAddress);
+      if (isRelativeIdentifier(moduleAddress)) {
         String ourPath = this.path;
-        int lastIndex = ourPath.lastIndexOf('/');
-        path = ModuleNames.canonicalizePath(ourPath.substring(0, lastIndex + 1) + path);
+        int lastIndex = ourPath.lastIndexOf(MODULE_SLASH);
+        path =
+            ModuleNames.canonicalizePath(
+                ourPath.substring(0, lastIndex + MODULE_SLASH.length()) + path);
       }
-      return normalize(path, moduleRootPaths);
-    }
-
-    /**
-     * Locates the module with the given name, but returns null if there is no JS
-     * file in the expected location.
-     */
-    @Nullable
-    private String locate(String name) {
-      String path = locateNoCheck(name);
-      if (modulePaths.contains(path)) {
-        return path;
-      }
-      return null;
+      return new ModulePath(normalize(path, moduleRootPaths));
     }
   }
 
@@ -297,43 +232,71 @@ public final class ModuleLoader {
     return name.startsWith(MODULE_SLASH);
   }
 
+  /** Whether this is neither absolute or relative. */
+  public static boolean isAmbiguousIdentifier(String name) {
+    return !isAbsoluteIdentifier(name) && !isRelativeIdentifier(name);
+  }
+
   /** Whether name is a path-based identifier (has a '/' character) */
   public static boolean isPathIdentifier(String name) {
     return name.contains(MODULE_SLASH);
   }
 
+  /**
+   * @param roots List of module root paths. This path prefix will be removed from module paths when
+   *     resolved.
+   */
   private static ImmutableList<String> createRootPaths(
       Iterable<String> roots, PathResolver resolver) {
     ImmutableList.Builder<String> builder = ImmutableList.builder();
     for (String root : roots) {
-      builder.add(ModuleNames.escapePath(resolver.apply(root)));
+      String rootModuleName = ModuleNames.escapePath(resolver.apply(root));
+      if (isAmbiguousIdentifier(rootModuleName)) {
+        rootModuleName = MODULE_SLASH + rootModuleName;
+      }
+      builder.add(rootModuleName);
     }
     return builder.build();
   }
 
+  /**
+   * @param modulePaths List of modules. Modules can be relative to the compilation root or absolute
+   *     file system paths (or even absolute paths from the compilation root).
+   * @param roots List of module roots which anchor absolute path references.
+   * @return List of normalized modules which always have a leading slash
+   */
   private static ImmutableSet<String> resolvePaths(
-      Iterable<String> names, ImmutableList<String> roots) {
-    HashSet<String> resolved = new HashSet<>();
-    for (String name : names) {
-      if (!resolved.add(normalize(ModuleNames.escapePath(name), roots))) {
+      Iterable<String> modulePaths, Iterable<String> roots) {
+    ImmutableSet.Builder<String> resolved = ImmutableSet.builder();
+    Set<String> knownPaths = new HashSet<>();
+    for (String name : modulePaths) {
+      String canonicalizedPath = ModuleNames.escapePath(name);
+      if (!knownPaths.add(normalize(canonicalizedPath, roots))) {
         // Having root paths "a" and "b" and source files "a/f.js" and "b/f.js" is ambiguous.
         throw new IllegalArgumentException(
             "Duplicate module path after resolving: " + name);
       }
+      if (isAmbiguousIdentifier(canonicalizedPath)) {
+        canonicalizedPath = MODULE_SLASH + canonicalizedPath;
+      }
+      resolved.add(canonicalizedPath);
     }
-    return ImmutableSet.copyOf(resolved);
+    return resolved.build();
   }
 
-  /**
-   * Normalizes the name and resolves it against the module roots.
-   */
+  /** Normalizes the name and resolves it against the module roots. */
   private static String normalize(String path, Iterable<String> moduleRootPaths) {
+    String normalizedPath = path;
+    if (isAmbiguousIdentifier(normalizedPath)) {
+      normalizedPath = MODULE_SLASH + normalizedPath;
+    }
+
     // Find a moduleRoot that this URI is under. If none, use as is.
     for (String moduleRoot : moduleRootPaths) {
-      if (path.startsWith(moduleRoot)) {
+      if (normalizedPath.startsWith(moduleRoot)) {
         // Make sure that e.g. path "foobar/test.js" is not matched by module "foo", by checking for
         // a leading slash.
-        String trailing = path.substring(moduleRoot.length());
+        String trailing = normalizedPath.substring(moduleRoot.length());
         if (trailing.startsWith(MODULE_SLASH)) {
           return trailing.substring(MODULE_SLASH.length());
         }
@@ -341,68 +304,6 @@ public final class ModuleLoader {
     }
     // Not underneath any of the roots.
     return path;
-  }
-
-  /** Build the module registry from the set of module paths */
-  private static ImmutableSortedMap<String, ImmutableSet<String>> buildRegistry(
-      ImmutableSet<String> modulePaths) {
-    SortedMap<String, Set<String>> registry =
-        new TreeMap<>(
-            new Comparator<String>() {
-              @Override
-              public int compare(String a, String b) {
-                // Order longest path first
-                int comparison = Integer.compare(b.length(), a.length());
-                if (comparison != 0) {
-                  return comparison;
-                }
-
-                return a.compareTo(b);
-              }
-            });
-
-    // For each modulePath, find all the node_modules folders
-    // There might be more than one:
-    //    /foo/node_modules/bar/node_modules/baz/foo_bar_baz.js
-    // Should add:
-    //   /foo/ -> bar/node_modules/baz/foo_bar_baz.js
-    //   /foo/node_modules/bar/ -> baz/foo_bar_baz.js
-    for (String modulePath : modulePaths) {
-      String[] nodeModulesDirs = modulePath.split("/node_modules/");
-      String parentPath = "";
-      for (int i = 0; i < nodeModulesDirs.length - 1; i++) {
-        if (i + 1 < nodeModulesDirs.length) {
-          parentPath += nodeModulesDirs[i] + "/";
-        }
-        String subPath = modulePath.substring(parentPath.length() + "node_modules/".length());
-
-        if (!registry.containsKey(parentPath)) {
-          registry.put(parentPath, new HashSet<String>());
-        }
-        registry.get(parentPath).add(subPath);
-
-        parentPath += "node_modules/";
-      }
-    }
-
-    SortedMap<String, ImmutableSet<String>> immutableRegistry =
-        new TreeMap<>(
-            new Comparator<String>() {
-              @Override
-              public int compare(String a, String b) {
-                // Order longest path first
-                int comparison = Integer.compare(b.length(), a.length());
-                if (comparison != 0) {
-                  return comparison;
-                }
-
-                return a.compareTo(b);
-              }
-            });
-    for (Map.Entry<String, Set<String>> entry : registry.entrySet()) {
-      immutableRegistry.put(entry.getKey(), ImmutableSet.copyOf(entry.getValue()));
-    }
-    return ImmutableSortedMap.copyOfSorted(immutableRegistry);
   }
 
   /** An enum indicating whether to absolutize paths. */
@@ -433,5 +334,37 @@ public final class ModuleLoader {
 
   /** A trivial module loader with no roots. */
   public static final ModuleLoader EMPTY =
-      new ModuleLoader(null, ImmutableList.<String>of(), ImmutableList.<DependencyInfo>of());
+      new ModuleLoader(
+          null,
+          ImmutableList.<String>of(),
+          ImmutableList.<DependencyInfo>of(),
+          ResolutionMode.BROWSER);
+
+  /** An enum used to specify what algorithm to use to locate non path-based modules */
+  public enum ResolutionMode {
+    /**
+     * Mimics the behavior of MS Edge.
+     *
+     * Modules must begin with a "." or "/" character.
+     * Modules must include the file extension
+     * MS Edge was the only browser to define a module resolution behavior at the time of this
+     * writing.
+     */
+    BROWSER,
+
+    /**
+     * Uses the node module resolution algorithm.
+     *
+     * Modules which do not begin with a "." or "/" character are looked up from the appropriate
+     * node_modules folder.
+     * Includes the ability to require directories and JSON files.
+     * Exact match, then ".js", then ".json" file extensions are searched.
+     */
+    NODE
+  }
+
+  private static final class NoopErrorHandler implements ErrorHandler {
+    @Override
+    public void report(CheckLevel level, JSError error) {}
+  }
 }

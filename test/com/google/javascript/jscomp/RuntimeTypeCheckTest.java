@@ -26,12 +26,13 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
 
   public RuntimeTypeCheckTest() {
     super("/** @const */ var undefined;");
-    enableTypeCheck();
   }
 
   @Override
-  protected void setUp() {
-    super.enableLineNumberCheck(false);
+  protected void setUp() throws Exception {
+    super.setUp();
+    enableTypeCheck();
+    disableLineNumberCheck();
     enableNormalize();
   }
 
@@ -108,7 +109,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
   }
 
   public void testUntypedParam() {
-    testChecks("/** ... */ function f(x) {}", "/** ... */ function f(x) {}");
+    testChecksSame("/** ... */ function f(x) {}");
   }
 
   public void testReturn() {
@@ -305,17 +306,20 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
   }
 
   public void testReturnNothing() {
-    testChecks("function f() { return; }", "function f() { return; }");
+    testChecksSame("function f() { return; }");
   }
 
   public void testFunctionType() {
-    testChecks(
-        "/** @type {!Function} */function f() {}",
-        "/** @type {!Function} */function f() {}");
+    testChecksSame("/** @type {!Function} */function f() {}");
   }
 
   private void testChecks(String js, String expected) {
     test(js, expected);
+    assertThat(getLastCompiler().injected).containsExactly("runtime_type_check");
+  }
+
+  private void testChecksSame(String js) {
+    testSame(js);
     assertThat(getLastCompiler().injected).containsExactly("runtime_type_check");
   }
 
@@ -325,7 +329,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
   }
 
   @Override
-  NoninjectingCompiler getLastCompiler() {
+  protected NoninjectingCompiler getLastCompiler() {
     return (NoninjectingCompiler) super.getLastCompiler();
   }
 

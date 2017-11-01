@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.javascript.jscomp.FunctionInjector.InliningMode;
 import com.google.javascript.jscomp.FunctionInjector.Reference;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
@@ -26,8 +27,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * This pass targets j2cl output. It looks for static get and set methods defined within a class
- * that match the signature of j2cl static fields and inlines them at their
+ * This pass targets J2CL output. It looks for static get and set methods defined within a class
+ * that match the signature of J2CL static fields and inlines them at their
  * call sites.  This is done for performance reasons since getter and setter accesses are slower
  * than regular field accesses.
  *
@@ -84,10 +85,12 @@ public class J2clPropertyInlinerPass implements CompilerPass {
       }
 
       void remove() {
-        Node objectLit = getKey.getParent().getParent().getParent();
-        Preconditions.checkArgument(objectLit.isObjectLit());
-        getKey.getParent().getParent().detach();
-        compiler.reportCodeChange();
+        Node nodeToDetach = getKey.getGrandparent();
+        Node objectLit = nodeToDetach.getParent();
+        checkArgument(objectLit.isObjectLit());
+        nodeToDetach.detach();
+        NodeUtil.markFunctionsDeleted(nodeToDetach, compiler);
+        compiler.reportChangeToEnclosingScope(objectLit);
         if (!objectLit.hasChildren()) {
           // Remove the whole Object.defineProperties call if there are no properties left.
           objectLit.getParent().getParent().detach();
@@ -96,7 +99,7 @@ public class J2clPropertyInlinerPass implements CompilerPass {
     }
 
     /**
-     * <li> We match j2cl property getters  by looking for the following signature:
+     * <li> We match J2CL property getters  by looking for the following signature:
      * <pre>{@code
      * get: function() { return (ClassName.$clinit(), ClassName.$fieldName)};
      * </pre>
@@ -106,7 +109,7 @@ public class J2clPropertyInlinerPass implements CompilerPass {
         return false;
       }
       Node getFunction = getKey.getFirstChild();
-      if (!getFunction.hasChildren() || !getFunction.getLastChild().isBlock()) {
+      if (!getFunction.hasChildren() || !getFunction.getLastChild().isNormalBlock()) {
         return false;
       }
       Node getBlock = getFunction.getLastChild();
@@ -136,7 +139,7 @@ public class J2clPropertyInlinerPass implements CompilerPass {
     }
 
     /**
-     * <li> We match j2cl property getters  by looking for the following signature:
+     * <li> We match J2CL property getters  by looking for the following signature:
      * <pre>{@code
      * set: function(value) { (ClassName.$clinit(), ClassName.$fieldName = value)};
      * </pre>
@@ -147,7 +150,7 @@ public class J2clPropertyInlinerPass implements CompilerPass {
       }
       Node setFunction = setKey.getFirstChild();
       if (!setFunction.hasChildren()
-          || !setFunction.getLastChild().isBlock()
+          || !setFunction.getLastChild().isNormalBlock()
           || !setFunction.getSecondChild().isParamList()) {
         return false;
       }
@@ -233,7 +236,7 @@ public class J2clPropertyInlinerPass implements CompilerPass {
 
       @Override
       public void visit(NodeTraversal t, Node n, Node parent) {
-        if (NodeUtil.isCompoundAssignementOp(n) || n.isInc() || n.isDec()) {
+        if (NodeUtil.isCompoundAssignmentOp(n) || n.isInc() || n.isDec()) {
           Node assignmentTarget = n.getFirstChild();
           if (assignmentTarget.isGetProp()) {
             String accessName = assignmentTarget.getQualifiedName();

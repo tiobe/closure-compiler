@@ -16,6 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES8;
+import static com.google.javascript.jscomp.parsing.parser.FeatureSet.ES8_MODULES;
+
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.PassFactory.HotSwapPassFactory;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
@@ -28,6 +31,18 @@ import java.util.List;
 public class TranspilationPasses {
   private TranspilationPasses() {}
 
+  public static void addEs6ModulePass(List<PassFactory> passes) {
+    passes.add(es6RewriteModule);
+  }
+
+  public static void addEs2017Passes(List<PassFactory> passes) {
+    passes.add(rewriteAsyncFunctions);
+  }
+
+  public static void addEs2016Passes(List<PassFactory> passes) {
+    passes.add(convertEs7ToEs6);
+  }
+
   /**
    * Adds all the early ES6 transpilation passes, which go before the Dart pass.
    *
@@ -36,27 +51,44 @@ public class TranspilationPasses {
    * transpile them, even if the output language is also ES6.
    */
   public static void addEs6EarlyPasses(List<PassFactory> passes) {
-    passes.add(rewriteAsyncFunctions);
     passes.add(es6SuperCheck);
     passes.add(es6ConvertSuper);
-    passes.add(es6RewriteArrowFunction);
     passes.add(es6RenameVariablesInParamLists);
     passes.add(es6SplitVariableDeclarations);
     passes.add(es6RewriteDestructuring);
+    passes.add(es6RewriteArrowFunction);
+  }
+
+  /** Adds all the late ES6 transpilation passes, which go after the Dart pass */
+  public static void addEs6LatePasses(List<PassFactory> passes) {
+    // TODO(b/64811685): Delete this method and use addEs6PassesBeforeNTI and addEs6PassesAfterNTI.
+    passes.add(es6ExtractClasses);
+    passes.add(es6RewriteClass);
+    passes.add(earlyConvertEs6ToEs3);
+    passes.add(lateConvertEs6ToEs3);
+    passes.add(rewriteBlockScopedDeclaration);
+    passes.add(rewriteGenerators);
   }
 
   /**
-   * Adds all the late ES6 transpilation passes, which go after the Dart pass.
+   * Adds all the late ES6 transpilation passes, which go after the Dart pass
+   * and go before TypeChecking
    *
    * <p>Includes ES6 features that are best handled natively by the compiler.
    * As we convert more passes to handle these features, we will be moving the
    * transpilation later in the compilation, and eventually only transpiling
    * when the output is lower than ES6.
    */
-  public static void addEs6LatePasses(List<PassFactory> passes) {
+  public static void addEs6PassesBeforeNTI(List<PassFactory> passes) {
     passes.add(es6ExtractClasses);
-    passes.add(convertEs6ToEs3);
+    passes.add(es6RewriteClass);
+    passes.add(earlyConvertEs6ToEs3);
     passes.add(rewriteBlockScopedDeclaration);
+  }
+
+  /** Adds all transpilation passes that runs after NTI */
+  public static void addEs6PassesAfterNTI(List<PassFactory> passes) {
+    passes.add(lateConvertEs6ToEs3);
     passes.add(rewriteGenerators);
   }
 
@@ -67,11 +99,43 @@ public class TranspilationPasses {
     passes.add(rewritePolyfills);
   }
 
+  /** Rewrites ES6 modules */
+  private static final HotSwapPassFactory es6RewriteModule =
+      new HotSwapPassFactory("es6RewriteModule") {
+        @Override
+        protected HotSwapCompilerPass create(AbstractCompiler compiler) {
+          return new Es6RewriteModules(compiler);
+        }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return FeatureSet.ES8_MODULES;
+        }
+      };
+
   private static final PassFactory rewriteAsyncFunctions =
       new PassFactory("rewriteAsyncFunctions", true) {
         @Override
         protected CompilerPass create(final AbstractCompiler compiler) {
           return new RewriteAsyncFunctions(compiler);
+        }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
+      };
+
+  private static final PassFactory convertEs7ToEs6 =
+      new PassFactory("convertEs7ToEs6", true) {
+        @Override
+        protected CompilerPass create(final AbstractCompiler compiler) {
+          return new Es7ToEs6Converter(compiler);
+        }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
         }
       };
 
@@ -81,108 +145,200 @@ public class TranspilationPasses {
         protected CompilerPass create(final AbstractCompiler compiler) {
           return new Es6SuperCheck(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory es6ExtractClasses =
-      new HotSwapPassFactory("Es6ExtractClasses", true) {
+      new HotSwapPassFactory(PassNames.ES6_EXTRACT_CLASSES) {
         @Override
         protected HotSwapCompilerPass create(AbstractCompiler compiler) {
           return new Es6ExtractClasses(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
+      };
+
+  static final HotSwapPassFactory es6RewriteClass =
+      new HotSwapPassFactory("Es6RewriteClass") {
+        @Override
+        protected HotSwapCompilerPass create(AbstractCompiler compiler) {
+          return new Es6RewriteClass(compiler, !compiler.getOptions().inIncrementalCheckMode());
+        }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory es6RewriteDestructuring =
-      new HotSwapPassFactory("Es6RewriteDestructuring", true) {
+      new HotSwapPassFactory("Es6RewriteDestructuring") {
         @Override
         protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
           return new Es6RewriteDestructuring(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory es6RenameVariablesInParamLists =
-      new HotSwapPassFactory("Es6RenameVariablesInParamLists", true) {
+      new HotSwapPassFactory("Es6RenameVariablesInParamLists") {
         @Override
         protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
           return new Es6RenameVariablesInParamLists(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory es6RewriteArrowFunction =
-      new HotSwapPassFactory("Es6RewriteArrowFunction", true) {
+      new HotSwapPassFactory("Es6RewriteArrowFunction") {
         @Override
         protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
           return new Es6RewriteArrowFunction(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory rewritePolyfills =
-      new HotSwapPassFactory("RewritePolyfills", true) {
+      new HotSwapPassFactory("RewritePolyfills") {
         @Override
         protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
           return new RewritePolyfills(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8_MODULES;
+        }
       };
 
   static final HotSwapPassFactory es6SplitVariableDeclarations =
-      new HotSwapPassFactory("Es6SplitVariableDeclarations", true) {
+      new HotSwapPassFactory("Es6SplitVariableDeclarations") {
         @Override
         protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
           return new Es6SplitVariableDeclarations(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory es6ConvertSuperConstructorCalls =
-      new HotSwapPassFactory("es6ConvertSuperConstructorCalls", true) {
+      new HotSwapPassFactory("es6ConvertSuperConstructorCalls") {
         @Override
         protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
           return new Es6ConvertSuperConstructorCalls(compiler);
         }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
       };
 
   static final HotSwapPassFactory es6ConvertSuper =
-      new HotSwapPassFactory("es6ConvertSuper", true) {
+      new HotSwapPassFactory("es6ConvertSuper") {
+        @Override
+        protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
+          return new Es6ConvertSuper(compiler);
+        }
+
+        @Override
+        protected FeatureSet featureSet() {
+          return ES8;
+        }
+  };
+
+  /**
+   * Does ES6 to ES3 conversion of Rest, Spread and Symbol.
+   * There are a few other passes which run before or after this one,
+   * to convert constructs which are not converted by this pass.
+   */
+  static final HotSwapPassFactory earlyConvertEs6ToEs3 =
+      new HotSwapPassFactory("earlyConvertEs6") {
     @Override
     protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
-      return new Es6ConvertSuper(compiler);
+      return new EarlyEs6ToEs3Converter(compiler);
+    }
+
+    @Override
+    protected FeatureSet featureSet() {
+      return ES8;
     }
   };
 
   /**
    * Does the main ES6 to ES3 conversion.
-   * There are a few other passes which run before or after this one,
+   * There are a few other passes which run before this one,
    * to convert constructs which are not converted by this pass.
+   * This pass can run after NTI
    */
-  static final HotSwapPassFactory convertEs6ToEs3 =
-      new HotSwapPassFactory("convertEs6", true) {
+  static final HotSwapPassFactory lateConvertEs6ToEs3 =
+      new HotSwapPassFactory("lateConvertEs6") {
     @Override
     protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
-      return new Es6ToEs3Converter(compiler);
+      return new LateEs6ToEs3Converter(compiler);
+    }
+
+    @Override
+    protected FeatureSet featureSet() {
+      return ES8;
     }
   };
 
   static final HotSwapPassFactory rewriteBlockScopedDeclaration =
-      new HotSwapPassFactory("Es6RewriteBlockScopedDeclaration", true) {
+      new HotSwapPassFactory("Es6RewriteBlockScopedDeclaration") {
     @Override
     protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
       return new Es6RewriteBlockScopedDeclaration(compiler);
     }
+
+    @Override
+    protected FeatureSet featureSet() {
+      return ES8;
+    }
   };
 
   static final HotSwapPassFactory rewriteGenerators =
-      new HotSwapPassFactory("rewriteGenerators", true) {
+      new HotSwapPassFactory("rewriteGenerators") {
     @Override
     protected HotSwapCompilerPass create(final AbstractCompiler compiler) {
       return new Es6RewriteGenerators(compiler);
+    }
+
+    @Override
+    protected FeatureSet featureSet() {
+      return ES8;
     }
   };
 
   /**
    * @param script The SCRIPT node representing a JS file
-   * @return If the file has at least ES6 features currently implemented in modern browsers.
+   * @return If the file has any features which are part of ES6 but not part of ES5.
    */
-  static boolean isScriptEs6ImplOrHigher(Node script) {
+  static boolean isScriptEs6OrHigher(Node script) {
     FeatureSet features = (FeatureSet) script.getProp(Node.FEATURE_SET);
-    return features != null && features.isEs6ImplOrHigher();
+    return features != null && !FeatureSet.ES5.contains(features);
   }
 
   /**
@@ -193,9 +349,9 @@ public class TranspilationPasses {
    * @param callbacks The callbacks that should be invoked if a file has ES6 features.
    */
   static void processCheck(AbstractCompiler compiler, Node combinedRoot, Callback... callbacks) {
-    if (compiler.getOptions().getLanguageIn().isEs6OrHigher()) {
+    if (compiler.getOptions().getLanguageIn().toFeatureSet().contains(FeatureSet.ES6)) {
       for (Node singleRoot : combinedRoot.children()) {
-        if (isScriptEs6ImplOrHigher(singleRoot)) {
+        if (isScriptEs6OrHigher(singleRoot)) {
           for (Callback callback : callbacks) {
             NodeTraversal.traverseEs6(compiler, singleRoot, callback);
           }
@@ -213,8 +369,8 @@ public class TranspilationPasses {
    * @param callbacks The callbacks that should be invoked if the file has ES6 features.
    */
   static void hotSwapCheck(AbstractCompiler compiler, Node scriptRoot, Callback... callbacks) {
-    if (compiler.getOptions().getLanguageIn().isEs6OrHigher()) {
-      if (isScriptEs6ImplOrHigher(scriptRoot)) {
+    if (compiler.getOptions().getLanguageIn().toFeatureSet().contains(FeatureSet.ES6)) {
+      if (isScriptEs6OrHigher(scriptRoot)) {
         for (Callback callback : callbacks) {
           NodeTraversal.traverseEs6(compiler, scriptRoot, callback);
         }
@@ -232,9 +388,9 @@ public class TranspilationPasses {
    */
   static void processTranspile(
       AbstractCompiler compiler, Node combinedRoot, Callback... callbacks) {
-    if (compiler.getOptions().lowerFromEs6()) {
+    if (compiler.getOptions().needsTranspilationFrom(FeatureSet.ES6)) {
       for (Node singleRoot : combinedRoot.children()) {
-        if (isScriptEs6ImplOrHigher(singleRoot)) {
+        if (isScriptEs6OrHigher(singleRoot)) {
           for (Callback callback : callbacks) {
             singleRoot.putBooleanProp(Node.TRANSPILED, true);
             NodeTraversal.traverseEs6(compiler, singleRoot, callback);
@@ -253,8 +409,8 @@ public class TranspilationPasses {
    * @param callbacks The callbacks that should be invoked if the file has ES6 features.
    */
   static void hotSwapTranspile(AbstractCompiler compiler, Node scriptRoot, Callback... callbacks) {
-    if (compiler.getOptions().lowerFromEs6()) {
-      if (isScriptEs6ImplOrHigher(scriptRoot)) {
+    if (compiler.getOptions().needsTranspilationFrom(FeatureSet.ES6)) {
+      if (isScriptEs6OrHigher(scriptRoot)) {
         for (Callback callback : callbacks) {
           scriptRoot.putBooleanProp(Node.TRANSPILED, true);
           NodeTraversal.traverseEs6(compiler, scriptRoot, callback);

@@ -24,11 +24,16 @@
  * @author dbk@google.com (David Barrett-Kahn)
  */
 
+/** @record */
+function BlobPropertyBag() {};
+
+/** @type {(string|undefined)} */
+BlobPropertyBag.prototype.type;
 
 /**
  * @see http://dev.w3.org/2006/webapi/FileAPI/#dfn-Blob
  * @param {Array<ArrayBuffer|ArrayBufferView|Blob|string>=} opt_blobParts
- * @param {Object=} opt_options
+ * @param {BlobPropertyBag=} opt_options
  * @constructor
  * @nosideeffects
  */
@@ -48,8 +53,8 @@ Blob.prototype.type;
 
 /**
  * @see http://www.w3.org/TR/FileAPI/#dfn-slice
- * @param {number} start
- * @param {number} length
+ * @param {number=} start
+ * @param {number=} length
  * @param {string=} opt_contentType
  * @return {!Blob}
  * @nosideeffects
@@ -59,8 +64,8 @@ Blob.prototype.slice = function(start, length, opt_contentType) {};
 /**
  * This replaces Blob.slice in Chrome since WebKit revision 84005.
  * @see http://lists.w3.org/Archives/Public/public-webapps/2011AprJun/0222.html
- * @param {number} start
- * @param {number} end
+ * @param {number=} start
+ * @param {number=} end
  * @param {string=} opt_contentType
  * @return {!Blob}
  * @nosideeffects
@@ -70,8 +75,8 @@ Blob.prototype.webkitSlice = function(start, end, opt_contentType) {};
 /**
  * This replaces Blob.slice in Firefox.
  * @see http://lists.w3.org/Archives/Public/public-webapps/2011AprJun/0222.html
- * @param {number} start
- * @param {number} end
+ * @param {number=} start
+ * @param {number=} end
  * @param {string=} opt_contentType
  * @return {!Blob}
  * @nosideeffects
@@ -483,26 +488,15 @@ FileError.prototype.code;
  */
 function FileReader() {}
 
-/**
- * @param {boolean=} opt_useCapture
- * @override
- * @return {undefined}
- */
-FileReader.prototype.addEventListener = function(type, listener, opt_useCapture)
-    {};
+/** @override */
+FileReader.prototype.addEventListener = function(type, listener, opt_options) {
+};
 
-/**
- * @param {boolean=} opt_useCapture
- * @override
- * @return {undefined}
- */
-FileReader.prototype.removeEventListener = function(type, listener,
-    opt_useCapture) {};
+/** @override */
+FileReader.prototype.removeEventListener = function(
+    type, listener, opt_options) {};
 
-/**
- * @override
- * @return {boolean}
- */
+/** @override */
 FileReader.prototype.dispatchEvent = function(evt) {};
 
 /**
@@ -1003,3 +997,16 @@ StorageQuota.prototype.requestQuota = function(size, opt_successCallback,
  */
 StorageQuota.prototype.queryUsageAndQuota = function(successCallback,
     opt_errorCallback) {};
+
+
+/**
+ * @type {!StorageQuota}
+ * @see https://developer.chrome.com/apps/offline_storage
+ */
+Navigator.prototype.webkitPersistentStorage;
+
+/**
+ * @type {!StorageQuota}
+ * @see https://developer.chrome.com/apps/offline_storage
+ */
+Navigator.prototype.webkitTemporaryStorage;

@@ -20,7 +20,7 @@ import static com.google.common.base.MoreObjects.toStringHelper;
 
 import java.io.Serializable;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
@@ -43,7 +43,7 @@ public final class DependencyOptions implements Serializable {
   private boolean sortDependencies = false;
   private boolean pruneDependencies = false;
   private boolean dropMoochers = false;
-  private final Set<ModuleIdentifier> entryPoints = new HashSet<>();
+  private final Set<ModuleIdentifier> entryPoints = new LinkedHashSet<>();
 
   /**
    * Enables or disables dependency sorting mode.
@@ -85,7 +85,7 @@ public final class DependencyOptions implements Serializable {
    * manage dependencies on them.
    *
    * If true, we drop these files when we prune dependencies.
-   * If false, we always keep these files an anything they depend on.
+   * If false, we always keep these files and anything they depend on.
    * The default is false.
    *
    * Notice that this option only makes sense if dependency pruning is on,

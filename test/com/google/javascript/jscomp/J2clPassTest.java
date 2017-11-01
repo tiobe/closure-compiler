@@ -15,6 +15,7 @@
  */
 package com.google.javascript.jscomp;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import java.util.List;
@@ -24,7 +25,9 @@ import java.util.List;
  */
 public class J2clPassTest extends CompilerTestCase {
 
-  public J2clPassTest() {
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
     this.enableNormalize();
   }
 
@@ -38,10 +41,10 @@ public class J2clPassTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    options.setJ2clPass(CompilerOptions.J2clPassMode.ON);
-    return options;
+  protected Compiler createCompiler() {
+    Compiler compiler = super.createCompiler();
+    J2clSourceFileChecker.markToRunJ2clPasses(compiler);
+    return compiler;
   }
 
   public void testUtilGetDefine() {
@@ -72,11 +75,13 @@ public class J2clPassTest extends CompilerTestCase {
                     "Arrays.$init = function() { return 2; }",
                     "Arrays.$instanceIsOfType = function() { return 3; }",
                     "Arrays.$castTo = function() { return 4; }",
+                    "Arrays.$stampType = function() { return 5; }",
                     "",
                     "alert(Arrays.$create());",
                     "alert(Arrays.$init());",
                     "alert(Arrays.$instanceIsOfType());",
-                    "alert(Arrays.$castTo());"))),
+                    "alert(Arrays.$castTo());",
+                    "alert(Arrays.$stampType());"))),
         Lists.newArrayList(
             SourceFile.fromCode(
                 "j2cl/transpiler/vmbootstrap/Arrays.impl.java.js",
@@ -87,11 +92,13 @@ public class J2clPassTest extends CompilerTestCase {
                     "Arrays.$init = function() { return 2; }",
                     "Arrays.$instanceIsOfType = function() { return 3; }",
                     "Arrays.$castTo = function() { return 4; }",
+                    "Arrays.$stampType = function() { return 5; }",
                     "",
                     "alert(1);",
                     "alert(2);",
                     "alert(3);",
-                    "alert(4);"))));
+                    "alert(4);",
+                    "alert(5);"))));
 
     // Casts functions.
     test(
@@ -101,16 +108,16 @@ public class J2clPassTest extends CompilerTestCase {
                 LINE_JOINER.join(
                     // Function definitions and calls are qualified globals.
                     "var Casts = function() {};",
-                    "Casts.to = function() { return 1; }",
+                    "Casts.$to = function() { return 1; }",
                     "",
-                    "alert(Casts.to());"))),
+                    "alert(Casts.$to());"))),
         Lists.newArrayList(
             SourceFile.fromCode(
                 "j2cl/transpiler/vmbootstrap/Casts.impl.java.js",
                 LINE_JOINER.join(
                     // Function definitions and calls are qualified globals.
                     "var Casts = function() {};",
-                    "Casts.to = function() { return 1; }",
+                    "Casts.$to = function() { return 1; }",
                     "",
                     "alert(1);"))));
 
@@ -187,17 +194,21 @@ public class J2clPassTest extends CompilerTestCase {
                 "j2cl/transpiler/vmbootstrap/Casts.impl.java.js",
                 LINE_JOINER.join(
                     // Function definitions and calls are qualified globals.
-                    "var Casts = function() {};",
-                    "Casts.to = function() { return 1; }",
+                    "var $jscomp = {};",
+                    "$jscomp.scope = {};",
+                    "$jscomp.scope.Casts = function() {};",
+                    "$jscomp.scope.Casts.$to = function() { return 1; }",
                     "",
-                    "alert(Casts.to());"))),
+                    "alert($jscomp.scope.Casts.$to());"))),
         Lists.newArrayList(
             SourceFile.fromCode(
                 "j2cl/transpiler/vmbootstrap/Casts.impl.java.js",
                 LINE_JOINER.join(
                     // Function definitions and calls are qualified globals.
-                    "var Casts = function() {};",
-                    "Casts.to = function() { return 1; }",
+                    "var $jscomp = {};",
+                    "$jscomp.scope = {};",
+                    "$jscomp.scope.Casts = function() {};",
+                    "$jscomp.scope.Casts.$to = function() { return 1; }",
                     "",
                     "alert(1);"))));
 
@@ -350,7 +361,7 @@ public class J2clPassTest extends CompilerTestCase {
   }
 
   public void testInlineNativeAlias_const() {
-    setLanguage(LanguageMode.ECMASCRIPT6, LanguageMode.ECMASCRIPT5);
+    setLanguage(LanguageMode.ECMASCRIPT_2015, LanguageMode.ECMASCRIPT5);
     test(
         LINE_JOINER.join(
             "/** @constructor */ const $RegExp = window.RegExp;",
@@ -361,7 +372,7 @@ public class J2clPassTest extends CompilerTestCase {
   }
 
   public void testInlineNativeAlias_let() {
-    setLanguage(LanguageMode.ECMASCRIPT6, LanguageMode.ECMASCRIPT5);
+    setLanguage(LanguageMode.ECMASCRIPT_2015, LanguageMode.ECMASCRIPT5);
     test(
         LINE_JOINER.join(
             "/** @constructor */ let $RegExp = window.RegExp;",
@@ -395,5 +406,28 @@ public class J2clPassTest extends CompilerTestCase {
             "  var $RegExp = function() {};",
             "  var foo = new $RegExp('', '');",
             "}"));
+  }
+
+  public void testMarksChanges() {
+    test(
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "j2cl/transpiler/vmbootstrap/Casts.impl.java.js",
+                LINE_JOINER.join(
+                    // Function definitions and calls are qualified globals.
+                    "var Casts = function() {};",
+                    "Casts.$to = function(instance) { return instance; }",
+                    "",
+                    "alert(Casts.$to(function(a) { return a; }));"))),
+        ImmutableList.of(
+            SourceFile.fromCode(
+                "j2cl/transpiler/vmbootstrap/Casts.impl.java.js",
+                LINE_JOINER.join(
+                    // Function definitions and calls are qualified globals.
+                    "var Casts = function() {};",
+                    "Casts.$to = function(instance) { return instance; }",
+                    "",
+                    "alert(function(a) { return a; });"))));
+
   }
 }

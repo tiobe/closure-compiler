@@ -17,7 +17,6 @@
 package com.google.javascript.jscomp;
 
 import com.google.common.collect.ImmutableSet;
-
 import java.util.Set;
 
 /**
@@ -30,7 +29,6 @@ public final class AliasStringsTest extends CompilerTestCase {
   private static final Set<String> ALL_STRINGS = null;
 
   private Set<String> strings = ALL_STRINGS;
-  private JSModuleGraph moduleGraph = null;
   private boolean hashReduction = false;
 
   public AliasStringsTest() {
@@ -38,9 +36,9 @@ public final class AliasStringsTest extends CompilerTestCase {
   }
 
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     AliasStrings pass =
-        new AliasStrings(compiler, moduleGraph, strings, "(?i)secret", false);
+        new AliasStrings(compiler, compiler.getModuleGraph(), strings, "(?i)secret", false);
     if (hashReduction) {
       pass.unitTestHashReductionMask = 0;
     }
@@ -150,13 +148,11 @@ public final class AliasStringsTest extends CompilerTestCase {
   public void testObjectLiterals() {
     strings = ImmutableSet.of("pxpxpxpxpxpxpxpxpxpx", "abcdefghijabcdefghij");
 
-    test("var foo={px:435}", "var foo={px:435}");
+    testSame("var foo={px:435}");
 
     // string as key
-    test("var foo={'pxpxpxpxpxpxpxpxpxpx':435}", "var foo={'pxpxpxpxpxpxpxpxpxpx':435}");
-    test(
-        "bar=function f(){return {'pxpxpxpxpxpxpxpxpxpx':435}}",
-        "bar=function f(){return {'pxpxpxpxpxpxpxpxpxpx':435}}");
+    testSame("var foo={'pxpxpxpxpxpxpxpxpxpx':435}");
+    testSame("bar=function f(){return {'pxpxpxpxpxpxpxpxpxpx':435}}");
 
     test(
         "function f() {var foo={bar:'abcdefghijabcdefghij'+'abcdefghijabcdefghij'}}",
@@ -346,8 +342,6 @@ public final class AliasStringsTest extends CompilerTestCase {
             "f('---------hi---------'); alert('--------adios-------');"
                 + "h('-------peaches------'); h('-------peaches------');");
 
-    moduleGraph = new JSModuleGraph(modules);
-
     test(
         modules,
         new String[] {
@@ -379,7 +373,6 @@ public final class AliasStringsTest extends CompilerTestCase {
               + "h($$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d);"
               + "h($$S_$2d$2d$2d$2d$2d$2d$2dpeaches$2d$2d$2d$2d$2d$2d);",
         });
-    moduleGraph = null;
   }
 
   public void testStringsInModules2() {
@@ -403,8 +396,6 @@ public final class AliasStringsTest extends CompilerTestCase {
             // m3
             "g();");
 
-    moduleGraph = new JSModuleGraph(modules);
-
     test(
         modules,
         new String[] {
@@ -424,7 +415,38 @@ public final class AliasStringsTest extends CompilerTestCase {
           // m4
           "g();",
         });
-    moduleGraph = null;
+  }
+
+  public void testAliasInCommonModuleInclusive() {
+    strings = ALL_STRINGS;
+
+    JSModule[] modules =
+        createModuleBush(
+            // m0
+            "",
+            // m1
+            "function g() { alert('ciaociaociaociaociao'); }",
+            // m2
+            "h('ciaociaociaociaociao' + 'adios');",
+            // m3
+            "g();");
+
+    // The "ciao" string is used in m1 and m2.
+    // Since m2 depends on m1, we should create the module there and not force it into m0.
+    test(
+        modules,
+        new String[] {
+          // m0
+          "",
+          // m1
+          LINE_JOINER.join(
+              "var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';",
+              "function g() { alert($$S_ciaociaociaociaociao); }"),
+          // m2
+          "h($$S_ciaociaociaociaociao + 'adios');",
+          // m3
+          "g();",
+        });
   }
 
 
@@ -438,7 +460,6 @@ public final class AliasStringsTest extends CompilerTestCase {
             // m2
             "function foo() { f('goodgoodgoodgoodgood') }");
 
-    moduleGraph = new JSModuleGraph(modules);
     test(
         modules,
         new String[] {
@@ -449,7 +470,5 @@ public final class AliasStringsTest extends CompilerTestCase {
           // m2
           "function foo() {f($$S_goodgoodgoodgoodgood)}",
         });
-
-    moduleGraph = null;
   }
 }

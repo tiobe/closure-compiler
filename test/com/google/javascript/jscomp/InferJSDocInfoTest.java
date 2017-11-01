@@ -16,18 +16,16 @@
 
 package com.google.javascript.jscomp;
 
-
 import static com.google.javascript.jscomp.parsing.Config.JsDocParsing.INCLUDE_DESCRIPTIONS_NO_WHITESPACE;
+
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.ObjectType;
-
 import java.util.ArrayDeque;
 import java.util.Deque;
-
 
 /**
  * Tests for {@link InferJSDocInfo}.
@@ -67,12 +65,12 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
   };
 
   @Override
-  public CompilerPass getProcessor(final Compiler compiler) {
+  protected CompilerPass getProcessor(final Compiler compiler) {
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node root) {
-        MemoizedScopeCreator scopeCreator =
-            new MemoizedScopeCreator(new TypedScopeCreator(compiler));
+        MemoizedTypedScopeCreator scopeCreator =
+            new MemoizedTypedScopeCreator(new TypedScopeCreator(compiler));
         TypedScope topScope = scopeCreator.createScope(root.getParent(), null);
         (new TypeInferencePass(
             compiler, compiler.getReverseAbstractInterpreter(),
@@ -88,7 +86,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
   public void testNativeCtor() {
     testSame(OBJECT_EXTERNS,
         "var x = new Object();"
-        + "/** Another object. */ var y = new Object();", null);
+        + "/** Another object. */ var y = new Object();");
     assertEquals(
         "Object.",
         findGlobalNameType("x").getJSDocInfo().getBlockDescription());
@@ -106,7 +104,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
         + "function fn(x) {};"
         + "var goog = {};"
         + "/** Another object. \n * @type {Object} */ goog.x = new Object();"
-        + "/** Another function. \n * @param {number} x */ goog.y = fn;", null);
+        + "/** Another function. \n * @param {number} x */ goog.y = fn;");
     assertEquals(
         "(Object|null)",
         globalScope.getVar("goog.x").getType().toString());
@@ -204,8 +202,7 @@ public final class InferJSDocInfoTest extends CompilerTestCase {
     queue.push(root);
     while (!queue.isEmpty()) {
       Node current = queue.pop();
-      if (name.equals(current.getQualifiedName()) &&
-          current.getJSType() != null) {
+      if (current.matchesQualifiedName(name) && current.getJSType() != null) {
         return current.getJSType();
       }
 

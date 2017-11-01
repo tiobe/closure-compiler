@@ -18,7 +18,7 @@ package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 
-public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase {
+public final class DeclaredGlobalExternsOnWindowTest extends TypeICompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
@@ -26,10 +26,12 @@ public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase
   }
 
   @Override
-  protected void setUp() {
-    allowExternsChanges(true);
-    enableTypeCheck();
-    runTypeCheckAfterProcessing = true;
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
+    allowExternsChanges();
+    this.mode = TypeInferenceMode.BOTH;
+    enableRunTypeCheckAfterProcessing();
   }
 
   @Override
@@ -77,9 +79,10 @@ public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase
   }
 
   public void testWindowProperty5c() {
-    testExternChanges("var window; var x = ()=>{}", "var b",
-        "var window;var x=()=>{};window.x;",
-        LanguageMode.ECMASCRIPT6);
+    testExternChanges(
+        "var window; var x = ()=>{}",
+        "var b",
+        "var window;var x=()=>{};window.x;");
   }
 
   public void testWindowProperty6() {
@@ -98,7 +101,7 @@ public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase
             "/** @suppress {const,duplicate} @const */ window.ns = ns;"));
   }
 
-  public void testNamespaceAliasing() {
+  public void testNameAliasing() {
     testExternChanges(
         LINE_JOINER.join(
             "var window;",
@@ -117,6 +120,31 @@ public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase
             "window.ns = ns;",
             "/** @suppress {const,duplicate} @const */",
             "window.ns2 = ns;"));
+  }
+
+  public void testQualifiedNameAliasing() {
+    testExternChanges(
+        LINE_JOINER.join(
+            "var window;",
+            "/** @const */",
+            "var ns = {};",
+            "/** @type {number} A very important constant */",
+            "ns.THE_NUMBER;",
+            "/** @const */",
+            "var num = ns.THE_NUMBER;"),
+        "",
+        LINE_JOINER.join(
+            "var window;",
+            "/** @const */",
+            "var ns = {};",
+            "/** @type {number} A very important constant */",
+            "ns.THE_NUMBER;",
+            "/** @const */",
+            "var num = ns.THE_NUMBER;",
+            "/** @suppress {const,duplicate} @const */",
+            "window.ns=ns;",
+            "/** @suppress {const,duplicate} @const */",
+            "window.num = ns.THE_NUMBER;"));
   }
 
   public void testWindowProperty8() {
@@ -141,22 +169,28 @@ public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase
    */
   public void testWindowPropertyWithJsDoc() {
     testSame(
-        "var window;\n/** @type {string} */ var x;",
-        LINE_JOINER.join(
+        externs(lines(
+            MINIMAL_EXTERNS,
+            "var window;",
+            "/** @type {string} */ var x;")),
+        srcs(lines(
             "/** @param {number} n*/",
             "function f(n) {}",
-            "f(window.x);"),
-        TypeValidator.TYPE_MISMATCH_WARNING);
+            "f(window.x);")),
+        warningOtiNti(TypeValidator.TYPE_MISMATCH_WARNING, NewTypeInference.INVALID_ARGUMENT_TYPE));
   }
 
   public void testEnum() {
+    // TODO(sdh): figure out why NTI doesn't recognize props if 'window' not explicitly declared
+    this.mode = TypeInferenceMode.OTI_ONLY;
     testSame(
-        "/** @enum {string} */ var Enum = {FOO: 'foo', BAR: 'bar'};",
-        LINE_JOINER.join(
+        externs(lines(
+            MINIMAL_EXTERNS,
+            "/** @enum {string} */ var Enum = {FOO: 'foo', BAR: 'bar'};")),
+        srcs(lines(
             "/** @param {Enum} e*/",
             "function f(e) {}",
-            "f(window.Enum.FOO);"),
-        null);
+            "f(window.Enum.FOO);")));
   }
 
   /**
@@ -165,19 +199,24 @@ public final class DeclaredGlobalExternsOnWindowTest extends Es6CompilerTestCase
    */
   public void testConstructorIsSameType() {
     testSame(
-        "var window;\n/** @constructor */ function Foo() {}\n",
-        LINE_JOINER.join(
+        externs(lines(
+            MINIMAL_EXTERNS,
+            "var window;",
+            "/** @constructor */ function Foo() {}")),
+        srcs(lines(
             "/** @param {!window.Foo} f*/",
             "function bar(f) {}",
-            "bar(new Foo());"),
-        null);
+            "bar(new Foo());")));
 
+    // TODO(sdh): figure out why NTI doesn't recognize props if 'window' not explicitly declared
+    this.mode = TypeInferenceMode.OTI_ONLY;
     testSame(
-        "/** @constructor */ function Foo() {}\n",
-        LINE_JOINER.join(
+        externs(lines(
+            MINIMAL_EXTERNS,
+            "/** @constructor */ function Foo() {}")),
+        srcs(lines(
             "/** @param {!Foo} f*/",
             "function bar(f) {}",
-            "bar(new window.Foo());"),
-        null);
+            "bar(new window.Foo());")));
   }
 }

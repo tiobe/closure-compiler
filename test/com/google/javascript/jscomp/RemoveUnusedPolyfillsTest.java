@@ -59,22 +59,20 @@ public final class RemoveUnusedPolyfillsTest extends TypeICompilerTestCase {
   private static final String ARRAY_FROM =
       "$jscomp.polyfill('Array.from', function() {}, 'es6', 'es3');\n";
 
-
   public RemoveUnusedPolyfillsTest() {
     super(EXTERNS);
   }
 
   @Override
-  protected CompilerPass getProcessor(final Compiler compiler) {
-    return new RemoveUnusedPolyfills(compiler);
+  protected void setUp() throws Exception {
+    super.setUp();
+    // NTI warns about property accesses on *
+    ignoreWarnings(DiagnosticGroups.NEW_CHECK_TYPES_EXTRA_CHECKS);
   }
 
   @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    // NTI warns about property accesses on *
-    options.setWarningLevel(DiagnosticGroups.NEW_CHECK_TYPES_EXTRA_CHECKS, CheckLevel.OFF);
-    return options;
+  protected CompilerPass getProcessor(final Compiler compiler) {
+    return new RemoveUnusedPolyfills(compiler);
   }
 
   public void testRemovesPolyfillInstanceMethods() {
@@ -89,6 +87,14 @@ public final class RemoveUnusedPolyfillsTest extends TypeICompilerTestCase {
         "var x = {}; x.includes = function() {}; x.includes();");
     test(BOTH_INCLUDES + "var x = {includes: function() {}}; x.includes();",
         "var x = {includes: function() {}}; x.includes();");
+
+    // Note: after CollapseProperties, goog.string.includes is goog$string$includes.
+    // Removing it property depends on running after CollapseProperies, since without
+    // it, goog.string looks like {?}, which is an unknown type we can't remove.
+    testSame(STRING_INCLUDES + "var goog = goog || {};"
+        + "goog.string = goog.string || {};"
+        + "goog.string.includes = function() {};"
+        + "goog.string.includes();");
   }
 
   public void testRemovesPolyfillStaticMethods() {
@@ -126,8 +132,8 @@ public final class RemoveUnusedPolyfillsTest extends TypeICompilerTestCase {
     test(BOTH_INCLUDES + "arr.includes();", ARRAY_INCLUDES + "arr.includes();");
     test(BOTH_INCLUDES + "[].includes();", ARRAY_INCLUDES + "[].includes();");
 
-    test(BOTH_INCLUDES + "strOrArr.includes();", BOTH_INCLUDES + "strOrArr.includes();");
-    test(BOTH_INCLUDES + "strOrMyArray.includes();", BOTH_INCLUDES + "strOrMyArray.includes();");
+    testSame(BOTH_INCLUDES + "strOrArr.includes();");
+    testSame(BOTH_INCLUDES + "strOrMyArray.includes();");
     test(BOTH_INCLUDES + "strOrFoo.includes();", STRING_INCLUDES + "strOrFoo.includes();");
     test(BOTH_INCLUDES + "fooOrMyArray.includes();", ARRAY_INCLUDES + "fooOrMyArray.includes();");
   }

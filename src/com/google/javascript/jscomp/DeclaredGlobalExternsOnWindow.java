@@ -27,10 +27,9 @@ import java.util.Set;
 /**
  * A compiler pass to normalize externs by declaring global names on
  * the "window" object, if it is declared in externs.
+ * The new declarations are added to the window instance, not to Window.prototype.
  */
-class DeclaredGlobalExternsOnWindow
-    extends NodeTraversal.AbstractShallowStatementCallback
-    implements CompilerPass {
+class DeclaredGlobalExternsOnWindow implements CompilerPass, NodeTraversal.Callback {
 
   private final AbstractCompiler compiler;
   private final Set<Node> nodes = new LinkedHashSet<>();
@@ -52,8 +51,8 @@ class DeclaredGlobalExternsOnWindow
     if (!nodes.isEmpty() && windowInExterns) {
       for (Node node : nodes) {
         addExtern(node);
+        compiler.reportChangeToEnclosingScope(node);
       }
-      compiler.reportCodeChange();
     }
   }
 
@@ -96,7 +95,7 @@ class DeclaredGlobalExternsOnWindow
           Node rhs = NodeUtil.getRValueOfLValue(node);
           // Type-aliasing definition
           if (oldJSDocInfo.hasConstAnnotation() && rhs != null && rhs.isQualifiedName()) {
-            newNode = IR.assign(getprop, rhs.cloneNode());
+            newNode = IR.assign(getprop, rhs.cloneTree());
           }
         }
         builder = JSDocInfoBuilder.copyFrom(oldJSDocInfo);
@@ -111,6 +110,19 @@ class DeclaredGlobalExternsOnWindow
     newNode.useSourceInfoFromForTree(node);
     newNode.setOriginalName(name);
     node.getGrandparent().addChildToBack(IR.exprResult(newNode));
+  }
+
+  @Override
+  public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
+    if (parent != null
+        && !NodeUtil.isControlStructure(parent)
+        && !NodeUtil.isStatementBlock(parent)) {
+      return false;
+    }
+    if (n.isScript() && NodeUtil.isFromTypeSummary(n)) {
+      return false;
+    }
+    return true;
   }
 
   @Override

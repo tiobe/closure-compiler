@@ -16,11 +16,11 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Supplier;
 import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.rhino.Node;
-
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -70,18 +70,21 @@ final class RenameLabels implements CompilerPass {
   private final AbstractCompiler compiler;
   private final Supplier<String> nameSupplier;
   private final boolean removeUnused;
+  private final boolean markChanges;
 
   RenameLabels(final AbstractCompiler compiler) {
-    this(compiler, new DefaultNameSupplier(), true);
+    this(compiler, new DefaultNameSupplier(), true, true);
   }
 
   RenameLabels(
       AbstractCompiler compiler,
       Supplier<String> supplier,
-      boolean removeUnused) {
+      boolean removeUnused,
+      boolean markChanges) {
     this.compiler = compiler;
     this.nameSupplier = supplier;
     this.removeUnused = removeUnused;
+    this.markChanges = markChanges;
   }
 
   static class DefaultNameSupplier implements Supplier<String> {
@@ -108,7 +111,10 @@ final class RenameLabels implements CompilerPass {
    */
   class ProcessLabels implements ScopedCallback {
 
-    ProcessLabels() {
+    private final boolean markChanges;
+
+    ProcessLabels(boolean markChanges) {
+      this.markChanges = markChanges;
       // Create a entry for global scope.
       namespaceStack.push(new LabelNamespace());
     }
@@ -154,7 +160,7 @@ final class RenameLabels implements CompilerPass {
 
         // Store the context for this label name.
         LabelInfo li = new LabelInfo(currentDepth);
-        Preconditions.checkState(!current.renameMap.containsKey(name));
+        checkState(!current.renameMap.containsKey(name));
         current.renameMap.put(name, li);
 
         // Create a new name, if needed, for this depth.
@@ -163,7 +169,7 @@ final class RenameLabels implements CompilerPass {
         }
 
         String newName = getNameForId(currentDepth);
-        compiler.addToDebugLog("label renamed: " + name + " => " + newName);
+        compiler.addToDebugLog("label renamed: ", name, " => ", newName);
       }
 
       return true;
@@ -176,15 +182,15 @@ final class RenameLabels implements CompilerPass {
      * {@inheritDoc}
      */
     @Override
-    public void visit(NodeTraversal nodeTraversal, Node node, Node parent) {
+    public void visit(NodeTraversal t, Node node, Node parent) {
       switch (node.getToken()) {
         case LABEL:
-          visitLabel(node, parent);
+          visitLabel(t, node, parent);
           break;
 
         case BREAK:
         case CONTINUE:
-          visitBreakOrContinue(node);
+          visitBreakOrContinue(t, node);
           break;
         default:
           break;
@@ -195,12 +201,12 @@ final class RenameLabels implements CompilerPass {
      * Rename label references in breaks and continues.
      * @param node The break or continue node.
      */
-    private void visitBreakOrContinue(Node node) {
+    private void visitBreakOrContinue(NodeTraversal t, Node node) {
       Node nameNode = node.getFirstChild();
       if (nameNode != null) {
         // This is a named break or continue;
         String name = nameNode.getString();
-        Preconditions.checkState(!name.isEmpty());
+        checkState(!name.isEmpty());
         LabelInfo li = getLabelInfo(name);
         if (li != null) {
           String newName = getNameForId(li.id);
@@ -209,7 +215,9 @@ final class RenameLabels implements CompilerPass {
           if (!name.equals(newName)) {
             // Give it the short name.
             nameNode.setString(newName);
-            compiler.reportCodeChange();
+            if (markChanges) {
+              t.reportCodeChange();
+            }
           }
         }
       }
@@ -220,9 +228,9 @@ final class RenameLabels implements CompilerPass {
      * @param node  The label node.
      * @param parent The parent of the label node.
      */
-    private void visitLabel(Node node, Node parent) {
+    private void visitLabel(NodeTraversal t, Node node, Node parent) {
       Node nameNode = node.getFirstChild();
-      Preconditions.checkState(nameNode != null);
+      checkState(nameNode != null);
       String name = nameNode.getString();
       LabelInfo li = getLabelInfo(name);
       // This is a label...
@@ -231,17 +239,21 @@ final class RenameLabels implements CompilerPass {
         if (!name.equals(newName)) {
           // ... and it is used, give it the short name.
           nameNode.setString(newName);
-          compiler.reportCodeChange();
+          if (markChanges) {
+            t.reportCodeChange();
+          }
         }
       } else {
         // ... and it is not referenced, just remove it.
         Node newChild = node.getLastChild();
         node.removeChild(newChild);
         parent.replaceChild(node, newChild);
-        if (newChild.isBlock()) {
-          NodeUtil.tryMergeBlock(newChild);
+        if (newChild.isNormalBlock()) {
+          NodeUtil.tryMergeBlock(newChild, false);
         }
-        compiler.reportCodeChange();
+        if (markChanges) {
+          t.reportCodeChange();
+        }
       }
 
       // Remove the label from the current stack of labels.
@@ -269,9 +281,8 @@ final class RenameLabels implements CompilerPass {
   @Override
   public void process(Node externs, Node root) {
     // Do variable reference counting.
-    NodeTraversal.traverseEs6(compiler, root, new ProcessLabels());
+    NodeTraversal.traverseEs6(compiler, root, new ProcessLabels(markChanges));
   }
-
 
   private static class LabelInfo {
     boolean referenced = false;

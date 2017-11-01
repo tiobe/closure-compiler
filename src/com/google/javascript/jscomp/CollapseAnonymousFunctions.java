@@ -15,7 +15,9 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.Node;
 
@@ -41,7 +43,7 @@ class CollapseAnonymousFunctions implements CompilerPass {
   private final AbstractCompiler compiler;
 
   public CollapseAnonymousFunctions(AbstractCompiler compiler) {
-    Preconditions.checkArgument(compiler.getLifeCycleStage().isNormalized());
+    checkArgument(compiler.getLifeCycleStage().isNormalized());
     this.compiler = compiler;
   }
 
@@ -64,16 +66,14 @@ class CollapseAnonymousFunctions implements CompilerPass {
       // definitions are added to scopes before the start of execution.
 
       Node grandparent = parent.getParent();
-      if (!(parent.isScript() ||
-            grandparent != null &&
-            grandparent.isFunction() &&
-            parent.isBlock())) {
+      if (!(parent.isScript()
+          || grandparent != null && grandparent.isFunction() && parent.isNormalBlock())) {
         return;
       }
 
       // Need to store the next name in case the current name is removed from
       // the linked list.
-      Preconditions.checkState(n.hasOneChild(), n);
+      checkState(n.hasOneChild(), n);
       Node name = n.getFirstChild();
       Node value = name.getFirstChild();
       if (value != null &&
@@ -91,7 +91,9 @@ class CollapseAnonymousFunctions implements CompilerPass {
           parent.addChildToFront(value.detach());
         }
 
-        compiler.reportCodeChange();
+        // report changes to both the change scopes
+        compiler.reportChangeToChangeScope(value);
+        t.reportCodeChange();
       }
     }
 

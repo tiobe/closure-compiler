@@ -21,7 +21,6 @@ import com.google.javascript.jscomp.CodingConvention.AssertionFunctionSpec;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.Node;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -123,13 +122,14 @@ final class ClosureCodeRemoval implements CompilerPass {
       for (Node ancestor : assignAncestors) {
         if (ancestor.isExprResult()) {
           lastAncestor.removeChild(ancestor);
+          NodeUtil.markFunctionsDeleted(ancestor, compiler);
         } else {
           rhs.detach();
           ancestor.replaceChild(last, rhs);
         }
         last = ancestor;
       }
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(lastAncestor);
     }
   }
 
@@ -220,9 +220,11 @@ final class ClosureCodeRemoval implements CompilerPass {
 
     for (Node call : assertionCalls) {
       // If the assertion is an expression, just strip the whole thing.
+      compiler.reportChangeToEnclosingScope(call);
       Node parent = call.getParent();
       if (parent.isExprResult()) {
-        parent.getParent().removeChild(parent);
+        parent.detach();
+        NodeUtil.markFunctionsDeleted(parent, compiler);
       } else {
         // Otherwise, replace the assertion with its first argument,
         // which is the return value of the assertion.
@@ -234,8 +236,8 @@ final class ClosureCodeRemoval implements CompilerPass {
           replacement.setJSType(call.getJSType());
           parent.replaceChild(call, replacement);
         }
+        NodeUtil.markFunctionsDeleted(call, compiler);
       }
-      compiler.reportCodeChange();
     }
   }
 }

@@ -22,6 +22,7 @@ import com.google.common.truth.FailureStrategy;
 import com.google.common.truth.Subject;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.JSError;
+import javax.annotation.CheckReturnValue;
 
 /**
  * A Truth Subject for the JSError class. Usage:
@@ -33,6 +34,7 @@ import com.google.javascript.jscomp.JSError;
  * TODO(tbreisacher): Add assertions on the message text, line number, etc.
  */
 public final class JSErrorSubject extends Subject<JSErrorSubject, JSError> {
+  @CheckReturnValue
   public static JSErrorSubject assertError(JSError error) {
     return new JSErrorSubject(THROW_ASSERTION_ERROR, error);
   }
@@ -44,5 +46,12 @@ public final class JSErrorSubject extends Subject<JSErrorSubject, JSError> {
   public void hasType(DiagnosticType type) {
     String message = "Expected an error of type " + type + " but got: " + actual();
     assertEquals(message, type, actual().getType());
+  }
+
+  public void hasMessage(String msg) {
+    assertEquals(
+        "Expected an error with message:\n" + msg + " but got:\n" + actual(),
+        msg,
+        actual().description);
   }
 }

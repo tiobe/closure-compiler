@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 
@@ -56,9 +57,8 @@ class PrepareAst implements CompilerPass {
       normalizeNodeTypes(root);
     } else {
       // Don't perform "PrepareAnnotations" when doing checks as
-      // they currently aren't valid during sanity checks.  In particular,
-      // they DIRECT_EVAL shouldn't be applied after inlining has been
-      // performed.
+      // they currently aren't valid during validity checks.  In particular,
+      // they DIRECT_EVAL shouldn't be applied after inlining has been performed.
       if (externs != null) {
         NodeTraversal.traverseEs6(
             compiler, externs, new PrepareAnnotations());
@@ -80,7 +80,7 @@ class PrepareAst implements CompilerPass {
          child != null; child = child.getNext()) {
       // This pass is run during the CompilerTestCase validation, so this
       // parent pointer check serves as a more general check.
-      Preconditions.checkState(child.getParent() == n);
+      checkState(child.getParent() == n);
 
       normalizeNodeTypes(child);
     }
@@ -94,7 +94,7 @@ class PrepareAst implements CompilerPass {
         && !n.isLabel()
         && !n.isSwitch()) {
       for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
-        if (NodeUtil.isControlStructureCodeBlock(n, c) && !c.isBlock()) {
+        if (NodeUtil.isControlStructureCodeBlock(n, c) && !c.isNormalBlock()) {
           Node newBlock = IR.block().srcref(n);
           n.replaceChild(c, newBlock);
           newBlock.setIsAddedBlock(true);
@@ -131,7 +131,7 @@ class PrepareAst implements CompilerPass {
      * "this" values (what we are call "free" calls) and direct call to eval.
      */
     private static void annotateCalls(Node n) {
-      Preconditions.checkState(n.isCall(), n);
+      checkState(n.isCall(), n);
 
       // Keep track of of the "this" context of a call.  A call without an
       // explicit "this" is a free call.

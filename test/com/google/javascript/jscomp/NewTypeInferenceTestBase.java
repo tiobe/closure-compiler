@@ -16,15 +16,15 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Joiner;
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.javascript.jscomp.testing.JSErrorSubject.assertError;
+
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
-import com.google.javascript.rhino.IR;
-import com.google.javascript.rhino.InputId;
-import com.google.javascript.rhino.Node;
-
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -36,31 +36,69 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
 
   protected CompilerOptions compilerOptions;
 
+  protected static enum InputLanguageMode {
+    TRANSPILATION,
+    NO_TRANSPILATION,
+    BOTH;
+
+    boolean checkNative() {
+      return this == NO_TRANSPILATION || this == BOTH;
+    }
+
+    boolean checkTranspiled() {
+      return this == TRANSPILATION || this == BOTH;
+    }
+  }
+
+  protected InputLanguageMode mode = InputLanguageMode.NO_TRANSPILATION;
+
   protected static final String CLOSURE_BASE =
       LINE_JOINER.join(
           "/** @const */",
           "var goog = {};",
+          "goog.inherits = function(child, parent){};",
           "/** @return {void} */",
           "goog.nullFunction = function() {};",
           "/** @type {!Function} */",
           "goog.abstractMethod = function(){};",
           "goog.asserts;",
-          "goog.asserts.assertInstanceOf;",
+          "goog.asserts.assert;",
+          "goog.asserts.assertArray;",
+          "goog.asserts.assertInstanceof;",
+          "goog.asserts.assertNumber;",
+          "goog.asserts.assertObject;",
+          "goog.asserts.assertString;",
+          "goog.partial;",
+          "goog.bind;",
+          "goog.isNull;",
+          "goog.isDef;",
+          "goog.isDefAndNotNull;",
+          "goog.isArray;",
+          "goog.isArrayLike;",
+          "goog.isFunction;",
+          "goog.isObject;",
+          "goog.isString;",
+          "goog.isNumber;",
+          "goog.isBoolean;",
+          "goog.typeOf;",
+          "goog.addDependency = function(file, provides, requires){};",
+          "goog.forwardDeclare = function(name){};",
+          "/**",
+          " * @param {string} str",
+          " * @param {Object<string, string>=} opt_values",
+          " * @return {string}",
+          " */",
           "goog.getMsg;",
           "goog.addSingletonGetter;",
+          "goog.reflect;",
+          "goog.reflect.object;",
           "Object.prototype.superClass_;");
 
+  @SuppressWarnings("hiding")
   protected static final String DEFAULT_EXTERNS =
       CompilerTypeTestCase.DEFAULT_EXTERNS + LINE_JOINER.join(
           "/** @const {undefined} */",
           "var undefined;",
-          "/** @return {string} */",
-          "Object.prototype.toString = function() {};",
-          "/**",
-          " * @param {*} propertyName",
-          " * @return {boolean}",
-          " */",
-          "Object.prototype.hasOwnProperty = function(propertyName) {};",
           "/**",
           " * @this {!String|string}",
           " * @param {!RegExp} regexp",
@@ -73,12 +111,6 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
           "String.prototype.toLowerCase = function() {};",
           "String.prototype.startsWith = function(s) {};",
           "/**",
-          " * @constructor",
-          " * @param {*=} arg",
-          " * @return {number}",
-          " */",
-          "function Number(arg) {}",
-          "/**",
           " @param {number=} opt_radix",
           " @return {string}",
           "*/",
@@ -88,12 +120,6 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
           " * @return {string}",
           " */",
           "Number.prototype.toExponential = function(opt_fractionDigits) {};",
-          "/**",
-          " * @constructor",
-          " * @param {*=} arg",
-          " * @return {boolean}",
-          " */",
-          "function Boolean(arg) {}",
           "/** @return {string} */",
           "Boolean.prototype.toString = function() {};",
           "/**",
@@ -109,12 +135,6 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
           " * @return {!Array.<?>}",
           " */",
           "Array.prototype.concat = function(var_args) {};",
-          "/**",
-          " * @this {{length: number}|Array<T>}",
-          " * @return {T}",
-          " * @template T",
-          " */",
-          "Array.prototype.shift = function() {};",
           "/** @interface */",
           "function IThenable () {}",
           "IThenable.prototype.then = function(onFulfilled) {};",
@@ -146,20 +166,19 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
           "function Error(opt_message, opt_file, opt_line) {}",
           "/** @type {string} */",
           "Error.prototype.stack;",
-          "/**",
-          " * @constructor",
-          " * @param {?=} opt_pattern",
-          " * @param {?=} opt_flags",
-          " * @return {!RegExp}",
-          " */",
-          "function RegExp(opt_pattern, opt_flags) {}",
           "/** @constructor */",
           "function Window() {}",
           "/** @type {boolean} */",
           "Window.prototype.closed;",
           "/** @type {!Window} */",
           "var window;",
-          "",
+          "/**",
+          " * @param {Function|string} callback",
+          " * @param {number=} opt_delay",
+          " * @param {...*} var_args",
+          " * @return {number}",
+          " */",
+          "function setTimeout(callback, opt_delay, var_args) {}",
           "/**",
           " * @constructor",
           " * @extends {Array<string>}",
@@ -175,7 +194,8 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
           " * @return {string}",
           " */",
           "String.raw = function(template, var_args) {};",
-          "");
+          "/** @return {?} */",
+          "function any() {}");
 
   @Override
   protected void setUp() throws Exception {
@@ -190,17 +210,22 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
     compilerOptions.setNewTypeInference(true);
     compilerOptions.setWarningLevel(
         DiagnosticGroups.NEW_CHECK_TYPES_ALL_CHECKS, CheckLevel.WARNING);
-    // EC5 is the highest language level that type inference understands.
-    compilerOptions.setLanguage(LanguageMode.ECMASCRIPT5);
+    compilerOptions.setLanguageIn(LanguageMode.ECMASCRIPT_2017);
+    // ES5 is the highest language level that type inference understands.
+    compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT5);
     return compilerOptions;
   }
 
-  protected final PassFactory makePassFactory(
-      String name, final CompilerPass pass) {
+  protected PassFactory makePassFactory(String name, final CompilerPass pass) {
     return new PassFactory(name, true/* one-time pass */) {
       @Override
       protected CompilerPass create(AbstractCompiler compiler) {
         return pass;
+      }
+
+      @Override
+      protected FeatureSet featureSet() {
+        return FeatureSet.latest().withoutTypes();
       }
     };
   }
@@ -211,28 +236,14 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
         ImmutableList.of(SourceFile.fromCode("[externs]", externs)),
         ImmutableList.of(SourceFile.fromCode("[testcode]", js)),
         compilerOptions);
+    compiler.setFeatureSet(compiler.getFeatureSet().without(Feature.MODULES));
 
-    Node externsRoot = IR.block();
-    externsRoot.setIsSyntheticBlock(true);
-    externsRoot.addChildToFront(
-        compiler.getInput(new InputId("[externs]")).getAstRoot(compiler));
-    Node astRoot = IR.block();
-    astRoot.setIsSyntheticBlock(true);
-    astRoot.addChildToFront(
-        compiler.getInput(new InputId("[testcode]")).getAstRoot(compiler));
-
-    assertEquals("parsing error: " + Joiner.on(", ").join(compiler.getErrors()),
-        0, compiler.getErrorCount());
-    assertEquals(
-        "parsing warning: " + Joiner.on(", ").join(compiler.getWarnings()), 0,
-        compiler.getWarningCount());
-
-    // Create common parent of externs and ast; needed by Es6RewriteBlockScopedDeclaration.
-    Node block = IR.block(externsRoot, astRoot);
-    block.setIsSyntheticBlock(true);
+    compiler.parseInputs();
+    assertThat(compiler.getErrors()).named("parsing errors").isEmpty();
+    assertThat(compiler.getWarnings()).named("parsing warnings").isEmpty();
 
     // Run ASTValidator
-    (new AstValidator(compiler)).validateRoot(block);
+    (new AstValidator(compiler)).validateRoot(compiler.getRoot());
 
     DeclaredGlobalExternsOnWindow rewriteExterns =
         new DeclaredGlobalExternsOnWindow(compiler);
@@ -241,31 +252,46 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
     ProcessClosurePrimitives closurePass =
         new ProcessClosurePrimitives(compiler, null, CheckLevel.ERROR, false);
     passes.add(makePassFactory("ProcessClosurePrimitives", closurePass));
-    if (compilerOptions.getLanguageIn() == LanguageMode.ECMASCRIPT6_TYPED) {
+    if (compilerOptions.needsTranspilationFrom(FeatureSet.TYPESCRIPT)) {
       passes.add(makePassFactory("convertEs6TypedToEs6",
               new Es6TypedToEs6Converter(compiler)));
     }
-    if (compilerOptions.getLanguageIn().isEs6OrHigher()
-        && !compilerOptions.getLanguageOut().isEs6OrHigher()) {
+    if (compilerOptions.needsTranspilationFrom(FeatureSet.ES6)) {
+      TranspilationPasses.addEs2017Passes(passes);
+      TranspilationPasses.addEs2016Passes(passes);
       TranspilationPasses.addEs6EarlyPasses(passes);
       TranspilationPasses.addEs6LatePasses(passes);
       TranspilationPasses.addRewritePolyfillPass(passes);
     }
-    passes.add(makePassFactory("GlobalTypeInfo", compiler.getSymbolTable()));
+    passes.add(makePassFactory("GlobalTypeInfo", new GlobalTypeInfoCollector(compiler)));
     passes.add(makePassFactory("NewTypeInference", new NewTypeInference(compiler)));
 
-    PhaseOptimizer phaseopt = new PhaseOptimizer(compiler, null, null);
+    PhaseOptimizer phaseopt = new PhaseOptimizer(compiler, null);
     phaseopt.consume(passes);
-    phaseopt.process(externsRoot, astRoot);
+    phaseopt.process(compiler.getExternsRoot(), compiler.getJsRoot());
   }
 
   protected final void typeCheck(String js, DiagnosticType... warningKinds) {
-    typeCheck(DEFAULT_EXTERNS, js, warningKinds);
+    if (this.mode.checkNative()) {
+      compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT_2015);
+      typeCheck(DEFAULT_EXTERNS, js, warningKinds);
+    }
+    if (this.mode.checkTranspiled()) {
+      compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT5);
+      typeCheck(DEFAULT_EXTERNS, js, warningKinds);
+    }
   }
 
   protected final void typeCheckCustomExterns(
       String externs, String js, DiagnosticType... warningKinds) {
-    typeCheck(externs, js, warningKinds);
+    if (this.mode.checkNative()) {
+      compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT_2015);
+      typeCheck(externs, js, warningKinds);
+    }
+    if (this.mode.checkTranspiled()) {
+      compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT5);
+      typeCheck(externs, js, warningKinds);
+    }
   }
 
   private final void typeCheck(
@@ -287,14 +313,12 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
         warningKinds.length,
         warnings.length + errors.length);
     for (JSError warning : warnings) {
-      assertTrue(
-          "Wrong warning type\n" + errorMessage,
-          Arrays.asList(warningKinds).contains(warning.getType()));
+      assertWithMessage("Wrong warning type\n" + errorMessage)
+          .that(warningKinds).asList().contains(warning.getType());
     }
     for (JSError error : errors) {
-      assertTrue(
-          "Wrong warning type\n" + errorMessage,
-          Arrays.asList(warningKinds).contains(error.getType()));
+      assertWithMessage("Wrong warning type\n" + errorMessage)
+          .that(warningKinds).asList().contains(error.getType());
     }
   }
 
@@ -304,37 +328,25 @@ public abstract class NewTypeInferenceTestBase extends CompilerTypeTestCase {
   // warning per test.
   protected final void typeCheckMessageContents(
       String js, DiagnosticType warningKind, String warningMsg) {
+    if (this.mode.checkNative()) {
+      compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT_2015);
+      typeCheckMessageContentsHelper(js, warningKind, warningMsg);
+    }
+    if (this.mode.checkTranspiled()) {
+      compilerOptions.setLanguageOut(LanguageMode.ECMASCRIPT5);
+      typeCheckMessageContentsHelper(js, warningKind, warningMsg);
+    }
+  }
+
+  private final void typeCheckMessageContentsHelper(
+      String js, DiagnosticType warningKind, String warningMsg) {
     parseAndTypeCheck(DEFAULT_EXTERNS, js);
     JSError[] warnings = compiler.getWarnings();
     JSError[] errors = compiler.getErrors();
-    assertEquals(
-        "Expected no errors, but found:\n" + Arrays.toString(errors),
-        0, errors.length);
-    assertEquals(
-        "Expected one warning, but found:\n" + Arrays.toString(warnings),
-        1, warnings.length);
+    assertThat(errors).isEmpty();
+    assertThat(warnings).hasLength(1);
     JSError warning = warnings[0];
-    assertEquals(LINE_JOINER.join(
-        "Wrong warning type",
-        "Expected warning of type:",
-        "================================================================",
-        warningKind.toString(),
-        "================================================================",
-        "but found:",
-        "----------------------------------------------------------------",
-        warning.toString(),
-        "----------------------------------------------------------------\n"),
-        warningKind, warning.getType());
-    assertEquals(LINE_JOINER.join(
-        "Wrong warning message",
-        "Expected:",
-        "================================================================",
-        warningMsg,
-        "================================================================",
-        "but found:",
-        "----------------------------------------------------------------",
-        warning.description,
-        "----------------------------------------------------------------\n"),
-        warningMsg, warning.description);
+    assertError(warning).hasType(warningKind);
+    assertError(warning).hasMessage(warningMsg);
   }
 }

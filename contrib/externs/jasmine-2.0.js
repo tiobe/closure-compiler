@@ -186,6 +186,18 @@ jasmine.anything = function() {};
  */
 jasmine.objectContaining = function(sample) {};
 
+/**
+ * @param {!Array} sample
+ * @return {!jasmine.Matchers}
+ */
+jasmine.arrayContaining = function(sample) {};
+
+/**
+ * @param {string|!RegExp} sample
+ * @return {!jasmine.Matchers}
+ */
+jasmine.stringMatching = function(sample) {};
+
 
 
 /** @constructor */
@@ -431,19 +443,33 @@ function fdescribe(description, handler) {}
  */
 function expect(expectedValue) {}
 
+/** @typedef {function()} */
+var DoneFunc;
+
+/** @type {DoneFunc} */
+var doneFuncInst_;
+/** @type {function(?=)} */
+doneFuncInst_.fail;
 
 /**
  * @param {string} description
- * @param {function(this:jasmine.Spec, function())} handler
+ * @param {function(this:jasmine.Spec, DoneFunc)} handler
  */
 function it(description, handler) {}
 
 
 /**
  * @param {string} description
- * @param {function(this:jasmine.Spec, function())} handler
+ * @param {function(this:jasmine.Spec, DoneFunc)} handler
  */
 function fit(description, handler) {}
+
+
+/**
+ * @param {string} description
+ * @param {function(this:jasmine.Spec, function())} handler
+ */
+function pending(description, handler) {}
 
 
 /**
@@ -464,7 +490,7 @@ function xdescribe(description, handler) {}
 
 /**
  * @param {string} description
- * @param {function(this:jasmine.Spec, function()=)} handler
+ * @param {function(this:jasmine.Spec, DoneFunc)} handler
  */
 function xit(description, handler) {}
 

@@ -197,6 +197,32 @@ Number.prototype.toLocaleString = function(opt_locales, opt_options) {};
 
 
 /**
+ * Pads the end of the string so that it reaches the given length.
+ * NOTE: this is an ES2017 (ES8) extern.
+ *
+ * @param {number} targetLength The target length.
+ * @param {string=} opt_padString The string to pad with.
+ * @this {String|string}
+ * @return {string}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/padEnd
+ */
+String.prototype.padEnd = function(targetLength, opt_padString) {};
+
+/**
+ * Pads the start of the string so that it reaches the given length.
+ * NOTE: this is an ES2017 (ES8) extern.
+ *
+ * @param {number} targetLength The target length.
+ * @param {string=} opt_padString The string to pad with.
+ * @this {String|string}
+ * @return {string}
+ * @nosideeffects
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/padStart
+ */
+String.prototype.padStart = function(targetLength, opt_padString) {};
+
+/**
  * Repeats the string the given number of times.
  *
  * @param {number} count The number of times the string is repeated.
@@ -332,6 +358,26 @@ ArrayBufferView.prototype.byteLength;
 
 
 /**
+ * @param {number} length The length in bytes
+ * @constructor
+ * @throws {Error}
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
+ */
+function SharedArrayBuffer(length) {}
+
+/** @type {number} */
+SharedArrayBuffer.prototype.byteLength;
+
+/**
+ * @param {number} begin
+ * @param {number=} opt_end
+ * @return {!SharedArrayBuffer}
+ * @nosideeffects
+ */
+SharedArrayBuffer.prototype.slice = function(begin, opt_end) {};
+
+
+/**
  * @typedef {!ArrayBuffer|!ArrayBufferView}
  */
 var BufferSource;
@@ -340,6 +386,7 @@ var BufferSource;
 /**
  * @constructor
  * @implements {IArrayLike<number>}
+ * @implements {Iterable<number>}
  * @extends {ArrayBufferView}
  */
 function TypedArray() {};
@@ -423,6 +470,7 @@ TypedArray.prototype.findIndex = function(callback, opt_thisArg) {};
 TypedArray.prototype.forEach = function(callback, opt_thisArg) {};
 
 /**
+ * NOTE: this is an ES2016 (ES7) extern.
  * @param {number} searchElement
  * @param {number=} opt_fromIndex
  * @return {boolean}
@@ -577,10 +625,12 @@ TypedArray.prototype.toLocaleString = function() {};
  */
 TypedArray.prototype.toString = function() {};
 
+/** @override */
+TypedArray.prototype[Symbol.iterator] = function() {};
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -623,8 +673,8 @@ Int8Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -657,8 +707,8 @@ Uint8Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -700,8 +750,8 @@ var CanvasPixelArray;
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -734,8 +784,8 @@ Int16Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -768,8 +818,8 @@ Uint16Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -802,8 +852,8 @@ Int32Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -836,8 +886,8 @@ Uint32Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -870,8 +920,8 @@ Float32Array.of = function(var_args) {};
 
 
 /**
- * @param {number|ArrayBufferView|Array<number>|ArrayBuffer} length or array
- *     or buffer
+ * @param {number|ArrayBufferView|Array<number>|ArrayBuffer|SharedArrayBuffer}
+ *     length or array or buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_length
  * @constructor
@@ -904,7 +954,7 @@ Float64Array.of = function(var_args) {};
 
 
 /**
- * @param {ArrayBuffer} buffer
+ * @param {ArrayBuffer|SharedArrayBuffer} buffer
  * @param {number=} opt_byteOffset
  * @param {number=} opt_byteLength
  * @constructor
@@ -1220,32 +1270,32 @@ Array.prototype.entries;
 
 
 /**
- * @param {!function(this:S, T, number, !Array<T>): boolean} predicate
+ * @param {!function(this:S, T, number, !Array<T>): boolean} predicateFn
  * @param {S=} opt_this
  * @return {T|undefined}
  * @this {IArrayLike<T>|string}
  * @template T,S
  * @see http://www.ecma-international.org/ecma-262/6.0/#sec-array.prototype.find
  */
-Array.prototype.find = function(predicate, opt_this) {};
+Array.prototype.find = function(predicateFn, opt_this) {};
 
 
 /**
- * @param {!function(this:S, T, number, !Array<T>): boolean} predicate
+ * @param {!function(this:S, T, number, !Array<T>): boolean} predicateFn
  * @param {S=} opt_this
  * @return {number}
  * @this {IArrayLike<T>|string}
  * @template T,S
  * @see http://www.ecma-international.org/ecma-262/6.0/#sec-array.prototype.findindex
  */
-Array.prototype.findIndex = function(predicate, opt_this) {};
+Array.prototype.findIndex = function(predicateFn, opt_this) {};
 
 
 /**
  * @param {T} value
  * @param {number=} opt_begin
  * @param {number=} opt_end
- * @return {!IArrayLike<T>}
+ * @return {!Array<T>}
  * @this {!IArrayLike<T>|string}
  * @template T
  * @see http://www.ecma-international.org/ecma-262/6.0/#sec-array.prototype.fill
@@ -1259,12 +1309,13 @@ Array.prototype.fill = function(value, opt_begin, opt_end) {};
  * @param {number=} opt_end
  * @see http://www.ecma-international.org/ecma-262/6.0/#sec-array.prototype.copywithin
  * @template T
- * @return {!IArrayLike<T>}
+ * @return {!Array<T>}
  */
 Array.prototype.copyWithin = function(target, start, opt_end) {};
 
 
 /**
+ * NOTE: this is an ES2016 (ES7) extern.
  * @param {T} searchElement
  * @param {number=} opt_fromIndex
  * @return {boolean}
@@ -1377,6 +1428,7 @@ Object.assign = function(target, var_args) {};
 
 /**
  * TODO(dbeam): find a better place for ES2017 externs like this one.
+ * NOTE: this is an ES2017 (ES8) extern.
  * @param {!Object<T>} obj
  * @return {!Array<T>} values
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/values
@@ -1386,6 +1438,7 @@ Object.assign = function(target, var_args) {};
 Object.values = function(obj) {};
 
 /**
+ * NOTE: this is an ES2017 (ES8) extern.
  * @param {!Object<T>} obj
  * @return {!Array<!Array<(string|T)>>} entries
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/entries
@@ -1393,6 +1446,16 @@ Object.values = function(obj) {};
  * @template T
  */
 Object.entries = function(obj) {};
+
+/**
+ * NOTE: this is an ES2017 (ES8) extern.
+ * @param {!Object} obj
+ * @return {!Object<!ObjectPropertyDescriptor>} descriptors
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/getOwnPropertyDescriptors
+ * @throws {Error}
+ * @template T
+ */
+Object.getOwnPropertyDescriptors = function(obj) {};
 
 
 
@@ -1403,29 +1466,29 @@ Object.entries = function(obj) {};
 var Reflect = {};
 
 /**
- * @param {function(this: THIS, ...?): RESULT} target
+ * @param {function(this: THIS, ...?): RESULT} targetFn
  * @param {THIS} thisArg
- * @param {!Array} argList
+ * @param {!Array<?>} argList
  * @return {RESULT}
  * @template THIS, RESULT
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/apply
  */
-Reflect.apply = function(target, thisArg, argList) {};
+Reflect.apply = function(targetFn, thisArg, argList) {};
 
 /**
- * @param {function(new: ?, ...?)} target
- * @param {!Array} argList
- * @param {function(new: TARGET, ...?)=} opt_newTarget
+ * @param {function(new: ?, ...?)} targetConstructorFn
+ * @param {!Array<?>} argList
+ * @param {function(new: TARGET, ...?)=} opt_newTargetConstructorFn
  * @return {TARGET}
  * @template TARGET
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/construct
  */
-Reflect.construct = function(target, argList, opt_newTarget) {};
+Reflect.construct = function(targetConstructorFn, argList, opt_newTargetConstructorFn) {};
 
 /**
  * @param {!Object} target
  * @param {string} propertyKey
- * @param {!Object} attributes
+ * @param {!ObjectPropertyDescriptor} attributes
  * @return {boolean}
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/defineProperty
  */
@@ -1515,3 +1578,106 @@ Reflect.set = function(target, propertyKey, value, opt_receiver) {};
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect/setPrototypeOf
  */
 Reflect.setPrototypeOf = function(target, proto) {};
+
+
+/**
+ * @const
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics
+ */
+var Atomics = {};
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.add = function(typedArray, index, value) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.and = function(typedArray, index, value) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} expectedValue
+ * @param {number} replacementValue
+ * @return {number}
+ */
+Atomics.compareExchange = function(typedArray, index, expectedValue,
+    replacementValue) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.exchange = function(typedArray, index, value) {}
+
+/**
+ * @param {number} size
+ * @return {boolean}
+ */
+Atomics.isLockFree = function(size) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @return {number}
+ */
+Atomics.load = function(typedArray, index) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.or = function(typedArray, index, value) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.store = function(typedArray, index, value) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.sub = function(typedArray, index, value) {}
+
+/**
+ * @param {!Int32Array} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @param {number=} timeout
+ * @return {String}
+ */
+Atomics.wait = function(typedArray, index, value, timeout) {}
+
+/**
+ * @param {!Int32Array} typedArray
+ * @param {number} index
+ * @param {number} count
+ * @return {number}
+ */
+Atomics.wake = function(typedArray, index, count) {}
+
+/**
+ * @param {!TypedArray} typedArray
+ * @param {number} index
+ * @param {number} value
+ * @return {number}
+ */
+Atomics.xor = function(typedArray, index, value) {}

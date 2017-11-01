@@ -16,6 +16,10 @@
 
 package com.google.javascript.jscomp.newtypes;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -48,12 +52,12 @@ public final class EnumType extends Namespace implements TypeWithProperties {
   // The type of the enum's properties, a subtype of the previous field.
   private JSType enumPropType;
   // All properties have the same type, so we only need a set, not a map.
-  private ImmutableSet<String> props;
+  private final ImmutableSet<String> props;
 
   private EnumType(JSTypes commonTypes, String name, Node defSite,
       JSTypeExpression typeExpr, Collection<String> props) {
     super(commonTypes, name, defSite);
-    Preconditions.checkNotNull(typeExpr);
+    checkNotNull(typeExpr);
     this.state = State.NOT_RESOLVED;
     // typeExpr is non-null iff the enum is not resolved
     this.typeExpr = typeExpr;
@@ -74,18 +78,18 @@ public final class EnumType extends Namespace implements TypeWithProperties {
   }
 
   public JSType getEnumeratedType() {
-    Preconditions.checkState(this.state == State.RESOLVED);
+    checkState(this.state == State.RESOLVED);
     return declaredType;
   }
 
   public JSType getPropType() {
-    Preconditions.checkState(this.state == State.RESOLVED);
+    checkState(this.state == State.RESOLVED);
     return enumPropType;
   }
 
   // Returns null iff there is a type cycle
   public JSTypeExpression getTypeExpr() {
-    Preconditions.checkState(this.state != State.RESOLVED);
+    checkState(this.state != State.RESOLVED);
     if (this.state == State.DURING_RESOLUTION) {
       return null;
     }
@@ -94,12 +98,13 @@ public final class EnumType extends Namespace implements TypeWithProperties {
   }
 
   public JSTypeExpression getTypeExprForErrorReporting() {
-    Preconditions.checkState(this.state == State.DURING_RESOLUTION);
+    checkState(this.state == State.DURING_RESOLUTION);
     return typeExpr;
   }
 
   void resolveEnum(JSType t) {
-    Preconditions.checkNotNull(t);
+    checkNotNull(t);
+    checkArgument(!t.isUnion());
     if (this.state == State.RESOLVED) {
       return;
     }
@@ -119,8 +124,8 @@ public final class EnumType extends Namespace implements TypeWithProperties {
    */
   @Override
   protected JSType computeJSType() {
-    Preconditions.checkNotNull(enumPropType);
-    Preconditions.checkState(this.namespaceType == null);
+    checkNotNull(enumPropType);
+    checkState(this.namespaceType == null);
     PersistentMap<String, Property> propMap = PersistentMap.create();
     for (String s : this.props) {
       propMap = propMap.with(s,
@@ -228,5 +233,10 @@ public final class EnumType extends Namespace implements TypeWithProperties {
       }
     }
     return true;
+  }
+
+  @Override
+  public Collection<JSType> getSubtypesWithProperty(QualifiedName qname) {
+    return declaredType.getSubtypesWithProperty(qname);
   }
 }

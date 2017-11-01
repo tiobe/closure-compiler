@@ -16,8 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.annotations.GwtIncompatible;
-import com.google.common.base.Preconditions;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -42,7 +43,6 @@ final class ReplaceMessages extends JsMessageVisitor {
   ReplaceMessages(AbstractCompiler compiler, MessageBundle bundle,
       boolean checkDuplicatedMessages, JsMessage.Style style,
       boolean strictReplacement) {
-
     super(compiler, checkDuplicatedMessages, style, bundle.idGenerator());
 
     this.bundle = bundle;
@@ -60,6 +60,10 @@ final class ReplaceMessages extends JsMessageVisitor {
         isSecondMessageTranslated && !isFirstMessageTranslated ?
         callNode.getChildAtIndex(2) : callNode.getSecondChild();
     callNode.replaceWith(replacementNode.detach());
+    Node changeScope = NodeUtil.getEnclosingChangeScopeRoot(replacementNode);
+    if (changeScope != null) {
+      compiler.reportChangeToChangeScope(changeScope);
+    }
   }
 
   @Override
@@ -96,7 +100,7 @@ final class ReplaceMessages extends JsMessageVisitor {
     if (newValue != msgNode) {
       newValue.useSourceInfoIfMissingFromForTree(msgNode);
       msgNode.replaceWith(newValue);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(newValue);
     }
   }
 
@@ -124,7 +128,7 @@ final class ReplaceMessages extends JsMessageVisitor {
         String newString = message.toString();
         if (!origValueNode.getString().equals(newString)) {
           origValueNode.setString(newString);
-          compiler.reportCodeChange();
+          compiler.reportChangeToEnclosingScope(origValueNode);
         }
         return origValueNode;
       case ADD:
@@ -186,7 +190,7 @@ final class ReplaceMessages extends JsMessageVisitor {
     if (newBlockNode.checkTreeEquals(oldBlockNode) != null) {
       newBlockNode.useSourceInfoIfMissingFromForTree(oldBlockNode);
       functionNode.replaceChild(oldBlockNode, newBlockNode);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(newBlockNode);
     }
   }
 
@@ -197,7 +201,7 @@ final class ReplaceMessages extends JsMessageVisitor {
    * combine the other two types.
    *
    * @param partsIterator  an iterator over message parts
-   * @param argListNode  an LP node whose children are valid placeholder names
+   * @param argListNode  a PARAM_LIST node whose children are valid placeholder names
    * @return the root of the constructed parse tree
    *
    * @throws MalformedException if {@code partsIterator} contains a
@@ -313,7 +317,7 @@ final class ReplaceMessages extends JsMessageVisitor {
    */
   private static Node constructStringExprNode(
       Iterator<CharSequence> parts, Node objLitNode, Node refNode) throws MalformedException {
-    Preconditions.checkNotNull(refNode);
+    checkNotNull(refNode);
 
     CharSequence part = parts.next();
     Node partNode = null;

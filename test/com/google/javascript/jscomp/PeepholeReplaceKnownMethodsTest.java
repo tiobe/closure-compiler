@@ -22,21 +22,34 @@ import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
  * Unit tests for {#link {@link PeepholeReplaceKnownMethods}
  *
  */
-public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
+public final class PeepholeReplaceKnownMethodsTest extends TypeICompilerTestCase {
 
   private boolean late = true;
   private boolean useTypes = true;
 
-  @Override
-  public void setUp() throws Exception {
-    super.setUp();
-    late = true;
-    useTypes = true;
+  public PeepholeReplaceKnownMethodsTest() {
+    super(MINIMAL_EXTERNS + LINE_JOINER.join(
+        // NOTE: these are defined as variadic to avoid wrong-argument-count warnings in NTI,
+        // which enables testing that the pass does not touch calls with wrong argument count.
+        "/** @type {function(this: string, ...*): string} */ String.prototype.substring;",
+        "/** @type {function(this: string, ...*): string} */ String.prototype.substr;",
+        "/** @type {function(this: string, ...*): string} */ String.prototype.slice;",
+        "/** @type {function(this: string, ...*): string} */ String.prototype.charAt;",
+        "/** @type {function(this: Array, ...*): !Array} */ Array.prototype.slice;"));
   }
 
   @Override
-  public CompilerPass getProcessor(final Compiler compiler) {
-    return new PeepholeOptimizationsPass(compiler, new PeepholeReplaceKnownMethods(late, useTypes));
+  protected void setUp() throws Exception {
+    super.setUp();
+    late = true;
+    useTypes = true;
+    this.mode = TypeInferenceMode.NEITHER;
+  }
+
+  @Override
+  protected CompilerPass getProcessor(final Compiler compiler) {
+    return new PeepholeOptimizationsPass(
+        compiler, getName(), new PeepholeReplaceKnownMethods(late, useTypes));
   }
 
   public void testStringIndexOf() {
@@ -69,6 +82,11 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcdef'.indexOf(/b./)");
     foldSame("x = 'abcdef'.indexOf({a:2})");
     foldSame("x = 'abcdef'.indexOf([1,2])");
+
+    // Template Strings
+    foldSame("x = `abcdef`.indexOf('b')");
+    foldSame("x = `Hello ${name}`.indexOf('a')");
+    foldSame("x = tag `Hello ${name}`.indexOf('a')");
   }
 
   public void testStringJoinAddSparse() {
@@ -104,6 +122,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     // Only optimize if it's a size win.
     fold("x = ['a', '5', 'c'].join('a very very very long chain')",
          "x = [\"a\",\"5\",\"c\"].join(\"a very very very long chain\")");
+
+    // Template strings
+    foldSame("x = [`a`, `b`, `c`].join(``)");
+    foldSame("x = [`a`, `b`, `c`].join('')");
 
     // TODO(user): Its possible to fold this better.
     foldSame("x = ['', foo].join('-')");
@@ -144,6 +166,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcde'.substr(1, -2)");
     foldSame("x = 'abcde'.substr(1, 2, 3)");
     foldSame("x = 'a'.substr(0, 2)");
+
+    // Template strings
+    foldSame("x = `abcdef`.substr(0,2)");
+    foldSame("x = `abc ${xyz} def`.substr(0,2)");
   }
 
   public void testFoldStringSubstring() {
@@ -158,6 +184,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcde'.substring(1, 2, 3)");
     foldSame("x = 'abcde'.substring(2, 0)");
     foldSame("x = 'a'.substring(0, 2)");
+
+    // Template strings
+    foldSame("x = `abcdef`.substring(0,2)");
+    foldSame("x = `abcdef ${abc}`.substring(0,2)");
   }
 
   public void testFoldStringSlice() {
@@ -172,6 +202,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcde'.slice(1, 2, 3)");
     foldSame("x = 'abcde'.slice(2, 0)");
     foldSame("x = 'a'.slice(0, 2)");
+
+    // Template strings
+    foldSame("x = `abcdef`.slice(0,2)");
+    foldSame("x = `abcdef ${abc}`.slice(0,2)");
   }
 
   public void testFoldStringCharAt() {
@@ -189,6 +223,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcde'.charAt(true)");  // or x = 'b'
     fold("x = '\\ud834\udd1e'.charAt(0)", "x = '\\ud834'");
     fold("x = '\\ud834\udd1e'.charAt(1)", "x = '\\udd1e'");
+
+    // Template strings
+    foldSame("x = `abcdef`.charAt(0)");
+    foldSame("x = `abcdef ${abc}`.charAt(0)");
   }
 
   public void testFoldStringCharCodeAt() {
@@ -206,6 +244,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcde'.charCodeAt(true)");  // or x = 98
     fold("x = '\\ud834\udd1e'.charCodeAt(0)", "x = 55348");
     fold("x = '\\ud834\udd1e'.charCodeAt(1)", "x = 56606");
+
+    // Template strings
+    foldSame("x = `abcdef`.charCodeAt(0)");
+    foldSame("x = `abcdef ${abc}`.charCodeAt(0)");
   }
 
   public void testFoldStringSplit() {
@@ -236,6 +278,10 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("x = 'abcde'.split(/ /)");
     foldSame("x = 'abcde'.split(' ', -1)");
 
+    // Template strings
+    foldSame("x = `abcdef`.split()");
+    foldSame("x = `abcdef ${abc}`.split()");
+
     late = true;
     foldSame("x = 'a b c d e'.split(' ')");
   }
@@ -246,30 +292,65 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSame("var x = [x,y].join();");
     foldSame("var x = [x,y,z].join();");
 
-    foldSame("shape['matrix'] = [\n" +
-            "    Number(headingCos2).toFixed(4),\n" +
-            "    Number(-headingSin2).toFixed(4),\n" +
-            "    Number(headingSin2 * yScale).toFixed(4),\n" +
-            "    Number(headingCos2 * yScale).toFixed(4),\n" +
-            "    0,\n" +
-            "    0\n" +
-            "  ].join()");
+    foldSame(
+        LINE_JOINER.join(
+            "shape['matrix'] = [",
+            "    Number(headingCos2).toFixed(4),",
+            "    Number(-headingSin2).toFixed(4),",
+            "    Number(headingSin2 * yScale).toFixed(4),",
+            "    Number(headingCos2 * yScale).toFixed(4),",
+            "    0,",
+            "    0",
+            "  ].join()"));
+  }
+
+  public void testJoinSpread1() {
+    foldSame("var x = [...foo].join('');");
+    foldSame("var x = [...someMap.keys()].join('');");
+    foldSame("var x = [foo, ...bar].join('');");
+    foldSame("var x = [...foo, bar].join('');");
+    foldSame("var x = [...foo, 'bar'].join('');");
+    foldSame("var x = ['1', ...'2', '3'].join('');");
+    foldSame("var x = ['1', ...['2'], '3'].join('');");
+  }
+
+  public void testJoinSpread2() {
+    fold("var x = [...foo].join(',');", "var x = [...foo].join();");
+    fold("var x = [...someMap.keys()].join(',');", "var x = [...someMap.keys()].join();");
+    fold("var x = [foo, ...bar].join(',');", "var x = [foo, ...bar].join();");
+    fold("var x = [...foo, bar].join(',');", "var x = [...foo, bar].join();");
+    fold("var x = [...foo, 'bar'].join(',');", "var x = [...foo, 'bar'].join();");
+    fold("var x = ['1', ...'2', '3'].join(',');", "var x = ['1', ...'2', '3'].join();");
+    fold("var x = ['1', ...['2'], '3'].join(',');", "var x = ['1', ...['2'], '3'].join();");
   }
 
   public void testToUpper() {
     fold("'a'.toUpperCase()", "'A'");
     fold("'A'.toUpperCase()", "'A'");
     fold("'aBcDe'.toUpperCase()", "'ABCDE'");
+
+    foldSame("`abc`.toUpperCase()");
+    foldSame("`a ${bc}`.toUpperCase()");
   }
 
   public void testToLower() {
     fold("'A'.toLowerCase()", "'a'");
     fold("'a'.toLowerCase()", "'a'");
     fold("'aBcDe'.toLowerCase()", "'abcde'");
+
+    foldSame("`ABC`.toLowerCase()");
+    foldSame("`A ${BC}`.toUpperCase()");
   }
 
   public void testFoldParseNumbers() {
     enableNormalize();
+
+    // Template Strings
+    foldSame("x = parseInt(`123`)");
+    foldSame("x = parseInt(` 123`)");
+    foldSame("x = parseInt(`12 ${a}`)");
+    foldSame("x = parseFloat(`1.23`)");
+
     setAcceptedLanguage(LanguageMode.ECMASCRIPT5);
 
     fold("x = parseInt('123')", "x = 123");
@@ -319,6 +400,7 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
   }
 
   public void testFoldParseOctalNumbers() {
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT5);
     enableNormalize();
     setExpectParseWarningsThisTest();
 
@@ -326,8 +408,9 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
   }
 
   public void testReplaceWithCharAt() {
-    enableTypeCheck();
+    this.mode = TypeInferenceMode.BOTH;
     foldStringTyped("a.substring(0, 1)", "a.charAt(0)");
+    foldStringTyped("a.substring(-4, -3)", "a.charAt(-4)");
     foldSameStringTyped("a.substring(i, j + 1)");
     foldSameStringTyped("a.substring(i, i + 1)");
     foldSameStringTyped("a.substring(1, 2, 3)");
@@ -338,6 +421,7 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSameStringTyped("a.substring(2, 1)");
     foldSameStringTyped("a.substring(3, 1)");
 
+    foldStringTyped("a.slice(4, 5)", "a.charAt(4)");
     foldStringTyped("var /** number */ i; a.slice(0, 1)", "var /** number */ i; a.charAt(0)");
     foldSameStringTyped("a.slice(i, j + 1)");
     foldSameStringTyped("a.slice(i, i + 1)");
@@ -351,9 +435,9 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
 
     foldStringTyped("a.substr(0, 1)", "a.charAt(0)");
     foldStringTyped("a.substr(2, 1)", "a.charAt(2)");
-    foldStringTyped("a.substr(-2, 1)", "a.charAt(-2)");
-    foldStringTyped("a.substr(bar(), 1)", "a.charAt(bar())");
-    foldStringTyped("''.substr(bar(), 1)", "''.charAt(bar())");
+    foldSameStringTyped("a.substr(-2, 1)");
+    foldSameStringTyped("a.substr(bar(), 1)");
+    foldSameStringTyped("''.substr(bar(), 1)");
     foldSameStringTyped("a.substr(2, 1, 3)");
     foldSameStringTyped("a.substr(1, 2, 3)");
     foldSameStringTyped("a.substr()");
@@ -361,13 +445,22 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
     foldSameStringTyped("a.substr(1, 2)");
     foldSameStringTyped("a.substr(1, 2, 3)");
 
-    foldSame("var /** ? */ a; a.substring(0, 1)");
+    this.mode = TypeInferenceMode.OTI_ONLY;
+    // TODO(sdh): NTI currently infers that a is a string, allowing the peephole pass
+    // to rewrite substring to charAt.  We need to figure out if this is desirable.
+    foldSame("function f(/** ? */ a) { a.substring(0, 1); }");
+    foldSame("function f(/** ? */ a) { a.substr(0, 1); }");
+    foldSame(LINE_JOINER.join(
+        "/** @constructor */ function A() {};",
+        "A.prototype.substring = function() {};",
+        "function f(/** ? */ a) { a.substring(0, 1); }"));
+    this.mode = TypeInferenceMode.BOTH;
+    foldSame("function f(/** ? */ a) { a.slice(0, 1); }");
 
     useTypes = false;
     foldSameStringTyped("a.substring(0, 1)");
     foldSameStringTyped("a.substr(0, 1)");
     foldSameStringTyped("''.substring(i, i + 1)");
-    disableTypeCheck();
   }
 
   private void foldSame(String js) {
@@ -383,6 +476,8 @@ public final class PeepholeReplaceKnownMethodsTest extends CompilerTestCase {
   }
 
   private void foldStringTyped(String js, String expected) {
-    test("var /** string */ a;" + js, "var /** string */ a;" + expected);
+    test(
+        "function f(/** string */ a) {" + js + "}",
+        "function f(/** string */ a) {" + expected + "}");
   }
 }

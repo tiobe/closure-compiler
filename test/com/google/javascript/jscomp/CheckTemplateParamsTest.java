@@ -16,19 +16,21 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.javascript.rhino.Node;
+import static com.google.javascript.jscomp.RhinoErrorReporter.TOO_MANY_TEMPLATE_PARAMS;
+import static com.google.javascript.jscomp.newtypes.JSTypeCreatorFromJSDoc.INVALID_GENERICS_INSTANTIATION;
 
-import java.io.IOException;
+import com.google.javascript.rhino.Node;
 
 /**
  * Tests for the "Too many template parameters" warning. Ideally this would be part of
  * JSDocInfoParserTest but that test is set up to handle warnings reported from JSDocInfoParser,
  * (as strings) not ones from JSTypeRegistry (as DiagnosticTypes).
  */
-public final class CheckTemplateParamsTest extends CompilerTestCase {
+public final class CheckTemplateParamsTest extends TypeICompilerTestCase {
   @Override
-  public void setUp() throws IOException {
-    enableTypeCheck();
+  protected void setUp() throws Exception {
+    super.setUp();
+    this.mode = TypeInferenceMode.BOTH;
   }
 
   @Override
@@ -40,6 +42,7 @@ public final class CheckTemplateParamsTest extends CompilerTestCase {
   protected CompilerPass getProcessor(Compiler compiler) {
     // No-op. We're just checking for warnings during JSDoc parsing.
     return new CompilerPass() {
+      @Override
       public void process(Node externs, Node root) {}
     };
   }
@@ -47,7 +50,7 @@ public final class CheckTemplateParamsTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions(CompilerOptions options) {
     super.getOptions(options);
-    options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
+    options.setWarningLevel(DiagnosticGroups.ANALYZER_CHECKS, CheckLevel.WARNING);
 
     return options;
   }
@@ -55,33 +58,37 @@ public final class CheckTemplateParamsTest extends CompilerTestCase {
   public void testArray() {
     testSame("/** @type {!Array} */ var x;");
     testSame("/** @type {!Array<string>} */ var x;");
-    testWarning("/** @type {!Array<string, number>} */ var x;",
-        RhinoErrorReporter.TOO_MANY_TEMPLATE_PARAMS);
+    test(
+        srcs("/** @type {!Array<string, number>} */ var x;"),
+        warningOtiNti(TOO_MANY_TEMPLATE_PARAMS, INVALID_GENERICS_INSTANTIATION));
   }
 
   public void testObject() {
     testSame("/** @type {!Object} */ var x;");
     testSame("/** @type {!Object<number>} */ var x;");
     testSame("/** @type {!Object<string, number>} */ var x;");
-    testWarning("/** @type {!Object<string, number, boolean>} */ var x;",
-        RhinoErrorReporter.TOO_MANY_TEMPLATE_PARAMS);
+    test(
+        srcs("/** @type {!Object<string, number, boolean>} */ var x;"),
+        warningOtiNti(TOO_MANY_TEMPLATE_PARAMS, INVALID_GENERICS_INSTANTIATION));
   }
 
   public void testClass() {
     testSame("/** @constructor */ function SomeClass() {}; /** @type {!SomeClass} */ var x;");
-    testWarning(
-        "/** @constructor */ function SomeClass() {}; /** @type {!SomeClass<string>} */ var x;",
-        RhinoErrorReporter.TOO_MANY_TEMPLATE_PARAMS);
+    test(
+        srcs(lines(
+            "/** @constructor */ function SomeClass() {};",
+            "/** @type {!SomeClass<string>} */ var x;")),
+        warningOtiNti(TOO_MANY_TEMPLATE_PARAMS, INVALID_GENERICS_INSTANTIATION));
 
-    testSame(
-        "/** @constructor @template T */ function SomeClass() {};"
-            + "/** @type {!SomeClass<string>} */ var x;");
+    testSame(lines(
+        "/** @constructor @template T */ function SomeClass() {};",
+        "/** @type {!SomeClass<string>} */ var x;"));
 
-    testWarning(
-        "/** @constructor @template T */ function SomeClass() {};"
-            + "/** @type {!SomeClass<number, string>} */ var x;",
-        RhinoErrorReporter.TOO_MANY_TEMPLATE_PARAMS);
-
+    test(
+        srcs(lines(
+            "/** @constructor @template T */ function SomeClass() {};",
+            "/** @type {!SomeClass<number, string>} */ var x;")),
+        warningOtiNti(TOO_MANY_TEMPLATE_PARAMS, INVALID_GENERICS_INSTANTIATION));
   }
 
 }

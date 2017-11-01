@@ -16,32 +16,34 @@
 
 /**
  * @fileoverview Provides methods to polyfill native objects.
+ * @suppress {reportUnknownTypes}
  */
-'require base';
+'require util/defines';
 
 
 /**
  * Polyfill for Object.defineProperty() method:
  * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/defineProperty
  *
- * Obviously we can't support getters and setters in ES3, so we
- * throw a TypeError in that case.  We also refuse to define
- * properties on Array.prototype and Object.prototype, since we
- * can't make them non-enumerable and this messes up peoples' for
+ * Refuses to define properties on Array.prototype and Object.prototype,
+ * since we can't make them non-enumerable and this messes up peoples' for
  * loops.  Beyond this, we simply assign values and not worry
  * about enumerability or writeability.
  * @param {?} target
  * @param {string} property
  * @param {?} descriptor
+ * @suppress {reportUnknownTypes}
  */
 $jscomp.defineProperty =
-    typeof Object.defineProperties == 'function' ?
+    $jscomp.ASSUME_ES5 || typeof Object.defineProperties == 'function' ?
     Object.defineProperty :
     function(target, property, descriptor) {
       descriptor = /** @type {!ObjectPropertyDescriptor} */ (descriptor);
-      if (descriptor.get || descriptor.set) {
-        throw new TypeError('ES3 does not support getters and setters.');
-      }
+      // NOTE: This is currently never called with a descriptor outside
+      // the control of the compiler.  If we ever decide to polyfill either
+      // Object.defineProperty or Reflect.defineProperty for ES3, we should
+      // explicitly check for `get` or `set` on the descriptor and throw a
+      // TypeError, since it's impossible to properly polyfill it.
       if (target == Array.prototype || target == Object.prototype) return;
       target[property] = descriptor.value;
     };

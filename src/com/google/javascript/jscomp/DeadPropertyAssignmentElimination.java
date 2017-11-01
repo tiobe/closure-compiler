@@ -16,13 +16,15 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.PeekingIterator;
 import com.google.common.collect.Sets;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
-import com.google.javascript.jscomp.NodeTraversal.FunctionCallback;
+import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.HashMap;
@@ -35,7 +37,8 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
- * An optimization pass that finds and removes dead property assignments within functions.
+ * An optimization pass that finds and removes dead property assignments within functions and
+ * classes.
  *
  * <p>This pass does not currently use the control-flow graph. It makes the following assumptions:
  * <ul>
@@ -85,7 +88,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     NodeTraversal.traverseChangedFunctions(compiler, new FunctionVisitor(blacklistedPropNames));
   }
 
-  private static class FunctionVisitor implements FunctionCallback {
+  private static class FunctionVisitor implements ChangeScopeRootCallback {
 
     /**
      * A set of properties names that are potentially unsafe to remove duplicate writes to.
@@ -97,18 +100,18 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     }
 
     @Override
-    public void enterFunction(AbstractCompiler compiler, Node n) {
-      if (!n.isFunction()) {
+    public void enterChangeScopeRoot(AbstractCompiler compiler, Node root) {
+      if (!root.isFunction()) {
         return;
       }
 
-      Node body = NodeUtil.getFunctionBody(n);
+      Node body = NodeUtil.getFunctionBody(root);
       if (!body.hasChildren() || NodeUtil.containsFunction(body)) {
         return;
       }
 
       FindCandidateAssignmentTraversal traversal =
-          new FindCandidateAssignmentTraversal(blacklistedPropNames, NodeUtil.isConstructor(n));
+          new FindCandidateAssignmentTraversal(blacklistedPropNames, NodeUtil.isConstructor(root));
       NodeTraversal.traverseEs6(compiler, body, traversal);
 
       // Any candidate property assignment can have a write removed if that write is never read
@@ -126,7 +129,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
             Node assignNode = lhs.getParent();
             rhs.detach();
             assignNode.replaceWith(rhs);
-            compiler.reportCodeChange();
+            compiler.reportChangeToEnclosingScope(rhs);
           }
         }
       }
@@ -181,7 +184,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     }
 
     void addWrite(Node lhs) {
-      Preconditions.checkArgument(lhs.isQualifiedName());
+      checkArgument(lhs.isQualifiedName());
       writes.addLast(new PropertyWrite(lhs));
     }
   }
@@ -192,7 +195,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     private final String qualifiedName;
 
     PropertyWrite(Node assignedAt) {
-      Preconditions.checkArgument(assignedAt.isQualifiedName());
+      checkArgument(assignedAt.isQualifiedName());
       this.assignedAt = assignedAt;
       this.qualifiedName = assignedAt.getQualifiedName();
     }
@@ -294,13 +297,13 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
 
       // Mark all properties as read when leaving a block since we haven't proven that the block
       // will execute.
-      if (n.isBlock()) {
+      if (n.isNormalBlock()) {
         visitBlock(n);
       }
     }
 
     private void visitBlock(Node blockNode) {
-      Preconditions.checkArgument(blockNode.isBlock());
+      checkArgument(blockNode.isNormalBlock());
 
       // We don't do flow analysis yet so we're going to assume everything written up to this
       // block is read.
@@ -363,7 +366,6 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
         case GETPROP:
           // Handle potential getters/setters.
           if (n.isGetProp()
-              && n.getLastChild().isString()
               && blacklistedPropNames.contains(n.getLastChild().getString())) {
             // We treat getters/setters as if they were a call, thus we mark all properties as read.
             markAllPropsRead();
@@ -399,7 +401,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
 
         case THIS:
         case NAME:
-          Property nameProp = Preconditions.checkNotNull(getOrCreateProperty(n));
+          Property nameProp = checkNotNull(getOrCreateProperty(n));
           nameProp.markLastWriteRead();
           if (!parent.isGetProp()) {
             nameProp.markChildrenRead();
@@ -408,6 +410,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
 
         case THROW:
         case FOR:
+        case FOR_IN:
         case SWITCH:
           // TODO(kevinoconnor): Switch/for statements need special consideration since they may
           // execute out of order.
@@ -491,7 +494,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
         if (!n.getChildAtIndex(2).isString() && !n.getLastChild().isObjectLit()) {
           unknownGetterSetterPresent = true;
         } else if (!n.getLastChild().isObjectLit()) {
-          // If know the property name but not what it's being assigned to then we need to blackist
+          // If know the property name but not what it's being assigned to then we need to blacklist
           // the property name.
           propNames.add(n.getChildAtIndex(2).getString());
         }
@@ -521,7 +524,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
             unknownGetterSetterPresent = true;
           }
         } else if (grandparent.isStringKey()
-            && NodeUtil.isObjectDefinePropertiesDefinition(grandparent.getParent().getParent())) {
+            && NodeUtil.isObjectDefinePropertiesDefinition(grandparent.getGrandparent())) {
           // Handle Object.defineProperties(obj, {propName: { ... }}).
           propNames.add(grandparent.getString());
         }
@@ -544,8 +547,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
       }
 
       Node objectLit = keyNode.getParent();
-      return objectLit.getParent() != null
-          && NodeUtil.isObjectDefinePropertiesDefinition(objectLit.getParent())
+      return NodeUtil.isObjectDefinePropertiesDefinition(objectLit.getParent())
           && objectLit.getParent().getLastChild() == objectLit
           && !keyNode.getFirstChild().isObjectLit();
     }

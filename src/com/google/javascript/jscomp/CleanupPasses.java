@@ -33,8 +33,6 @@ import java.util.List;
  */
 class CleanupPasses extends PassConfig {
 
-  private State state;
-
   public CleanupPasses(CompilerOptions options) {
     super(options);
   }
@@ -49,17 +47,12 @@ class CleanupPasses extends PassConfig {
   }
 
   @Override
-  protected State getIntermediateState() {
-    return state;
-  }
-
-  @Override
   protected List<PassFactory> getOptimizations() {
     return ImmutableList.of();
   }
 
   final PassFactory fieldCleanupPassFactory =
-      new HotSwapPassFactory("FieldCleanupPassFactory", false) {
+      new HotSwapPassFactory("FieldCleanupPassFactory") {
         @Override
         protected HotSwapCompilerPass create(
             AbstractCompiler compiler) {
@@ -68,7 +61,7 @@ class CleanupPasses extends PassConfig {
       };
 
   final PassFactory scopeCleanupPassFactory =
-      new HotSwapPassFactory("ScopeCleanupPassFactory", false) {
+      new HotSwapPassFactory("ScopeCleanupPassFactory") {
         @Override
         protected HotSwapCompilerPass create(
             AbstractCompiler compiler) {
@@ -77,7 +70,7 @@ class CleanupPasses extends PassConfig {
       };
 
   final PassFactory globalVarRefCleanupPassFactory =
-      new HotSwapPassFactory("GlobalVarRefCleanupPassFactory", false) {
+      new HotSwapPassFactory("GlobalVarRefCleanupPassFactory") {
         @Override
         protected HotSwapCompilerPass create(
             AbstractCompiler compiler) {
@@ -87,10 +80,10 @@ class CleanupPasses extends PassConfig {
 
   /**
    * A CleanupPass implementation that will remove stored scopes from the
-   * MemoizedScopeCreator of the compiler instance for a the hot swapped script.
+   * MemoizedTypedScopeCreator of the compiler instance for a the hot swapped script.
    * <p>
    * This pass will also clear out Source Nodes of Function Types declared on
-   * Vars tracked by MemoizedScopeCreator
+   * Vars tracked by MemoizedTypedScopeCreator
    */
   static class MemoizedScopeCleanupPass implements HotSwapCompilerPass {
 
@@ -103,8 +96,8 @@ class CleanupPasses extends PassConfig {
     @Override
     public void hotSwapScript(Node scriptRoot, Node originalRoot) {
       ScopeCreator creator = compiler.getTypedScopeCreator();
-      if (creator instanceof MemoizedScopeCreator) {
-        MemoizedScopeCreator scopeCreator = (MemoizedScopeCreator) creator;
+      if (creator instanceof MemoizedTypedScopeCreator) {
+        MemoizedTypedScopeCreator scopeCreator = (MemoizedTypedScopeCreator) creator;
         String newSrc = scriptRoot.getSourceFileName();
         for (TypedVar var : scopeCreator.getAllSymbols()) {
           TypeI type = var.getType();

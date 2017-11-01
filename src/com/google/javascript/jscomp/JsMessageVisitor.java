@@ -100,12 +100,12 @@ public abstract class JsMessageVisitor extends AbstractPostOrderCallback
    * Later we replace the message names with ids constructed as a hash of the
    * message content.
    * <p>
-   * <link href="http://code.google.com/p/closure-templates/">
-   * Soy</link> generates messages with names MSG_UNNAMED_<NUMBER> . This
+   * <a href="https://github.com/google/closure-templates">
+   * Soy</a> generates messages with names MSG_UNNAMED.* . This
    * pattern recognizes such messages.
    */
   private static final Pattern MSG_UNNAMED_PATTERN =
-      Pattern.compile("MSG_UNNAMED_\\d+");
+      Pattern.compile("MSG_UNNAMED.*");
 
   private static final Pattern CAMELCASE_PATTERN =
       Pattern.compile("[a-z][a-zA-Z\\d]*[_\\d]*");
@@ -547,6 +547,13 @@ public abstract class JsMessageVisitor extends AbstractPostOrderCallback
     switch (node.getToken()) {
       case STRING:
         return node.getString();
+      case TEMPLATELIT:
+        if (node.hasOneChild()) {
+          return node.getFirstChild().getString();
+        } else {
+          throw new MalformedException(
+              "Template literals with substitutions are not allowed.", node);
+        }
       case ADD:
         StringBuilder sb = new StringBuilder();
         for (Node child : node.children()) {
@@ -629,7 +636,7 @@ public abstract class JsMessageVisitor extends AbstractPostOrderCallback
           break;
         default:
           throw new MalformedException(
-              "NAME, LP, or BLOCK node expected; found: " + node.getToken(), fnChild);
+              "NAME, PARAM_LIST, or BLOCK node expected; found: " + node, fnChild);
       }
     }
   }
@@ -814,27 +821,32 @@ public abstract class JsMessageVisitor extends AbstractPostOrderCallback
   private void visitFallbackFunctionCall(NodeTraversal t, Node call) {
     // Check to make sure the function call looks like:
     // goog.getMsgWithFallback(MSG_1, MSG_2);
-    if (call.getChildCount() != 3 ||
-        !call.getChildAtIndex(1).isName() ||
-        !call.getChildAtIndex(2).isName()) {
+    if (call.getChildCount() != 3
+        || !call.getSecondChild().isName()
+        || !call.getLastChild().isName()) {
       compiler.report(t.makeError(call, BAD_FALLBACK_SYNTAX));
       return;
     }
 
-    Node firstArg = call.getChildAtIndex(1);
-    JsMessage firstMessage = getTrackedMessage(t, firstArg.getString());
+    Node firstArg = call.getSecondChild();
+    String name = firstArg.getOriginalName();
+    if (name == null) {
+      name = firstArg.getString();
+    }
+    JsMessage firstMessage = getTrackedMessage(t, name);
     if (firstMessage == null) {
-      compiler.report(
-          t.makeError(firstArg, FALLBACK_ARG_ERROR, firstArg.getString()));
+      compiler.report(t.makeError(firstArg, FALLBACK_ARG_ERROR, name));
       return;
     }
 
     Node secondArg = firstArg.getNext();
-    JsMessage secondMessage = getTrackedMessage(
-        t, call.getChildAtIndex(2).getString());
+    name = secondArg.getOriginalName();
+    if (name == null) {
+      name = secondArg.getString();
+    }
+    JsMessage secondMessage = getTrackedMessage(t, name);
     if (secondMessage == null) {
-      compiler.report(
-          t.makeError(secondArg, FALLBACK_ARG_ERROR, secondArg.getString()));
+      compiler.report(t.makeError(secondArg, FALLBACK_ARG_ERROR, name));
       return;
     }
 
@@ -922,8 +934,7 @@ public abstract class JsMessageVisitor extends AbstractPostOrderCallback
       return CaseFormat.UPPER_UNDERSCORE.to(CaseFormat.LOWER_CAMEL, input);
     } else {
       return CaseFormat.UPPER_UNDERSCORE.to(CaseFormat.LOWER_CAMEL,
-          input.substring(0, suffixStart)) +
-          input.substring(suffixStart);
+          input.substring(0, suffixStart)) + input.substring(suffixStart);
     }
   }
 

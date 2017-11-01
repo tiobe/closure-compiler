@@ -1636,7 +1636,8 @@ angular.$location.prototype.protocol = function() {};
 angular.$location.prototype.replace = function() {};
 
 /**
- * @param {(string|Object.<string, string>)=} opt_search
+ * @param {(string|Object.<string, string>|Object.<string, Array.<string>>)=}
+ *     opt_search
  * @param {?(string|Array.<string>|boolean|number)=} opt_paramValue
  * @return {(!Object|!angular.$location)}
  */
@@ -1962,8 +1963,16 @@ angular.FormController.prototype.$valid;
  */
 angular.$parse;
 
+/** @const */
+angular.parse = {};
+
 /**
  * @typedef {function((!angular.Scope|!Object), Object=):*}
+ */
+angular.parse.Expression;
+
+/**
+ * @typedef {angular.parse.Expression}
  */
 angular.$parse.Expression;
 

@@ -44,7 +44,6 @@ import static com.google.javascript.rhino.jstype.TernaryValue.TRUE;
 
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
-
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
@@ -103,11 +102,15 @@ public class EnumType extends PrototypeObjectType {
     return defineDeclaredProperty(name, elementsType, definingNode);
   }
 
-  /**
-   * Gets the elements' type.
-   */
+  /** Gets the elements' type, which is a subtype of the enumerated type. */
   public EnumElementType getElementsType() {
     return elementsType;
+  }
+
+  /** Gets the enumerated type. */
+  @Override
+  public JSType getEnumeratedTypeOfEnumObject() {
+    return elementsType.getPrimitiveType();
   }
 
   @Override
@@ -133,8 +136,8 @@ public class EnumType extends PrototypeObjectType {
   }
 
   @Override
-  String toStringHelper(boolean forAnnotations) {
-    return forAnnotations ? "Object" : getReferenceName();
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
+    return sb.append(forAnnotations ? "!Object" : getReferenceName());
   }
 
   @Override

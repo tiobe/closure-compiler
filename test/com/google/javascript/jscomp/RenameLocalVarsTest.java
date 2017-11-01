@@ -43,8 +43,10 @@ public final class RenameLocalVarsTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() {
+  protected void setUp() throws Exception {
+    super.setUp();
     nameGenerator = null;
+    disableValidateAstChangeMarking();
   }
 
   public void testRenameSimple() {
@@ -80,18 +82,17 @@ public final class RenameLocalVarsTest extends CompilerTestCase {
     String externs = "var bar; function alert() {}";
     test(externs,
         "function foo(bar) { alert(bar); } foo(3)",
-        "function foo(a) { alert(a); } foo(3)", null, null);
+        "function foo(a) { alert(a); } foo(3)");
   }
 
   public void testRenameWithExterns2() {
     test("var a; function alert() {}",
         "function foo(bar) { alert(a);alert(bar); } foo(3);",
-        "function foo(b) { alert(a);alert(b); } foo(3);",
-        null, null);
+        "function foo(b) { alert(a);alert(b); } foo(3);");
   }
 
   public void testDoNotRenameExportedName() {
-    test("_foo()", "_foo()");
+    testSame("_foo()");
   }
 
   public void testRenameWithNameOverlap() {

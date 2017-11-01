@@ -16,9 +16,9 @@
 
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.Es6ToEs3Converter.CANNOT_CONVERT;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.javascript.jscomp.Es6ToEs3Util.CANNOT_CONVERT;
 
-import com.google.common.base.Preconditions;
 import com.google.javascript.jscomp.ExpressionDecomposer.DecompositionType;
 import com.google.javascript.jscomp.deps.ModuleNames;
 import com.google.javascript.rhino.IR;
@@ -42,9 +42,9 @@ import java.util.Set;
  *   foo($jscomp$classdecl$var0);
  * </code>
  * <p>
- * This must be done before {@link Es6ToEs3Converter}, because that pass only handles classes
+ * This must be done before {@link Es6RewriteClass}, because that pass only handles classes
  * that are declarations or simple assignments.
- * @see Es6ToEs3Converter#visitClass(Node, Node)
+ * @see Es6RewriteClass#visitClass(NodeTraversal, Node, Node)
  */
 public final class Es6ExtractClasses
     extends NodeTraversal.AbstractPostOrderCallback implements HotSwapCompilerPass {
@@ -96,7 +96,7 @@ public final class Es6ExtractClasses
     private Deque<ClassDescription> classStack = new LinkedList<>();
 
     private boolean needsInnerNameRewriting(Node classNode, Node parent) {
-      Preconditions.checkArgument(classNode.isClass());
+      checkArgument(classNode.isClass());
       return classNode.getFirstChild().isName() && parent.isName();
     }
 
@@ -115,7 +115,7 @@ public final class Es6ExtractClasses
           if (needsInnerNameRewriting(n, parent)) {
             classStack.removeFirst();
             n.replaceChild(n.getFirstChild(), IR.empty().useSourceInfoFrom(n.getFirstChild()));
-            compiler.reportCodeChange();
+            compiler.reportChangeToEnclosingScope(n);
           }
           break;
         case NAME:
@@ -131,8 +131,9 @@ public final class Es6ExtractClasses
         if (nameNode != klass.nameNode && nameNode.matchesQualifiedName(klass.nameNode)) {
           Var var = t.getScope().getVar(nameNode.getString());
           if (var != null && var.getNameNode() == klass.nameNode) {
-            parent.replaceChild(nameNode, IR.name(klass.outerName).useSourceInfoFrom(nameNode));
-            compiler.reportCodeChange();
+            Node newNameNode = IR.name(klass.outerName).useSourceInfoFrom(nameNode);
+            parent.replaceChild(nameNode, newNameNode);
+            compiler.reportChangeToEnclosingScope(newNameNode);
             return;
           }
         }
@@ -143,8 +144,11 @@ public final class Es6ExtractClasses
   private boolean shouldExtractClass(Node classNode, Node parent) {
     boolean isAnonymous = classNode.getFirstChild().isEmpty();
     if (NodeUtil.isClassDeclaration(classNode)
-        || isAnonymous && parent.isName()
-        || (isAnonymous && parent.isAssign() && parent.getParent().isExprResult())) {
+        || (isAnonymous && parent.isName())
+        || (isAnonymous
+            && parent.isAssign()
+            && parent.getFirstChild().isQualifiedName()
+            && parent.getParent().isExprResult())) {
       // No need to extract. Handled directly by Es6ToEs3Converter.ClassDeclarationMetadata#create.
       return false;
     }
@@ -175,6 +179,6 @@ public final class Es6ExtractClasses
         .useSourceInfoIfMissingFromForTree(classNode);
     classDeclaration.setJSDocInfo(JSDocInfoBuilder.maybeCopyFrom(info).build());
     statement.getParent().addChildBefore(classDeclaration, statement);
-    compiler.reportCodeChange();
+    compiler.reportChangeToEnclosingScope(classDeclaration);
   }
 }

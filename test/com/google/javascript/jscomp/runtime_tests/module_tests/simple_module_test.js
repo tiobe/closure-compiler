@@ -20,8 +20,9 @@
  * @author moz@google.com (Michael Zhou)
  */
 
-import {foo as f} from './module_test_resources/simpleExport';
-import {bar as b, alpha, beta} from './module_test_resources/simpleExport';
+import {foo as f} from './module_test_resources/simpleExport.js';
+import {bar as b, alpha, beta} from './module_test_resources/simpleExport.js';
+import {a} from './module_test_resources/+subdir/module_es6.js';
 
 goog.require('goog.testing.asserts');
 
@@ -29,4 +30,5 @@ function testBasic() {
   assertEquals(2, f + 1);
   assertEquals(3, f + b);
   assertEquals(12, alpha * beta);
+  assertEquals(1, a);
 }

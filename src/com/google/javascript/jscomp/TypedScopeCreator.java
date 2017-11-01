@@ -16,6 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.javascript.jscomp.TypeCheck.MULTIPLE_VAR_DEF;
 import static com.google.javascript.rhino.jstype.JSTypeNative.ARRAY_FUNCTION_TYPE;
 import static com.google.javascript.rhino.jstype.JSTypeNative.ARRAY_TYPE;
@@ -61,6 +64,7 @@ import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.NominalTypeBuilder;
 import com.google.javascript.rhino.Token;
 import com.google.javascript.rhino.jstype.EnumType;
 import com.google.javascript.rhino.jstype.FunctionParamBuilder;
@@ -68,6 +72,7 @@ import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import com.google.javascript.rhino.jstype.NominalTypeBuilderOti;
 import com.google.javascript.rhino.jstype.ObjectType;
 import com.google.javascript.rhino.jstype.Property;
 import com.google.javascript.rhino.jstype.TemplateType;
@@ -151,7 +156,7 @@ final class TypedScopeCreator implements ScopeCreator {
   private final TypeValidator validator;
   private final CodingConvention codingConvention;
   private final JSTypeRegistry typeRegistry;
-  private final List<ObjectType> delegateProxyPrototypes = new ArrayList<>();
+  private final List<FunctionType> delegateProxyCtors = new ArrayList<>();
   private final Map<String, String> delegateCallingConventions = new HashMap<>();
   private final boolean runsAfterNTI;
 
@@ -171,8 +176,8 @@ final class TypedScopeCreator implements ScopeCreator {
     final JSType type;
 
     DeferredSetType(Node node, JSType type) {
-      Preconditions.checkNotNull(node);
-      Preconditions.checkNotNull(type);
+      checkNotNull(node);
+      checkNotNull(type);
       this.node = node;
       this.type = type;
 
@@ -214,7 +219,7 @@ final class TypedScopeCreator implements ScopeCreator {
    */
   @Override
   public TypedScope createScope(Node root, Scope parent) {
-    Preconditions.checkArgument(parent == null || parent instanceof TypedScope);
+    checkArgument(parent == null || parent instanceof TypedScope);
     TypedScope typedParent = (TypedScope) parent;
     // Constructing the global scope is very different than constructing
     // inner scopes, because only global scopes can contain named classes that
@@ -251,9 +256,13 @@ final class TypedScopeCreator implements ScopeCreator {
     scopeBuilder.resolveStubDeclarations();
 
     if (typedParent == null) {
+      List<NominalTypeBuilder> delegateProxies = new ArrayList<>();
+      for (FunctionType delegateProxyCtor : delegateProxyCtors) {
+        delegateProxies.add(
+            new NominalTypeBuilderOti(delegateProxyCtor, delegateProxyCtor.getInstanceType()));
+      }
       codingConvention.defineDelegateProxyPrototypeProperties(
-          typeRegistry, newScope, delegateProxyPrototypes,
-          delegateCallingConventions);
+          typeRegistry, delegateProxies, delegateCallingConventions);
     }
 
     newScope.setTypeResolver(scopeBuilder);
@@ -270,12 +279,12 @@ final class TypedScopeCreator implements ScopeCreator {
   void patchGlobalScope(TypedScope globalScope, Node scriptRoot) {
     // Preconditions: This is supposed to be called only on (named) SCRIPT nodes
     // and a global typed scope should have been generated already.
-    Preconditions.checkState(scriptRoot.isScript());
-    Preconditions.checkNotNull(globalScope);
-    Preconditions.checkState(globalScope.isGlobal());
+    checkState(scriptRoot.isScript());
+    checkNotNull(globalScope);
+    checkState(globalScope.isGlobal());
 
     String scriptName = NodeUtil.getSourceName(scriptRoot);
-    Preconditions.checkNotNull(scriptName);
+    checkNotNull(scriptName);
     for (Node node : ImmutableList.copyOf(functionAnalysisResults.keySet())) {
       if (scriptName.equals(NodeUtil.getSourceName(node))) {
         functionAnalysisResults.remove(node);
@@ -440,7 +449,7 @@ final class TypedScopeCreator implements ScopeCreator {
      * literals, the type on the @lends annotation resolves correctly.
      *
      * For more information, see
-     * http://code.google.com/p/closure-compiler/issues/detail?id=314
+     * http://blickly.github.io/closure-compiler-issues/#314
      */
     private List<Node> lentObjectLiterals = null;
 
@@ -493,7 +502,7 @@ final class TypedScopeCreator implements ScopeCreator {
       inputId = t.getInputId();
       if (n.isFunction() ||
           n.isScript()) {
-        Preconditions.checkNotNull(inputId);
+        checkNotNull(inputId);
         sourceName = NodeUtil.getSourceName(n);
       }
 
@@ -527,7 +536,6 @@ final class TypedScopeCreator implements ScopeCreator {
       switch (n.getToken()) {
         case CALL:
           checkForClassDefiningCalls(n);
-          checkForCallingConventionDefiningCalls(n, delegateCallingConventions);
           break;
 
         case FUNCTION:
@@ -560,6 +568,7 @@ final class TypedScopeCreator implements ScopeCreator {
           break;
 
         case GETPROP:
+          checkForCallingConventionDefinitions(n);
           // Handle stubbed properties.
           if (parent.isExprResult() &&
               n.isQualifiedName()) {
@@ -763,8 +772,8 @@ final class TypedScopeCreator implements ScopeCreator {
      * The node should have a source name and be of the specified type.
      */
     void assertDefinitionNode(Node n, Token type) {
-      Preconditions.checkState(sourceName != null);
-      Preconditions.checkState(n.getToken() == type, n);
+      checkState(sourceName != null);
+      checkState(n.getToken() == type, n);
     }
 
     /**
@@ -1078,8 +1087,8 @@ final class TypedScopeCreator implements ScopeCreator {
      * @param info The {@link JSDocInfo} attached to the enum definition.
      */
     private EnumType createEnumTypeFromNodes(Node rValue, String name, JSDocInfo info) {
-      Preconditions.checkNotNull(info);
-      Preconditions.checkState(info.hasEnumParameterType());
+      checkNotNull(info);
+      checkState(info.hasEnumParameterType());
 
       EnumType enumType = null;
       if (rValue != null && rValue.isQualifiedName()) {
@@ -1139,21 +1148,15 @@ final class TypedScopeCreator implements ScopeCreator {
      *     {@code inferred} is {@code true}.
      */
     void defineSlot(Node n, Node parent, JSType type, boolean inferred) {
-      Preconditions.checkArgument(inferred || type != null);
+      checkArgument(inferred || type != null);
 
       // Only allow declarations of NAMEs and qualified names.
       // Object literal keys will have to compute their names themselves.
       if (n.isName()) {
-        Preconditions.checkArgument(
-            parent.isFunction() ||
-            parent.isVar() ||
-            parent.isParamList() ||
-            parent.isCatch());
+        checkArgument(
+            parent.isFunction() || parent.isVar() || parent.isParamList() || parent.isCatch());
       } else {
-        Preconditions.checkArgument(
-            n.isGetProp() &&
-            (parent.isAssign() ||
-             parent.isExprResult()));
+        checkArgument(n.isGetProp() && (parent.isAssign() || parent.isExprResult()));
       }
       defineSlot(n, parent, n.getQualifiedName(), type, inferred);
     }
@@ -1171,7 +1174,7 @@ final class TypedScopeCreator implements ScopeCreator {
      */
     void defineSlot(Node n, Node parent, String variableName,
         JSType type, boolean inferred) {
-      Preconditions.checkArgument(!variableName.isEmpty());
+      checkArgument(!variableName.isEmpty());
 
       boolean isGlobalVar = n.isName() && scope.isGlobal();
       boolean shouldDeclareOnGlobalThis =
@@ -1473,12 +1476,10 @@ final class TypedScopeCreator implements ScopeCreator {
     }
 
     /**
-     * Look for calls that set a delegate method's calling convention.
+     * Look for expressions that set a delegate method's calling convention.
      */
-    private void checkForCallingConventionDefiningCalls(
-        Node n, Map<String, String> delegateCallingConventions) {
-      codingConvention.checkForCallingConventionDefiningCalls(n,
-          delegateCallingConventions);
+    private void checkForCallingConventionDefinitions(Node n) {
+      codingConvention.checkForCallingConventionDefinitions(n, delegateCallingConventions);
     }
 
     /**
@@ -1502,7 +1503,9 @@ final class TypedScopeCreator implements ScopeCreator {
           FunctionType subCtor = subClass.getConstructor();
           if (superCtor != null && subCtor != null) {
             codingConvention.applySubclassRelationship(
-                superCtor, subCtor, relationship.type);
+                new NominalTypeBuilderOti(superCtor, superClass),
+                new NominalTypeBuilderOti(subCtor, subClass),
+                relationship.type);
           }
         }
       }
@@ -1517,7 +1520,8 @@ final class TypedScopeCreator implements ScopeCreator {
 
           if (functionType != null) {
             FunctionType getterType = typeRegistry.createFunctionType(objectType);
-            codingConvention.applySingletonGetterOld(functionType, getterType, objectType);
+            codingConvention.applySingletonGetter(
+                new NominalTypeBuilderOti(functionType, objectType), getterType);
           }
         }
       }
@@ -1577,18 +1581,21 @@ final class TypedScopeCreator implements ScopeCreator {
 
           FunctionType delegateProxy =
               typeRegistry.createConstructorType(
-                  delegateBaseObject.getReferenceName() + DELEGATE_PROXY_SUFFIX,
-                  null,
-                  null,
-                  null,
-                  null,
-                  false);
+                  delegateBaseObject.getReferenceName() + DELEGATE_PROXY_SUFFIX /* name */,
+                  null /* source */,
+                  null /* parameters */,
+                  null /* returnType */,
+                  null /* templateKeys */,
+                  false /* isAbstract */);
           delegateProxy.setPrototypeBasedOn(delegateBaseObject);
 
           codingConvention.applyDelegateRelationship(
-              delegateSuperObject, delegateBaseObject, delegatorObject,
-              delegateProxy, findDelegate);
-          delegateProxyPrototypes.add(delegateProxy.getPrototype());
+              new NominalTypeBuilderOti(delegateSuperCtor, delegateSuperObject),
+              new NominalTypeBuilderOti(delegateBaseCtor, delegateBaseObject),
+              new NominalTypeBuilderOti(delegatorCtor, delegatorObject),
+              (ObjectType) delegateProxy.getTypeOfThis(),
+              findDelegate);
+          delegateProxyCtors.add(delegateProxy);
         }
       }
     }
@@ -1609,7 +1616,7 @@ final class TypedScopeCreator implements ScopeCreator {
       String ownerName = ownerNode.getQualifiedName();
       String qName = n.getQualifiedName();
       String propName = n.getLastChild().getString();
-      Preconditions.checkArgument(qName != null && ownerName != null);
+      checkArgument(qName != null && ownerName != null);
 
       // Precedence of type information on GETPROPs:
       // 1) @type annotation / @enum annotation
@@ -1694,20 +1701,6 @@ final class TypedScopeCreator implements ScopeCreator {
         // If the property is already declared, the error will be
         // caught when we try to declare it in the current scope.
         defineSlot(n, parent, valueType, inferred);
-      } else if (rhsValue != null && rhsValue.isTrue()) {
-        // We declare these for delegate proxy method properties.
-        ObjectType ownerType = getObjectSlot(ownerName);
-        FunctionType ownerFnType = JSType.toMaybeFunctionType(ownerType);
-        if (ownerFnType != null) {
-          JSType ownerTypeOfThis = ownerFnType.getTypeOfThis();
-          String delegateName = codingConvention.getDelegateSuperclassName();
-          JSType delegateType = delegateName == null ?
-              null : typeRegistry.getType(delegateName);
-          if (delegateType != null &&
-              ownerTypeOfThis.isSubtype(delegateType)) {
-            defineSlot(n, parent, getNativeType(BOOLEAN_TYPE), true);
-          }
-        }
       }
     }
 
@@ -1963,14 +1956,14 @@ final class TypedScopeCreator implements ScopeCreator {
       if (contents != null) {
         for (String varName : contents.getEscapedVarNames()) {
           TypedVar v = scope.getVar(varName);
-          Preconditions.checkState(v.getScope() == scope);
+          checkState(v.getScope() == scope);
           v.markEscaped();
         }
 
         for (Multiset.Entry<String> entry :
                  contents.getAssignedNameCounts().entrySet()) {
           TypedVar v = scope.getVar(entry.getElement());
-          Preconditions.checkState(v.getScope() == scope);
+          checkState(v.getScope() == scope);
           if (entry.getCount() == 1) {
             v.markAssignedExactlyOnce();
           }
@@ -2076,7 +2069,7 @@ final class TypedScopeCreator implements ScopeCreator {
       Node astParameters = functionNode.getSecondChild();
       Node iifeArgumentNode = null;
 
-      if (NodeUtil.isCallOrNewTarget(functionNode)) {
+      if (NodeUtil.isInvocationTarget(functionNode)) {
         iifeArgumentNode = functionNode.getNext();
       }
 
@@ -2089,7 +2082,7 @@ final class TypedScopeCreator implements ScopeCreator {
           for (Node astParameter : astParameters.children()) {
             JSType paramType = jsDocParameter == null ?
                 unknownType : jsDocParameter.getJSType();
-            boolean inferred = paramType == null || paramType == unknownType;
+            boolean inferred = paramType == null || paramType.equals(unknownType);
 
             if (iifeArgumentNode != null && inferred) {
               String argumentName = iifeArgumentNode.getQualifiedName();

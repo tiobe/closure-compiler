@@ -15,6 +15,7 @@
  */
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
 
 /**
@@ -22,18 +23,17 @@ import com.google.javascript.rhino.Node;
  *
  * @author johnlenz@google.com (John Lenz)
  */
-public final class CreateSyntheticBlocksTest extends Es6CompilerTestCase {
+public final class CreateSyntheticBlocksTest extends CompilerTestCase {
   private static final String START_MARKER = "startMarker";
   private static final String END_MARKER = "endMarker";
 
-  public CreateSyntheticBlocksTest() {
-    // Can't use compare as a tree because of the added synthetic blocks.
-    super("", false);
-  }
-
   @Override
-  public void setUp() {
-    super.enableLineNumberCheck(false);
+  protected void setUp() throws Exception {
+    super.setUp();
+    // Can't use compare as a tree because of the added synthetic blocks.
+    disableCompareAsTree();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
+    disableLineNumberCheck();
   }
 
   @Override
@@ -41,13 +41,14 @@ public final class CreateSyntheticBlocksTest extends Es6CompilerTestCase {
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node js) {
-        new CreateSyntheticBlocks(compiler, START_MARKER, END_MARKER).process(
-            externs, js);
+        new CreateSyntheticBlocks(compiler, START_MARKER, END_MARKER).process(externs, js);
         new MinimizeExitPoints(compiler).asCompilerPass().process(externs, js);
-        new PeepholeOptimizationsPass(compiler,
-            new PeepholeRemoveDeadCode(),
-            new PeepholeMinimizeConditions(true /* late */, false /* useTypes */),
-            new PeepholeFoldConstants(true, false))
+        new PeepholeOptimizationsPass(
+                compiler,
+                getName(),
+                new PeepholeRemoveDeadCode(),
+                new PeepholeMinimizeConditions(true /* late */),
+                new PeepholeFoldConstants(true, false /* useTypes */))
             .process(externs, js);
         new MinimizeExitPoints(compiler).asCompilerPass().process(externs, js);
         new Denormalize(compiler).process(externs, js);
@@ -124,11 +125,11 @@ public final class CreateSyntheticBlocksTest extends Es6CompilerTestCase {
   }
 
   public void testArrowFunction() {
-    testSameEs6("var y=()=>{startMarker();x();endMarker()}");
-    testErrorEs6(
+    testSame("var y=()=>{startMarker();x();endMarker()}");
+    testError(
         "var y=()=>{startMarker();x();};endMarker()",
         CreateSyntheticBlocks.UNMATCHED_END_MARKER);
-    testErrorEs6(
+    testError(
         "var y=()=>startMarker();",
         CreateSyntheticBlocks.INVALID_MARKER_USAGE);
   }

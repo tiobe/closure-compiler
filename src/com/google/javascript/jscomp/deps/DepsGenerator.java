@@ -32,17 +32,17 @@ import com.google.javascript.jscomp.JsAst;
 import com.google.javascript.jscomp.LazyParsedDependencyInfo;
 import com.google.javascript.jscomp.SourceFile;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -59,8 +59,7 @@ public class DepsGenerator {
     DO_NOT_DUPLICATE
   }
 
-  private static Logger logger =
-      Logger.getLogger(DepsGenerator.class.getName());
+  private static final Logger logger = Logger.getLogger(DepsGenerator.class.getName());
 
   // See the Flags in MakeJsDeps for descriptions of these.
   private final Collection<SourceFile> srcs;
@@ -121,8 +120,9 @@ public class DepsGenerator {
   public String computeDependencyCalls() throws IOException {
     // Build a map of closure-relative path -> DepInfo.
     Map<String, DependencyInfo> depsFiles = parseDepsFiles();
-    logger.fine("preparsedFiles: " + depsFiles);
-
+    if (logger.isLoggable(Level.FINE)) {
+      logger.fine("preparsedFiles: " + depsFiles);
+    }
     // Find all goog.provides & goog.requires in src files
     Map<String, DependencyInfo> jsFiles = parseSources(depsFiles.keySet());
 
@@ -184,7 +184,7 @@ public class DepsGenerator {
       Iterable<DependencyInfo> parsedFileDependencies) {
     // Create a map of namespace -> file providing it.
     // Also report any duplicate provides.
-    Map<String, DependencyInfo> providesMap = new HashMap<>();
+    Map<String, DependencyInfo> providesMap = new LinkedHashMap<>();
     addToProvideMap(preparsedFileDepedencies, providesMap);
     addToProvideMap(parsedFileDependencies, providesMap);
     // For each require in the parsed sources:
@@ -281,7 +281,7 @@ public class DepsGenerator {
    */
   private Map<String, DependencyInfo> parseDepsFiles() throws IOException {
     DepsFileParser depsParser = createDepsFileParser();
-    Map<String, DependencyInfo> depsFiles = new HashMap<>();
+    Map<String, DependencyInfo> depsFiles = new LinkedHashMap<>();
     for (SourceFile file : deps) {
       if (!shouldSkipDepsFile(file)) {
         List<DependencyInfo>
@@ -301,8 +301,7 @@ public class DepsGenerator {
     // into srcs.  So we need to scan all the src files for addDependency
     // calls as well.
     for (SourceFile src : srcs) {
-      if ((new File(src.getName())).exists() &&
-          !shouldSkipDepsFile(src)) {
+      if (!shouldSkipDepsFile(src)) {
         List<DependencyInfo> srcInfos =
             depsParser.parseFileReader(src.getName(), src.getCodeReader());
         for (DependencyInfo info : srcInfos) {
@@ -324,7 +323,7 @@ public class DepsGenerator {
    */
   private Map<String, DependencyInfo> parseSources(
       Set<String> preparsedFiles) throws IOException {
-    Map<String, DependencyInfo> parsedFiles = new HashMap<>();
+    Map<String, DependencyInfo> parsedFiles = new LinkedHashMap<>();
     JsFileParser jsParser = new JsFileParser(errorManager).setModuleLoader(loader);
     Compiler compiler = new Compiler();
     compiler.init(
@@ -334,8 +333,9 @@ public class DepsGenerator {
       String closureRelativePath =
           PathUtil.makeRelative(
               closurePathAbs, PathUtil.makeAbsolute(file.getName()));
-      logger.fine("Closure-relative path: " + closureRelativePath);
-
+      if (logger.isLoggable(Level.FINE)) {
+        logger.fine("Closure-relative path: " + closureRelativePath);
+      }
       if (InclusionStrategy.WHEN_IN_SRCS == mergeStrategy ||
           !preparsedFiles.contains(closureRelativePath)) {
         DependencyInfo depInfo =
@@ -393,10 +393,8 @@ public class DepsGenerator {
     return path;
   }
 
-  /**
-   * Writes goog.addDependency() lines for each DependencyInfo in depInfos.
-   */
-  private void writeDepInfos(PrintStream out, Collection<DependencyInfo> depInfos)
+  /** Writes goog.addDependency() lines for each DependencyInfo in depInfos. */
+  private static void writeDepInfos(PrintStream out, Collection<DependencyInfo> depInfos)
       throws IOException {
     // Print dependencies.
     // Lines look like this:

@@ -16,8 +16,10 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.CharMatcher;
-import com.google.common.base.Preconditions;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
@@ -153,7 +155,7 @@ class ProcessTweaks implements CompilerPass {
     }
 
     boolean isCorrectRegisterFunction(TweakFunction registerFunction) {
-      Preconditions.checkNotNull(registerFunction);
+      checkNotNull(registerFunction);
       return this.registerFunction == registerFunction;
     }
 
@@ -206,15 +208,10 @@ class ProcessTweaks implements CompilerPass {
     CollectTweaksResult result = collectTweaks(root);
     applyCompilerDefaultValueOverrides(result.tweakInfos);
 
-    boolean changed = false;
-
     if (stripTweaks) {
-      changed = stripAllCalls(result.tweakInfos);
+      stripAllCalls(result.tweakInfos);
     } else if (!compilerDefaultValueOverrides.isEmpty()) {
-      changed = replaceGetCompilerOverridesCalls(result.getOverridesCalls);
-    }
-    if (changed) {
-      compiler.reportCodeChange();
+      replaceGetCompilerOverridesCalls(result.getOverridesCalls);
     }
   }
 
@@ -222,21 +219,21 @@ class ProcessTweaks implements CompilerPass {
    * Passes the compiler default value overrides to the JS by replacing calls
    * to goog.tweak.getCompilerOverrids_ with a map of tweak ID->default value;
    */
-  private boolean replaceGetCompilerOverridesCalls(
+  private void replaceGetCompilerOverridesCalls(
       List<TweakFunctionCall> calls) {
     for (TweakFunctionCall call : calls) {
       Node callNode = call.callNode;
       Node objNode = createCompilerDefaultValueOverridesVarNode(callNode);
       callNode.replaceWith(objNode);
+      compiler.reportChangeToEnclosingScope(objNode);
     }
-    return !calls.isEmpty();
   }
 
   /**
    * Removes all CALL nodes in the given TweakInfos, replacing calls to getter
    * functions with the tweak's default value.
    */
-  private boolean stripAllCalls(Map<String, TweakInfo> tweakInfos) {
+  private void stripAllCalls(Map<String, TweakInfo> tweakInfos) {
     for (TweakInfo tweakInfo : tweakInfos.values()) {
       boolean isRegistered = tweakInfo.isRegistered();
       for (TweakFunctionCall functionCall : tweakInfo.functionCalls) {
@@ -255,14 +252,15 @@ class ProcessTweaks implements CompilerPass {
             newValue = registerFunction.createDefaultValueNode();
           }
           parent.replaceChild(callNode, newValue);
+          compiler.reportChangeToEnclosingScope(parent);
         } else {
           Node voidZeroNode = IR.voidNode(IR.number(0).srcref(callNode))
               .srcref(callNode);
           parent.replaceChild(callNode, voidZeroNode);
+          compiler.reportChangeToEnclosingScope(parent);
         }
       }
     }
-    return !tweakInfos.isEmpty();
   }
 
   /**
@@ -541,7 +539,7 @@ class ProcessTweaks implements CompilerPass {
     }
 
     Node getDefaultValueNode() {
-      Preconditions.checkState(isRegistered());
+      checkState(isRegistered());
       // Use calls to goog.tweak.overrideDefaultValue() first.
       if (defaultValueNode != null) {
         return defaultValueNode;

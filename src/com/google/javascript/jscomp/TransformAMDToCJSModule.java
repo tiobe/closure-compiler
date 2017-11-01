@@ -19,7 +19,6 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-
 import java.util.Collections;
 import java.util.Iterator;
 
@@ -105,7 +104,7 @@ public final class TransformAMDToCJSModule implements CompilerPass {
         } else if (defineArity == 1) {
           callback = n.getSecondChild();
           if (callback.isObjectLit()) {
-            handleDefineObjectLiteral(parent, callback, script);
+            handleDefineObjectLiteral(t, parent, callback, script);
             return;
           }
         } else if (defineArity == 2) {
@@ -129,7 +128,7 @@ public final class TransformAMDToCJSModule implements CompilerPass {
             new DefineCallbackReturnCallback());
 
         moveCallbackContentToTopLevel(parent, script, callbackBlock);
-        compiler.reportCodeChange();
+        t.reportCodeChange();
       }
     }
 
@@ -137,16 +136,16 @@ public final class TransformAMDToCJSModule implements CompilerPass {
      * When define is called with an object literal, assign it to module.exports and
      * we're done.
      */
-    private void handleDefineObjectLiteral(Node parent, Node onlyExport,
+    private void handleDefineObjectLiteral(NodeTraversal t, Node parent, Node onlyExport,
         Node script) {
-      onlyExport.getParent().removeChild(onlyExport);
+      onlyExport.detach();
       script.replaceChild(parent,
           IR.exprResult(
               IR.assign(
                   NodeUtil.newQName(compiler, "module.exports"),
                   onlyExport))
           .useSourceInfoIfMissingFromForTree(onlyExport));
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
 
     /**
@@ -253,13 +252,14 @@ public final class TransformAMDToCJSModule implements CompilerPass {
         Node callbackBlock) {
       int curIndex = script.getIndexOfChild(defineParent);
       script.removeChild(defineParent);
-      callbackBlock.getParent().removeChild(callbackBlock);
+      NodeUtil.markFunctionsDeleted(defineParent, compiler);
+      callbackBlock.detach();
       Node before = script.getChildAtIndex(curIndex);
       if (before != null) {
         script.addChildBefore(callbackBlock, before);
       }
       script.addChildToBack(callbackBlock);
-      NodeUtil.tryMergeBlock(callbackBlock);
+      NodeUtil.tryMergeBlock(callbackBlock, false);
     }
   }
 

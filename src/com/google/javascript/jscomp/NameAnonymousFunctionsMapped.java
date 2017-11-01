@@ -42,8 +42,8 @@ import java.util.logging.Logger;
  */
 class NameAnonymousFunctionsMapped implements CompilerPass {
 
-  private static Logger logger = Logger.getLogger(
-      NameAnonymousFunctionsMapped.class.getName());
+  private static final Logger logger =
+      Logger.getLogger(NameAnonymousFunctionsMapped.class.getName());
 
   static final char PREFIX = '$';
   static final String PREFIX_STRING = "$";
@@ -76,9 +76,6 @@ class NameAnonymousFunctionsMapped implements CompilerPass {
     NodeTraversal.traverseEs6(compiler, root, namingCallback);
     logger.fine("Named " + namedCount + " anon functions using " +
         bytesUsed + " bytes");
-    if (namedCount > 0) {
-      compiler.reportCodeChange();
-    }
   }
 
   /**
@@ -110,6 +107,7 @@ class NameAnonymousFunctionsMapped implements CompilerPass {
       fnNameNode.setString(newName);
       namedCount++;
       bytesUsed += newName.length();
+      compiler.reportChangeToEnclosingScope(fnNameNode);
     }
 
     String getAlternateName(String name) {

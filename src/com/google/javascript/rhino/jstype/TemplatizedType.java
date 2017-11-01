@@ -39,13 +39,12 @@
 
 package com.google.javascript.rhino.jstype;
 
-import com.google.common.base.Function;
-import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
+import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.annotations.GwtIncompatible;
+import com.google.common.collect.ImmutableList;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 
 /**
  * An object type with declared template types, such as
@@ -56,7 +55,7 @@ public final class TemplatizedType extends ProxyObjectType {
   private static final long serialVersionUID = 1L;
 
   final ImmutableList<JSType> templateTypes;
-  final TemplateTypeMapReplacer replacer;
+  transient TemplateTypeMapReplacer replacer;
 
   TemplatizedType(
       JSTypeRegistry registry, ObjectType objectType,
@@ -101,20 +100,28 @@ public final class TemplatizedType extends ProxyObjectType {
   }
 
   @Override
-  String toStringHelper(final boolean forAnnotations) {
-    String typeString = super.toStringHelper(forAnnotations);
-
-    if (!templateTypes.isEmpty()) {
-      typeString += "<"
-          + Joiner.on(",").join(Lists.transform(templateTypes, new Function<JSType, String>() {
-            @Override
-            public String apply(JSType type) {
-              return type.toStringHelper(forAnnotations);
-            }
-          })) + ">";
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
+    super.appendTo(sb, forAnnotations);
+    if (!this.templateTypes.isEmpty()) {
+      sb.append("<");
+      int lastIndex = this.templateTypes.size() - 1;
+      for (int i = 0; i < lastIndex; i++) {
+        this.templateTypes.get(i).appendTo(sb, forAnnotations);
+        sb.append(",");
+      }
+      this.templateTypes.get(lastIndex).appendTo(sb, forAnnotations);
+      sb.append(">");
     }
+    return sb;
+  }
 
-    return typeString;
+  @Override
+  public int hashCode() {
+    int baseHash = super.hashCode();
+    if (templateTypes.isEmpty()) {
+      return baseHash;
+    }
+    return Objects.hash(templateTypes, baseHash);
   }
 
   @Override
@@ -164,7 +171,7 @@ public final class TemplatizedType extends ProxyObjectType {
    * @return The greatest subtype.
    */
   JSType getGreatestSubtypeHelper(JSType rawThat) {
-    Preconditions.checkNotNull(rawThat);
+    checkNotNull(rawThat);
 
     if (!wrapsSameRawType(rawThat)) {
       if (!rawThat.isTemplatizedType()) {
@@ -181,7 +188,7 @@ public final class TemplatizedType extends ProxyObjectType {
     }
 
     TemplatizedType that = rawThat.toMaybeTemplatizedType();
-    Preconditions.checkNotNull(that);
+    checkNotNull(that);
 
     if (getTemplateTypeMap().checkEquivalenceHelper(
         that.getTemplateTypeMap(), EquivalenceMethod.INVARIANT, SubtypingMode.NORMAL)) {
@@ -209,5 +216,11 @@ public final class TemplatizedType extends ProxyObjectType {
    */
   public ObjectType getReferencedType() {
     return getReferencedObjTypeInternal();
+  }
+
+  @GwtIncompatible("ObjectInputStream")
+  private void readObject(java.io.ObjectInputStream in) throws Exception {
+    in.defaultReadObject();
+    replacer = new TemplateTypeMapReplacer(registry, templateTypeMap);
   }
 }

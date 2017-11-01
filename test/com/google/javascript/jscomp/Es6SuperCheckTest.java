@@ -23,13 +23,14 @@ import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
  */
 public final class Es6SuperCheckTest extends CompilerTestCase {
   @Override
-  public void setUp() {
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6);
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     setLanguageOut(LanguageMode.ECMASCRIPT3);
   }
 
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new Es6SuperCheck(compiler);
   }
 

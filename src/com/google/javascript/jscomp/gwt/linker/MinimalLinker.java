@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp.gwt.linker;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.gwt.core.ext.LinkerContext;
 import com.google.gwt.core.ext.TreeLogger;
 import com.google.gwt.core.ext.UnableToCompleteException;
@@ -46,7 +47,7 @@ public class MinimalLinker extends AbstractLinker {
    * @param context LinkerContext containing properties
    * @return Whether to export, default false
    */
-  private boolean getExportProperty(LinkerContext context) {
+  private static boolean getExportProperty(LinkerContext context) {
     for (SelectionProperty prop : context.getProperties()) {
       if (EXPORT_PROPERTY.equals(prop.getName())) {
         String value = prop.tryGetValue();
@@ -63,7 +64,7 @@ public class MinimalLinker extends AbstractLinker {
    * @param export Whether to export via JSInterop.
    * @return Formatted, linked code.
    */
-  private String formatOutput(String js, boolean export) {
+  private static String formatOutput(String js, boolean export) {
     StringBuilder output = new StringBuilder();
 
     // If $wnd is set to this, then JSInterop's normal export will run. If export is false, fake
@@ -108,7 +109,7 @@ public class MinimalLinker extends AbstractLinker {
 
     for (CompilationResult result : toReturn.find(CompilationResult.class)) {
       String[] js = result.getJavaScript();
-      Preconditions.checkArgument(js.length == 1, "MinimalLinker doesn't support GWT.runAsync");
+      checkArgument(js.length == 1, "MinimalLinker doesn't support GWT.runAsync");
 
       String output = formatOutput(js[0], export);
       toReturn.add(emitString(logger, output, context.getModuleName() + ".js"));

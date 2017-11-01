@@ -39,7 +39,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   }
 
   @Override
-  public CompilerPass getProcessor(final Compiler compiler) {
+  protected CompilerPass getProcessor(final Compiler compiler) {
     return new CompilerPass() {
       AggressiveInlineAliases aggressiveInlineAliases = new AggressiveInlineAliases(compiler);
       CollapseProperties collapseProperties = new CollapseProperties(compiler);
@@ -53,12 +53,12 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   }
 
   @Override
-  public void setUp() {
+  protected void setUp() throws Exception {
+    super.setUp();
     enableNormalize();
-    compareJsDoc = false;
   }
 
-  @Override public int getNumRepetitions() {
+  @Override protected int getNumRepetitions() {
     return 1;
   }
 
@@ -80,10 +80,10 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         "var a$b = {}; var a$c = {}; var d = null; var e = null; use(a$b, a$c);");
 
     test("var a = {b: {}, /** @nocollapse */ c: {}}; var d = a.b; var e = a.c",
-        "var a = {c: {}}; var d = null; var e = null;");
+        "var a = {/** @nocollapse */ c: {}}; var d = null; var e = null;");
 
     test("var a = {b: {}, /** @nocollapse */ c: {}}; var d = a.b; var e = a.c; use(d, e);",
-        "var a$b = {}; var a = {c: {}}; var d = null; var e = null; use(a$b, a.c);");
+        "var a$b = {};var a = {/** @nocollapse */ c: {}};var d = null;var e = null;use(a$b, a.c);");
   }
 
   public void testObjLitDeclarationWithGet1() {
@@ -134,11 +134,12 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
     test("var a = {}; a.b = {}; a.b.c = {d: 1, /** @nocollapse */ e: 2}; "
         + "var f = a.b.c.d; var g = a.b.c.e",
-        "var a$b$c$d = 1; var a$b$c = {e: 2}; var f = null; var g = null");
+        "var a$b$c$d = 1; var a$b$c = {/** @nocollapse */ e: 2}; var f = null; var g = null;");
 
     test("var a = {}; a.b = {}; a.b.c = {d: 1, /** @nocollapse */ e: 2}; "
         + "var f = a.b.c.d; var g = a.b.c.e; use(f, g);",
-        "var a$b$c$d = 1; var a$b$c = {e: 2}; var f = null; var g = null; use(a$b$c$d, a$b$c.e);");
+        "var a$b$c$d = 1; var a$b$c = { /** @nocollapse */ e: 2};"
+        + "var f = null; var g = null; use(a$b$c$d, a$b$c.e);");
 
     testSame("var a = {}; /** @nocollapse*/ a.b = {}; "
         + "a.b.c = {d: 1, e: 2}; "
@@ -174,7 +175,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   public void testMisusedConstructorTag() {
     test("var a = {}; var d = a; a.b = function() {};"
          + "/** @constructor */ a.b.c = 0; a.b.c;",
-        "var d=null; var a$b=function(){}; var a$b$c=0; a$b$c;");
+        "var d=null; var a$b=function(){}; /** @constructor */ var a$b$c=0; a$b$c;");
   }
 
   public void testAliasCreatedForCtorDepth1_1() {
@@ -186,7 +187,8 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
     // refer to them using an alias for the class name.
     test("/** @constructor */ var a = function(){}; a.b = 1; "
          + "var c = a; c.b = 2; a.b == c.b;",
-         "var a = function(){}; var a$b = 1; var c = null; a$b = 2; a$b == a$b;");
+         "/** @constructor */ var a = function(){}; var a$b = 1;"
+         + "var c = null; a$b = 2; a$b == a$b;");
 
     // Sometimes we want to prevent static members of a constructor from
     // being collapsed.
@@ -203,20 +205,19 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
     test("var a = {}; a.b = function() {}; /** @nocollapse */ a.b.c = 1;"
         + "var d = a.b; a.b.c == d.c;",
-        "var a$b = function() {}; a$b.c = 1; var d = null; a$b.c == a$b.c;");
+        "var a$b = function() {}; /** @nocollapse */ a$b.c = 1; var d = null; a$b.c == a$b.c;");
   }
 
   public void testAliasCreatedForCtorDepth2() {
-    test("var a = {}; /** @constructor */ a.b = function() {}; "
-         + "a.b.c = 1; var d = a.b;"
+    test("var a = {}; /** @constructor */ a.b = function() {}; a.b.c = 1; var d = a.b;"
          + "a.b.c == d.c;",
-         "var a$b = function() {}; var a$b$c = 1; var d = null;"
+         "/** @constructor */ var a$b = function() {}; var a$b$c = 1; var d = null;"
          + "a$b$c == a$b$c;");
 
     test("var a = {}; /** @constructor */ a.b = function() {}; "
         + "/** @nocollapse */ a.b.c = 1; var d = a.b;"
         + "a.b.c == d.c;",
-        "var a$b = function() {}; a$b.c = 1; var d = null;"
+        "/** @constructor */ var a$b = function() {}; /** @nocollapse */ a$b.c = 1; var d = null;"
         + "a$b.c == a$b.c;");
   }
 
@@ -225,21 +226,28 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
     // referenced in such a way that an alias is created for it.
     test("var a = {}; /** @constructor */ a.b = function(){};"
          + "var c = a; c.b = 0; a.b != c.b;",
-         "var a$b = function(){}; var c = null; a$b = 0; a$b != a$b;");
+         "/** @constructor */ var a$b = function(){}; var c = null; a$b = 0; a$b != a$b;");
 
-    test("var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
-        + "var c = 1; c = a; c.b = 0; a.b == c.b;",
-        "var a = {}; a.b = function(){}; var c = 1; c = a; c.b = 0; a.b == c.b;",
-        null, UNSAFE_NAMESPACE_WARNING);
+    test(
+        LINE_JOINER.join(
+            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
+            "var c = 1; c = a; c.b = 0; a.b == c.b;"),
+        LINE_JOINER.join(
+            "var a = {}; /** @constructor @nocollapse */ a.b = function(){};",
+            "var c = 1; c = a; c.b = 0; a.b == c.b;"),
+        warning(UNSAFE_NAMESPACE_WARNING));
 
     test("var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
         + "var c = a; c.b = 0; a.b == c.b;",
-        "var a = {}; a.b = function(){}; var c = null; a.b = 0; a.b == a.b;");
+        "var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+        + "var c = null; a.b = 0; a.b == a.b;");
 
-    test("var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+    test(
+        "var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
         + "var c = a; c.b = 0; a.b == c.b; use(c);",
-        "var a = {}; a.b = function(){}; var c = null; a.b = 0; a.b == a.b; use(a);",
-        null, UNSAFE_NAMESPACE_WARNING);
+        "var a = {}; /** @constructor @nocollapse */ a.b = function(){};"
+        + "var c = null; a.b = 0; a.b == a.b; use(a);",
+        warning(UNSAFE_NAMESPACE_WARNING));
   }
 
   public void testObjLitDeclarationUsedInSameVarList() {
@@ -249,7 +257,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         "var a$b = {}; var a$c = {}; var d = null; var e = null; use(a$b, a$c);");
 
     test("var a = {b: {}, /** @nocollapse */ c: {}}; var d = a.b; var e = a.c; use(d, e);",
-        "var a$b = {}; var a = {c: {}}; var d = null; var e = null; use(a$b, a.c);");
+        "var a$b = {};var a = {/** @nocollapse */ c: {}};var d = null;var e = null;use(a$b, a.c);");
   }
 
   public void testAddPropertyToUncollapsibleObjectInLocalScopeDepth1() {
@@ -271,7 +279,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   public void testAddPropertyToUncollapsibleCtorInLocalScopeDepth1() {
     test("/** @constructor */ var a = function() {}; var c = a; "
          + "(function() {a.b = 0;})(); a.b;",
-         "var a = function() {}; var a$b; "
+         "/** @constructor */ var a = function() {}; var a$b; "
          + "var c = null; (function() {a$b = 0;})(); a$b;");
   }
 
@@ -285,7 +293,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   public void testAddPropertyToUncollapsibleCtorInLocalScopeDepth2() {
     test("var a = {}; /** @constructor */ a.b = function (){}; var d = a.b;"
          + "(function() {a.b.c = 0;})(); a.b.c;",
-         "var a$b = function (){}; var a$b$c; var d = null;"
+         "/** @constructor */ var a$b = function (){}; var a$b$c; var d = null;"
          + "(function() {a$b$c = 0;})(); a$b$c;");
   }
 
@@ -324,6 +332,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
             "a.b.x;",
             "a.b.y;"),
         LINE_JOINER.join(
+            "/** @constructor */",
             "var a$b = function (){};",
             "var a$b$y;",
             "var a$b$x = 0;",
@@ -345,6 +354,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
             "use(c);"),
         LINE_JOINER.join(
             "var a = {};",
+            "/** @constructor */",
             "var a$b = function (){};",
             "var a$b$y;",
             "var a$b$x = 0;",
@@ -353,7 +363,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
             "a$b$x;",
             "a$b$y;",
             "use(a);"),
-        null, UNSAFE_NAMESPACE_WARNING);
+        warning(UNSAFE_NAMESPACE_WARNING));
   }
 
   public void testAddPropertyToChildOfUncollapsibleFunctionInLocalScope() {
@@ -365,7 +375,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
   public void testAddPropertyToChildOfUncollapsibleCtorInLocalScope() {
     test("/** @constructor */ var a = function() {}; a.b = {x: 0}; var c = a;"
          + "(function() {a.b.y = 0;})(); a.b.y;",
-         "var a = function() {}; var a$b$x = 0; var a$b$y; var c = null;"
+         "/** @constructor */ var a = function() {}; var a$b$x = 0; var a$b$y; var c = null;"
          + "(function() {a$b$y = 0;})(); a$b$y;");
   }
 
@@ -503,10 +513,10 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "\n"
         + "use(M.L.A);",
 
-        "var D = function() {};\n"
-        + "var D$L = function() {};\n"
-        + "var D$L$A = new D$L();\n"
-        + "var M$L = null\n"
+        "/** @constructor */ var D = function() {};\n"
+        + "/** @constructor */ var D$L = function() {};\n"
+        + "/** @type {D.L} */ var D$L$A = new D$L();\n"
+        + "/** @typedef {D.L} */ var M$L = null\n"
         + "use(D$L$A);");
   }
 
@@ -517,10 +527,11 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "/** @constructor */ ns.Bar = ns.Foo;\n"
         + "var x = function() {use(ns.Bar.EventType.A)};\n"
         + "use(x);",
-        "var ns$Foo = function(){};"
+
+        "/** @constructor */ var ns$Foo = function(){};"
         + "var ns$Foo$EventType$A = 1;"
         + "var ns$Foo$EventType$B = 2;"
-        + "var ns$Bar = null;"
+        + "/** @constructor */ var ns$Bar = null;"
         + "var x = function(){use(ns$Foo$EventType$A)};"
         + "use(x);");
   }
@@ -537,10 +548,11 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "/** @enum {number} */ ns.Bar.EventType = ns.Foo.EventType;\n"
         + "var x = function() {use(ns.Bar.EventType.A)};\n"
         + "use(x)",
-        "var ns$Foo = function(){};"
-        + "var ns$Foo$EventType = {A:1, B:2};"
-        + "var ns$Bar = null;"
-        + "ns$Foo$EventType = ns$Foo$EventType;\n"
+
+        "/** @constructor */ var ns$Foo = function(){};"
+        + "/** @enum {number} */ var ns$Foo$EventType = {A:1, B:2};"
+        + "/** @constructor */ var ns$Bar = null;"
+        + "/** @enum {number} */ ns$Foo$EventType = ns$Foo$EventType;\n"
         + "var x = function(){use(ns$Foo$EventType.A)};"
         + "use(x);");
   }
@@ -553,10 +565,11 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "/** @enum {number} */ ns.Bar.Other = {X:1, Y:2};\n"
         + "var x = function() {use(ns.Bar.Other.X)};\n"
         + "use(x)",
-        "var ns$Foo=function(){};"
+
+        "/** @constructor */ var ns$Foo=function(){};"
         + "var ns$Foo$EventType$A=1;"
         + "var ns$Foo$EventType$B=2;"
-        + "var ns$Bar=null;"
+        + "/** @constructor */ var ns$Bar=null;"
         + "var ns$Foo$Other$X=1;"
         + "var ns$Foo$Other$Y=2;"
         + "var x=function(){use(ns$Foo$Other$X)};"
@@ -576,8 +589,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         "/** @constructor */ var blob = function() {}",
         "var nullFunction = function(){};\n"
         + "blob.init = nullFunction;\n"
-        + "use(blob.init)",
-        null);
+        + "use(blob.init)");
   }
 
   public void testLocalAliasOfEnumWithInstanceofCheck() {
@@ -599,7 +611,8 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + " if (f == Fruit.APPLE) alert('apple');\n"
         + " if (f == Fruit.BANANA) alert('banana');\n"
         + "}",
-        "var Enums = function() {};\n"
+        "/** @constructor */\n"
+        + "var Enums = function() {};\n"
         + "var Enums$Fruit$APPLE = 1;\n"
         + "var Enums$Fruit$BANANA = 2;\n"
         + "function foo(f) {\n"
@@ -633,7 +646,8 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "  log(namespace.Param.optParam);\n"
         + "  log(Param.optParam);\n"
         + "}",
-        "var namespace = function() {};\n"
+        "/** @constructor */\n"
+        + "var namespace = function() {};\n"
         + "goog.inherits(namespace, Object);\n"
         + "var namespace$includeExtraParam = true;\n"
         + "var namespace$Param$param1 = 1;\n"
@@ -672,9 +686,11 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
 
         "var goog = goog || {};\n"
         + "var goog$addSingletonGetter = function(cls) {};\n"
+        + "/** @constructor */\n"
         + "var a$b = function() {};\n"
         + "goog$addSingletonGetter(a$b);\n"
         + "a$b.prototype.get = function(key) {};\n"
+        + "/** @constructor */\n"
         + "var a$b$c = function() {};\n"
         + "var a$b$c$XXX = new a$b$c();\n"
         + "\n"
@@ -696,9 +712,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "    var b = a.b;\n"
         + "    alert(b.staticProp);\n"
         + "  }\n"
-        + "}\n",
-
-        "var a$b = function() {};\n"
+        + "}\n", "/** @constructor */ var a$b = function() {};\n"
         + "var a$b$staticProp = 5;\n"
         + "\n"
         + "function f() {\n"
@@ -707,7 +721,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "    alert(b.staticProp);\n"
         + "  }\n"
         + "}",
-        null, AggressiveInlineAliases.UNSAFE_CTOR_ALIASING);
+        warning(AggressiveInlineAliases.UNSAFE_CTOR_ALIASING));
   }
 
   public void test_b19179602_declareOutsideLoop() {
@@ -723,7 +737,8 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "  }\n"
         + "}",
 
-        "var a$b = function() {};\n"
+        "/** @constructor */"
+        + "var a$b = function() {};\n"
         + "var a$b$staticProp = 5;\n"
         + "\n"
         + "function f() {\n"
@@ -745,9 +760,7 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "    x = z;\n"
         + "  }\n"
         + "  return x.staticProp;\n"
-        + "}",
-
-        "var a$b = function() {};\n"
+        + "}", "/** @constructor */ var a$b = function() {};\n"
         + "var a$b$staticProp = 5;\n"
         + "function f(y, z) {\n"
         + "  var x = a$b;\n"
@@ -756,44 +769,46 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "  }\n"
         + "  return x.staticProp;\n"
         + "}",
-        null, AggressiveInlineAliases.UNSAFE_CTOR_ALIASING);
+        warning(AggressiveInlineAliases.UNSAFE_CTOR_ALIASING));
   }
 
   public void testCodeGeneratedByGoogModule() {
     // The static property is added to the exports object
     test(
-        "var $jscomp = {};\n" +
-        "$jscomp.scope = {};\n" +
-        "/** @constructor */\n" +
-        "$jscomp.scope.Foo = function() {};\n" +
-        "var exports = $jscomp.scope.Foo;\n" +
-        "exports.staticprop = {A:1};\n" +
-        "var y = exports.staticprop.A;",
-
-        "var $jscomp$scope$Foo = function() {}\n" +
-        "var exports = null;\n" +
-        "var $jscomp$scope$Foo$staticprop$A = 1;\n" +
-        "var y = $jscomp$scope$Foo$staticprop$A;");
+        LINE_JOINER.join(
+            "var $jscomp = {};",
+            "$jscomp.scope = {};",
+            "/** @constructor */",
+            "$jscomp.scope.Foo = function() {};",
+            "var exports = $jscomp.scope.Foo;",
+            "exports.staticprop = {A:1};",
+            "var y = exports.staticprop.A;"),
+        LINE_JOINER.join(
+            "/** @constructor */",
+            "var $jscomp$scope$Foo = function() {}",
+            "var exports = null;",
+            "var $jscomp$scope$Foo$staticprop$A = 1;",
+            "var y = null;"));
 
     // The static property is added to the constructor
     test(
-        "var $jscomp = {};\n" +
-        "$jscomp.scope = {};\n" +
-        "/** @constructor */\n" +
-        "$jscomp.scope.Foo = function() {};\n" +
-        "$jscomp.scope.Foo.staticprop = {A:1};\n" +
-        "var exports = $jscomp.scope.Foo;\n" +
-        "var y = exports.staticprop.A;",
-
-        "var $jscomp$scope$Foo = function() {}\n" +
-        "var $jscomp$scope$Foo$staticprop$A = 1;\n" +
-        "var exports = null;\n" +
-        "var y = $jscomp$scope$Foo$staticprop$A;");
+        LINE_JOINER.join(
+            "var $jscomp = {};",
+            "$jscomp.scope = {};",
+            "/** @constructor */",
+            "$jscomp.scope.Foo = function() {};",
+            "$jscomp.scope.Foo.staticprop = {A:1};",
+            "var exports = $jscomp.scope.Foo;",
+            "var y = exports.staticprop.A;"),
+        LINE_JOINER.join(
+            "/** @constructor */",
+            "var $jscomp$scope$Foo = function() {}",
+            "var $jscomp$scope$Foo$staticprop$A = 1;",
+            "var exports = null;",
+            "var y = null;"));
   }
 
   public void testInlineCtorInObjLit() {
-    compareJsDoc = true;
-
     test(
         LINE_JOINER.join(
             "/** @constructor */",
@@ -832,7 +847,8 @@ public final class InlineAndCollapsePropertiesTest extends CompilerTestCase {
         + "/** @const @enum */\n"
         + "Bar.prop = { A: 1 };",
 
-        "var ns$Foo = function(){};\n"
+        "/** @constructor */\n"
+        + "var ns$Foo = function(){};\n"
         + "var Bar = null;\n"
         + "var ns$Foo$prop$A = 1");
   }

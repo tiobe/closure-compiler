@@ -31,7 +31,7 @@ var md = {};
  *****************************************************************************/
 
 
-/** @constructor */
+/** @interface */
 md.$bottomSheet = function() {};
 
 /**
@@ -40,7 +40,7 @@ md.$bottomSheet = function() {};
  *   template: (string|undefined),
  *   scope: (!Object|undefined),
  *   preserveScope: (boolean|undefined),
- *   controller: (!Function|string|undefined),
+ *   controller: (!angular.Injectable|string|undefined),
  *   locals: (!Object|undefined),
  *   targetEvent: (!Object|undefined),
  *   resolve: (!Object|undefined),
@@ -77,7 +77,7 @@ md.$bottomSheet.prototype.cancel = function(opt_response) {};
  *****************************************************************************/
 
 
-/** @constructor */
+/** @interface */
 md.$dialog = function() {};
 
 
@@ -97,7 +97,7 @@ md.$dialog = function() {};
  *   clickOutsideToClose: (boolean|undefined),
  *   escapeToClose: (boolean|undefined),
  *   focusOnOpen: (boolean|undefined),
- *   controller: (Function|string|undefined),
+ *   controller: (angular.Injectable|string|undefined),
  *   locals: (Object|undefined),
  *   bindToController: (boolean|undefined),
  *   resolve: (Object|undefined),
@@ -112,8 +112,8 @@ md.$dialog = function() {};
 md.$dialog.options;
 
 
-/** @constructor */
-md.$dialog.AlertConfig_;
+/** @interface */
+md.$dialog.AlertConfig_ = function() {};
 
 /**
  * @param {string} title
@@ -172,6 +172,12 @@ md.$dialog.AlertConfig_.prototype.clickOutsideToClose = function(close) {};
 md.$dialog.AlertConfig_.prototype.escapeToClose = function(close) {};
 
 /**
+ * @param {boolean} multiple
+ * @return {!md.$dialog.AlertConfig_}
+ */
+md.$dialog.AlertConfig_.prototype.multiple = function(multiple) {};
+
+/**
  * @param {Object|undefined} event
  * @return {!md.$dialog.AlertConfig_}
  */
@@ -190,8 +196,8 @@ md.$dialog.AlertConfig_.prototype.css = function(css) {};
 md.$dialog.AlertConfig_.prototype.parent = function(parent) {};
 
 
-/** @constructor */
-md.$dialog.ConfirmConfig_;
+/** @interface */
+md.$dialog.ConfirmConfig_ = function() {};
 
 /**
  * @param {string} title
@@ -256,6 +262,12 @@ md.$dialog.ConfirmConfig_.prototype.clickOutsideToClose = function(close) {};
 md.$dialog.ConfirmConfig_.prototype.escapeToClose = function(close) {};
 
 /**
+ * @param {boolean} multiple
+ * @return {!md.$dialog.ConfirmConfig_}
+ */
+md.$dialog.ConfirmConfig_.prototype.multiple = function(multiple) {};
+
+/**
  * @param {Object|undefined} event
  * @return {!md.$dialog.ConfirmConfig_}
  */
@@ -274,8 +286,8 @@ md.$dialog.ConfirmConfig_.prototype.parent = function(parent) {};
 md.$dialog.ConfirmConfig_.prototype.css = function(css) {};
 
 
-/** @constructor */
-md.$dialog.PromptConfig_;
+/** @interface */
+md.$dialog.PromptConfig_ = function() {};
 
 /**
  * @param {string} title
@@ -352,6 +364,12 @@ md.$dialog.PromptConfig_.prototype.clickOutsideToClose = function(close) {};
 md.$dialog.PromptConfig_.prototype.escapeToClose = function(close) {};
 
 /**
+ * @param {boolean} multiple
+ * @return {!md.$dialog.PromptConfig_}
+ */
+md.$dialog.PromptConfig_.prototype.multiple = function(multiple) {};
+
+/**
  * @param {Object|undefined} event
  * @return {!md.$dialog.PromptConfig_}
  */
@@ -394,16 +412,25 @@ md.$dialog.prototype.hide = function(opt_response) {};
 md.$dialog.prototype.cancel = function(opt_response) {};
 
 
-/** @return {!md.$dialog.AlertConfig_} */
-md.$dialog.prototype.alert = function() {};
+/**
+ * @param {!md.$dialog.Config=} options
+ * @return {!md.$dialog.AlertConfig_}
+ */
+md.$dialog.prototype.alert = function(options) {};
 
 
-/** @return {!md.$dialog.ConfirmConfig_} */
-md.$dialog.prototype.confirm = function() {};
+/**
+ * @param {!md.$dialog.Config=} options
+ * @return {!md.$dialog.ConfirmConfig_}
+ */
+md.$dialog.prototype.confirm = function(options) {};
 
 
-/** @return {!md.$dialog.PromptConfig_} */
-md.$dialog.prototype.prompt = function() {};
+/**
+ * @param {!md.$dialog.Config=} options
+ * @return {!md.$dialog.PromptConfig_}
+*/
+md.$dialog.prototype.prompt = function(options) {};
 
 
 /******************************************************************************
@@ -419,9 +446,9 @@ md.$toast = function() {};
  * @typedef {{
  *   templateUrl: (string|!Object|undefined),
  *   template: (string|undefined),
- *   hideDelay: (number|undefined),
+ *   hideDelay: (boolean|number|undefined),
  *   position: (string|undefined),
- *   controller: (Function|string|undefined),
+ *   controller: (angular.Injectable|string|undefined),
  *   locals: (Object|undefined),
  *   bindToController: (boolean|undefined),
  *   resolve: (Object|undefined),
@@ -533,9 +560,10 @@ md.$toast.preset.prototype.toastClass = function(className) {};
 
 
 /**
+ * @param {!md.$toast.options=} options
  * @return {!md.$toast.preset}
  */
-md.$toast.prototype.simple = function() {};
+md.$toast.prototype.simple = function(options) {};
 
 /******************************************************************************
  * $sidenav Service
@@ -548,7 +576,8 @@ md.$toast.prototype.simple = function() {};
  *   isOpen: function():boolean,
  *   toggle: function(),
  *   open: function(),
- *   close: function()
+ *   close: function(),
+ *   onClose: function(function()),
  * }}
  */
 md._sidenavService;
@@ -556,7 +585,7 @@ md._sidenavService;
 /**
  * Sidenav service is actually a function that returns an object.
  * @typedef {
- *   function(string):md._sidenavService
+ *   function(string, boolean=):md._sidenavService
  * }
  */
 md.$sidenav;
@@ -575,7 +604,7 @@ md.$mdAriaProvider.prototype.disableWarnings = function() {};
  * $mdThemingProvider
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.$mdThemingProvider = function() {};
 
 /** @param {boolean} alwaysWatch */
@@ -611,11 +640,20 @@ md.$mdThemingProvider.prototype.theme = function(name, opt_parentTheme) {};
 /** @param {string} nonce */
 md.$mdThemingProvider.prototype.setNonce = function(nonce) {};
 
+/** @param {string} styles */
+md.$mdThemingProvider.prototype.registerStyles = function(styles) {};
+
+/**
+ * @param {?Object=} options
+ * @return {!Function}
+ */
+md.$mdThemingProvider.prototype.enableBrowserColor = function(options) {};
+
 /******************************************************************************
  * $mdTheming service
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.$mdTheming = function() {};
 
 /**
@@ -635,7 +673,7 @@ md.$mdTheming.prototype.generateTheme = function(name) {};
 
 /**
  * @param {string} name
- * @constructor
+ * @interface
  */
 md.$mdThemingProvider.Theme = function(name) {};
 
@@ -683,6 +721,24 @@ md.$mdThemingProvider.Theme.prototype.warnPalette =
  */
 md.$mdThemingProvider.Theme.prototype.dark = function(opt_isDark) {};
 
+/******************************************************************************
+ * $mdColors Service
+ *****************************************************************************/
+
+/** @interface */
+md.$mdColors = function() {};
+
+/**
+ * @param {!angular.JQLite} element
+ * @param {?Object} colorExpression
+ */
+md.$mdColors.prototype.applyThemeColors = function(element, colorExpression) {};
+
+/**
+ * @param {string} expression
+ * @return {string}
+ */
+md.$mdColors.prototype.getThemeColor = function(expression) {};
 
 /******************************************************************************
  * $mdIcon Service
@@ -696,7 +752,7 @@ md.$mdIcon;
  * $mdIconProvider Service
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.$mdIconProvider = function() {};
 
 /**
@@ -747,7 +803,7 @@ md.$mdMedia;
  * $mdMenu Service
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.$mdMenu = function() {};
 
 /**
@@ -756,6 +812,24 @@ md.$mdMenu = function() {};
  * @return {!angular.$q.Promise}
  */
 md.$mdMenu.prototype.hide = function(opt_reason, opt_options) {};
+
+/******************************************************************************
+ * $mdMenu that is provided to the scope of the trigger element so that the
+ * menu can be closed/opened from the template.
+ * https://material.angularjs.org/latest/api/directive/mdMenu
+ *****************************************************************************/
+
+/** @interface */
+md.menu = function() {};
+
+/** @param {!Event=} opt_event */
+md.menu.prototype.open = function(opt_event) {};
+
+/**
+ * @param {boolean=} opt_skipFocus
+ * @param {*=} opt_closeOptions
+ */
+md.menu.prototype.close = function(opt_skipFocus, opt_closeOptions) {};
 
 /******************************************************************************
  * $mdSelect Service
@@ -790,32 +864,32 @@ md.$select.prototype.cancel = function(opt_reason, opt_options) {};
  * $mdDateLocaleProvider
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.$mdDateLocaleProvider = function() {};
 
 /** @type {Array<string>} */
-md.$mdDateLocaleProvider.prototype.months = [];
+md.$mdDateLocaleProvider.prototype.months;
 
 /** @type {Array<string>} */
-md.$mdDateLocaleProvider.prototype.shortMonths = [];
+md.$mdDateLocaleProvider.prototype.shortMonths;
 
 /** @type {Array<string>} */
-md.$mdDateLocaleProvider.prototype.days = [];
+md.$mdDateLocaleProvider.prototype.days;
 
 /** @type {Array<string>} */
-md.$mdDateLocaleProvider.prototype.shortDays = [];
+md.$mdDateLocaleProvider.prototype.shortDays;
 
 /** @type {number} */
-md.$mdDateLocaleProvider.prototype.firstDayOfWeek = 1;
+md.$mdDateLocaleProvider.prototype.firstDayOfWeek;
 
 /** @type {Array<string|number>} */
-md.$mdDateLocaleProvider.prototype.dates = [];
+md.$mdDateLocaleProvider.prototype.dates;
 
 /** @type {string} */
-md.$mdDateLocaleProvider.prototype.msgCalendar = '';
+md.$mdDateLocaleProvider.prototype.msgCalendar;
 
 /** @type {string} */
-md.$mdDateLocaleProvider.prototype.msgOpenCalendar = '';
+md.$mdDateLocaleProvider.prototype.msgOpenCalendar;
 
 // The functions on $mdDateLocaleProvider are defined as fields because
 // they are meant to be directly set by consuming code.
@@ -840,7 +914,7 @@ md.$mdDateLocaleProvider.prototype.longDateFormatter = function(date) {};
  * $mdGestureProvider
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.$mdGestureProvider = function() {};
 
 /**
@@ -848,12 +922,22 @@ md.$mdGestureProvider = function() {};
  */
 md.$mdGestureProvider.prototype.skipClickHijack = function() {};
 
+/******************************************************************************
+ * $mdInkRippleProvider
+ *****************************************************************************/
+
+/** @interface */
+md.$mdInkRippleProvider = function() {};
+
+
+md.$mdInkRippleProvider.prototype.disableInkRipple = function() {};
+
 
 /******************************************************************************
  * VirtualRepeatContainerController
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.VirtualRepeatContainerController = function() {};
 
 /** @return {boolean} */
@@ -882,7 +966,7 @@ md.VirtualRepeatContainerController.prototype.resetScroll = function() {};
  * VirtualRepeatController
  *****************************************************************************/
 
-/** @constructor */
+/** @interface */
 md.VirtualRepeatController = function() {};
 
 /** @return {?number} */
@@ -900,7 +984,7 @@ md.$panel = function() {};
  * @typedef {{
  *   template: (string|undefined),
  *   templateUrl: (string|!Object|undefined),
- *   controller: (Function|string|undefined),
+ *   controller: (angular.Injectable|string|undefined),
  *   controllerAs: (string|undefined),
  *   locals: (!Object|undefined),
  *   resolve: (!Object|undefined),
@@ -1010,7 +1094,7 @@ md.$panel.prototype.closeReasons = {
 /**
  * @param {!md.$panel.config} config
  * @param {!angular.$injector} $injector
- * @constructor
+ * @interface
  */
 md.$panel.MdPanelRef = function(config, $injector) {};
 
@@ -1096,7 +1180,7 @@ md.$panel.MdPanelRef.prototype.updatePosition = function(position) {};
 
 /**
  * @param {!angular.$window} $window
- * @constructor
+ * @interface
  */
 md.$panel.MdPanelPosition = function($window) {};
 
@@ -1164,7 +1248,7 @@ md.$panel.MdPanelPosition.prototype.withOffsetY = function(offsetY) {};
 
 /**
  * @param {!angular.$injector} $injector
- * @constructor
+ * @interface
  */
 md.$panel.MdPanelAnimation = function($injector) {};
 

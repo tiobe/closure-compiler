@@ -16,7 +16,8 @@
 
 package com.google.javascript.jscomp.deps;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.LinkedHashMultimap;
@@ -48,6 +49,7 @@ import java.util.Set;
  * Also exposes other information about the inputs, like which inputs
  * do not provide symbols.
  *
+ * @author stalcup@google.com (John Stalcup)
  */
 public final class Es6SortedDependencies<INPUT extends DependencyInfo>
     implements SortedDependencies<INPUT> {
@@ -67,7 +69,7 @@ public final class Es6SortedDependencies<INPUT extends DependencyInfo>
 
   @Override
   public List<INPUT> getDependenciesOf(List<INPUT> rootInputs, boolean sorted) {
-    Preconditions.checkArgument(userOrderedInputs.containsAll(rootInputs));
+    checkArgument(userOrderedInputs.containsAll(rootInputs));
 
     Set<INPUT> includedInputs = new HashSet<>();
     Deque<INPUT> worklist = new ArrayDeque<>(rootInputs);

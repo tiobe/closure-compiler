@@ -16,7 +16,9 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
@@ -24,7 +26,6 @@ import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -36,13 +37,14 @@ import java.util.Set;
  * Rewrites static inheritance to explicitly copy inherited properties from superclass to
  * subclass so that the typechecker knows the subclass has those properties.
  *
- * <p>For example, {@link Es6ToEs3Converter} will convert
+ * <p>For example, the main transpilation passes will convert this ES6 code:
  *
  * <pre>
  *   class Foo { static f() {} }
  *   class Bar extends Foo {}
  * </pre>
- * to
+ *
+ * to this ES3 code:
  *
  * <pre>
  *   function Foo() {}
@@ -62,11 +64,14 @@ import java.util.Set;
  * </pre>
  *
  * Additionally, there are getter and setter fields which are transpiled from:
+ *
  * <pre>
  *   class Foo { static get prop() { return 1; } }
  *   class Bar extends Foo {}
  * </pre>
+ *
  * to:
+ *
  * <pre>
  *   var Foo = function() {};
  *   Foo.prop; // stub declaration so that the type checker knows about prop
@@ -78,6 +83,7 @@ import java.util.Set;
  *
  * The stub declaration of Foo.prop needs to be duplicated for Bar so that the type checker knows
  * that Bar also has this property.  (ES5 clases don't have class-side inheritance).
+ *
  * <pre>
  *   var Bar = function() {};
  *   Bar.prop;
@@ -91,7 +97,7 @@ import java.util.Set;
  * is stored on the stub declarations so we must gather both to transpile correctly.
  * <p>
  * TODO(tdeegan): In the future the type information for getter/setter properties could be stored
- * in the defineProperies functions.  It would reduce the complexity of this pass significantly.
+ * in the defineProperties functions.  It would reduce the complexity of this pass significantly.
  *
  * @author mattloring@google.com (Matthew Loring)
  * @author tdeegan@google.com (Thomas Deegan)
@@ -166,7 +172,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
   private void copyDeclarations(
       JavascriptClass superClass, JavascriptClass subClass, Node inheritsCall) {
     for (Node staticGetProp : superClass.staticFieldAccess) {
-      Preconditions.checkState(staticGetProp.isGetProp());
+      checkState(staticGetProp.isGetProp());
       String memberName = staticGetProp.getLastChild().getString();
       // We only copy declarations that have corresponding Object.defineProperties
       if (!superClass.definedProperties.contains(memberName)) {
@@ -188,7 +194,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
       declaration.useSourceInfoIfMissingFromForTree(inheritsCall);
       Node parent = inheritsCall.getParent();
       parent.getParent().addChildBefore(declaration, parent);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(parent);
 
       // Copy over field access so that subclasses of this subclass can also make the declarations
       if (!subClass.definedProperties.contains(memberName)) {
@@ -201,7 +207,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
   private void copyStaticMembers(
       JavascriptClass superClass, JavascriptClass subClass, Node inheritsCall) {
     for (Node staticMember : superClass.staticMembers) {
-      Preconditions.checkState(staticMember.isAssign(), staticMember);
+      checkState(staticMember.isAssign(), staticMember);
       String memberName = staticMember.getFirstChild().getLastChild().getString();
       if (superClass.definedProperties.contains(memberName)) {
         continue;
@@ -215,7 +221,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
       if (function.isFunction()) {
         sourceInfoNode = function.getFirstChild();
         Node params = NodeUtil.getFunctionParameters(function);
-        Preconditions.checkState(params.isParamList(), params);
+        checkState(params.isParamList(), params);
         for (Node param : params.children()) {
           if (param.getJSDocInfo() != null) {
             String name = param.getString();
@@ -236,7 +242,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
       exprResult.useSourceInfoIfMissingFromForTree(sourceInfoNode);
       Node inheritsExpressionResult = inheritsCall.getParent();
       inheritsExpressionResult.getParent().addChildAfter(exprResult, inheritsExpressionResult);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(inheritsExpressionResult);
 
       // Add the static member to the subclass so that subclasses also copy this member.
       subClass.staticMembers.add(assign);
@@ -245,7 +251,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
 
   private boolean isOverriden(JavascriptClass subClass, String memberName) {
     for (Node subclassMember : subClass.staticMembers) {
-      Preconditions.checkState(subclassMember.isAssign(), subclassMember);
+      checkState(subclassMember.isAssign(), subclassMember);
       if (subclassMember.getFirstChild().getLastChild().getString().equals(memberName)) {
         // This subclass overrides the static method, so there is no need to copy the
         // method from the base class.
@@ -279,7 +285,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
         case CALL:
-          if (n.getFirstChild().matchesQualifiedName(Es6ToEs3Converter.INHERITS)) {
+          if (n.getFirstChild().matchesQualifiedName(Es6RewriteClass.INHERITS)) {
             inheritsCalls.add(n);
           }
           if (NodeUtil.isObjectDefinePropertiesDefinition(n)) {
@@ -329,7 +335,7 @@ public final class Es6ToEs3ClassSideInheritance implements HotSwapCompilerPass {
     }
 
     private void setAlias(String original, String alias) {
-      Preconditions.checkArgument(classByAlias.containsKey(original));
+      checkArgument(classByAlias.containsKey(original));
       classByAlias.put(alias, classByAlias.get(original));
     }
 

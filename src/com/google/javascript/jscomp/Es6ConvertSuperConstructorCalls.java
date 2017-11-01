@@ -15,17 +15,15 @@
  */
 package com.google.javascript.jscomp;
 
-
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.javascript.jscomp.Es6ToEs3Converter.CANNOT_CONVERT;
+import static com.google.javascript.jscomp.Es6ToEs3Util.CANNOT_CONVERT;
 
 import com.google.javascript.jscomp.GlobalNamespace.Name;
 import com.google.javascript.jscomp.GlobalNamespace.Ref;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.Token;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -83,6 +81,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
   private void visitSuper(NodeTraversal t, ConstructorData constructorData) {
     // NOTE: When this pass runs:
     // -   ES6 classes have already been rewritten as ES5 functions.
+    // -   All subclasses have $jscomp.inherits() calls connecting them to their parent class.
     // -   All instances of super() that are not super constructor calls have been rewritten.
     // -   However, if the original call used spread (e.g. super(...list)), then spread
     //     transpilation will have turned that into something like
@@ -98,9 +97,11 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
       // A call to super() shouldn't actually exist for a stub and is problematic to transpile,
       // so just drop it.
       for (Node superCall : superCalls) {
-        NodeUtil.getEnclosingStatement(superCall).detach();
+        Node enclosingStatement = NodeUtil.getEnclosingStatement(superCall);
+        Node enclosingScope = enclosingStatement.getParent();
+        enclosingStatement.detach();
+        compiler.reportChangeToEnclosingScope(enclosingScope);
       }
-      compiler.reportCodeChange();
     } else {
       String superClassQName = getSuperClassQName(constructor);
       if (isNativeObjectClass(t, superClassQName)) {
@@ -109,9 +110,10 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
         // TODO(bradfordcsmith): Although unlikely, super() could have argument expressions with
         //     side-effects.
         for (Node superCall : superCalls) {
-          superCall.replaceWith(IR.thisNode().useSourceInfoFrom(superCall));
+          Node thisNode = IR.thisNode().useSourceInfoFrom(superCall);
+          superCall.replaceWith(thisNode);
+          compiler.reportChangeToEnclosingScope(thisNode);
         }
-        compiler.reportCodeChange();
       } else if (isUnextendableNativeClass(t, superClassQName)) {
         compiler.report(
             JSError.make(
@@ -136,6 +138,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
                 IR.comma(newSuperCall, IR.thisNode().useSourceInfoFrom(superCall))
                     .useSourceInfoFrom(superCall));
           }
+          compiler.reportChangeToEnclosingScope(superCallParent);
         }
       } else {
         Node constructorBody = checkNotNull(constructor.getChildAtIndex(2));
@@ -172,12 +175,15 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
                     .useSourceInfoIfMissingFromForTree(superCall));
           }
         }
-        compiler.reportCodeChange();
+        compiler.reportChangeToEnclosingScope(constructorBody);
       }
     }
   }
 
   private boolean isKnownToReturnOnlyUndefined(String functionQName) {
+    if (globalNamespace == null) {
+      return false;
+    }
     Name globalName = globalNamespace.getSlot(functionQName);
     if (globalName == null) {
       return false;
@@ -204,7 +210,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
     Node declaredValue = null;
     if (declaration.isFunction()) {
       declaredValue = declaration;
-    } else if (declaration.isVar() && declaredVarOrProp.isName()) {
+    } else if (NodeUtil.isNameDeclaration(declaration) && declaredVarOrProp.isName()) {
       if (declaredVarOrProp.hasChildren()) {
         declaredValue = checkNotNull(declaredVarOrProp.getFirstChild());
       } else {
@@ -216,7 +222,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
       declaredValue = checkNotNull(declaredVarOrProp.getFirstChild());
     } else {
       throw new IllegalStateException(
-          "Unexpected declaration format: " + declaration.toStringTree());
+          "Unexpected declaration format:\n" + declaration.toStringTree());
     }
 
     if (declaredValue.isFunction()) {
@@ -241,7 +247,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
             @Override
             public void visit(NodeTraversal t, Node n, Node parent) {
               if (!foundNonEmptyReturn) {
-                if (n.getToken() == Token.RETURN
+                if (n.isReturn()
                     && n.hasChildren()
                     && !n.getFirstChild().matchesQualifiedName("undefined")) {
                   foundNonEmptyReturn = true;
@@ -255,15 +261,15 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
   }
   private Node createNewSuperCall(String superClassQName, Node superCall) {
     checkArgument(superCall.isCall(), superCall);
-    Node newSuperCall = superCall.cloneTree();
-    Node callee = newSuperCall.getFirstChild();
+    Node newSuperCall = superCall.cloneNode();
+    Node callee = superCall.removeFirstChild();
 
     if (callee.isSuper()) {
-      // super(...) -> super.call(this, ...)
+      // super(...) -> SuperClass.call(this, ...)
       Node superClassDotCall =
           IR.getprop(NodeUtil.newQName(compiler, superClassQName), IR.string("call"))
               .useSourceInfoFromForTree(callee);
-      newSuperCall.replaceChild(callee, superClassDotCall);
+      newSuperCall.addChildToBack(superClassDotCall);
       newSuperCall.putBooleanProp(Node.FREE_CALL, false); // callee is now a getprop
       newSuperCall.addChildAfter(IR.thisNode().useSourceInfoFrom(callee), superClassDotCall);
     } else {
@@ -272,19 +278,23 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
       Node applyNode = checkNotNull(callee.getSecondChild());
       checkState(applyNode.getString().equals("apply"), applyNode);
 
-      Node superDotApply = newSuperCall.getFirstChild();
-      Node superNode = superDotApply.getFirstChild();
-      superDotApply.replaceChild(
+      newSuperCall.addChildToBack(callee);
+      Node superNode = callee.getFirstChild();
+      callee.replaceChild(
           superNode,
           NodeUtil.newQName(compiler, superClassQName).useSourceInfoFromForTree(superNode));
       // super.apply(null, ...) is generated by spread transpilation
       // super.apply(this, arguments) is used by Es6ConvertSuper in automatically-generated
       //   constructors.
-      Node nullOrThisNode = newSuperCall.getSecondChild();
+      Node nullOrThisNode = superCall.getFirstChild();
       if (!nullOrThisNode.isThis()) {
         checkState(nullOrThisNode.isNull(), nullOrThisNode);
-        newSuperCall.replaceChild(nullOrThisNode, IR.thisNode().useSourceInfoFrom(nullOrThisNode));
+        superCall.removeChild(nullOrThisNode);
+        newSuperCall.addChildToBack(IR.thisNode().useSourceInfoFrom(nullOrThisNode));
       }
+    }
+    while (superCall.hasChildren()) {
+      newSuperCall.addChildToBack(superCall.removeFirstChild());
     }
     return newSuperCall;
   }
@@ -294,7 +304,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
     // `this`, so a workaround is needed.
     Node superStatement = NodeUtil.getEnclosingStatement(superCall);
     Node body = superStatement.getParent();
-    checkState(body.isBlock(), body);
+    checkState(body.isNormalBlock(), body);
 
     // var $jscomp$tmp$error;
     Node getError = IR.var(IR.name(TMP_ERROR)).useSourceInfoIfMissingFromForTree(superCall);
@@ -323,6 +333,7 @@ implements NodeTraversal.Callback, HotSwapCompilerPass {
         IR.comma(IR.comma(IR.comma(getTmpError, copyMessage), setStack), IR.thisNode())
             .useSourceInfoIfMissingFromForTree(superCall);
     superCall.replaceWith(superErrorExpr);
+    compiler.reportChangeToEnclosingScope(superErrorExpr);
   }
 
   private boolean isNativeObjectClass(NodeTraversal t, String className) {

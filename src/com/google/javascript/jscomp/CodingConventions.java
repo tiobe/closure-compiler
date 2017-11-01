@@ -16,17 +16,17 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.newtypes.JSType;
-import com.google.javascript.jscomp.newtypes.RawNominalType;
-import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.StaticSourceFile;
-import com.google.javascript.rhino.jstype.FunctionType;
-import com.google.javascript.rhino.jstype.JSTypeRegistry;
-import com.google.javascript.rhino.jstype.ObjectType;
-import com.google.javascript.rhino.jstype.StaticTypedScope;
+import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.Immutable;
+import com.google.javascript.rhino.FunctionTypeI;
+import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.NominalTypeBuilder;
+import com.google.javascript.rhino.ObjectTypeI;
+import com.google.javascript.rhino.StaticSourceFile;
+import com.google.javascript.rhino.TypeIRegistry;
+import com.google.javascript.rhino.jstype.FunctionType;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -68,6 +68,12 @@ public final class CodingConventions {
     return n.getFirstChild().matchesQualifiedName(alwaysThrowsFunctionName);
   }
 
+  static boolean isAliasingGlobalThis(CodingConvention convention, Node n) {
+    return n.isAssign()
+        && n.getFirstChild().matchesQualifiedName(convention.getGlobalObject())
+        && n.getLastChild().isThis();
+  }
+
   /**
    * A convention that wraps another.
    *
@@ -78,6 +84,7 @@ public final class CodingConventions {
    * coding convention by creating a jQueryCodingConvention that delegates
    * to a ClosureCodingConvention that delegates to a DefaultCodingConvention.
    */
+  @Immutable
   public static class Proxy implements CodingConvention {
 
     protected final CodingConvention nextConvention;
@@ -191,10 +198,9 @@ public final class CodingConventions {
     }
 
     @Override
-    public void applySubclassRelationship(FunctionType parentCtor,
-        FunctionType childCtor, SubclassType type) {
-      nextConvention.applySubclassRelationship(
-          parentCtor, childCtor, type);
+    public void applySubclassRelationship(
+        NominalTypeBuilder parent, NominalTypeBuilder child, SubclassType type) {
+      nextConvention.applySubclassRelationship(parent, child, type);
     }
 
     @Override
@@ -208,16 +214,9 @@ public final class CodingConventions {
     }
 
     @Override
-    public void applySingletonGetterOld(FunctionType functionType,
-        FunctionType getterType, ObjectType objectType) {
-      nextConvention.applySingletonGetterOld(
-          functionType, getterType, objectType);
-    }
-
-    @Override
-    public void applySingletonGetterNew(
-        RawNominalType rawType, JSType getInstanceType, JSType instanceType) {
-      nextConvention.applySingletonGetterNew(rawType, getInstanceType, instanceType);
+    public void applySingletonGetter(
+        NominalTypeBuilder classType, FunctionTypeI getterType) {
+      nextConvention.applySingletonGetter(classType, getterType);
     }
 
     @Override
@@ -232,12 +231,13 @@ public final class CodingConventions {
 
     @Override
     public void applyDelegateRelationship(
-        ObjectType delegateSuperclass, ObjectType delegateBase,
-        ObjectType delegator, FunctionType delegateProxy,
-        FunctionType findDelegate) {
+        NominalTypeBuilder delegateSuperclass,
+        NominalTypeBuilder delegateBase,
+        NominalTypeBuilder delegator,
+        ObjectTypeI delegateProxy,
+        FunctionTypeI findDelegate) {
       nextConvention.applyDelegateRelationship(
-          delegateSuperclass, delegateBase, delegator,
-          delegateProxy, findDelegate);
+          delegateSuperclass, delegateBase, delegator, delegateProxy, findDelegate);
     }
 
     @Override
@@ -246,25 +246,29 @@ public final class CodingConventions {
     }
 
     @Override
-    public void checkForCallingConventionDefiningCalls(
+    public void checkForCallingConventionDefinitions(
         Node n, Map<String, String> delegateCallingConventions) {
-      nextConvention.checkForCallingConventionDefiningCalls(
+      nextConvention.checkForCallingConventionDefinitions(
           n, delegateCallingConventions);
     }
 
     @Override
     public void defineDelegateProxyPrototypeProperties(
-        JSTypeRegistry registry,
-        StaticTypedScope<com.google.javascript.rhino.jstype.JSType> scope,
-        List<ObjectType> delegateProxyPrototypes,
+        TypeIRegistry registry,
+        List<NominalTypeBuilder> delegateProxies,
         Map<String, String> delegateCallingConventions) {
       nextConvention.defineDelegateProxyPrototypeProperties(
-          registry, scope, delegateProxyPrototypes, delegateCallingConventions);
+          registry, delegateProxies, delegateCallingConventions);
     }
 
     @Override
     public String getGlobalObject() {
       return nextConvention.getGlobalObject();
+    }
+
+    @Override
+    public boolean isAliasingGlobalThis(Node n) {
+      return nextConvention.isAliasingGlobalThis(n);
     }
 
     @Override
@@ -320,6 +324,7 @@ public final class CodingConventions {
    * The default coding convention.
    * Should be at the bottom of all proxy chains.
    */
+  @Immutable
   private static class DefaultCodingConvention implements CodingConvention {
 
     private static final long serialVersionUID = 1L;
@@ -398,12 +403,12 @@ public final class CodingConventions {
           && callNode.getChildCount() == 3) {
         Node subclass = callName.getNext();
         Node superclass = subclass.getNext();
-
-        return new SubclassRelationship(
-            SubclassType.INHERITS, subclass, superclass);
-      } else {
-        return null;
+        // The StripCode pass may create $jscomp.inherits calls with NULL arguments.
+        if (subclass.isQualifiedName() && superclass.isQualifiedName()) {
+          return new SubclassRelationship(SubclassType.INHERITS, subclass, superclass);
+        }
       }
+      return null;
     }
 
     @Override
@@ -450,8 +455,8 @@ public final class CodingConventions {
     }
 
     @Override
-    public void applySubclassRelationship(FunctionType parentCtor,
-        FunctionType childCtor, SubclassType type) {
+    public void applySubclassRelationship(
+        NominalTypeBuilder parent, NominalTypeBuilder child, SubclassType type) {
       // do nothing
     }
 
@@ -466,20 +471,14 @@ public final class CodingConventions {
     }
 
     @Override
-    public void applySingletonGetterOld(FunctionType functionType,
-        FunctionType getterType, ObjectType objectType) {
-      // do nothing.
-    }
-
-    @Override
-    public void applySingletonGetterNew(
-        RawNominalType rawType, JSType getInstanceType, JSType instanceType) {
+    public void applySingletonGetter(
+        NominalTypeBuilder classType, FunctionTypeI getterType) {
       // do nothing.
     }
 
     @Override
     public boolean isInlinableFunction(Node n) {
-      Preconditions.checkState(n.isFunction(), n);
+      checkState(n.isFunction(), n);
       return true;
     }
 
@@ -490,9 +489,11 @@ public final class CodingConventions {
 
     @Override
     public void applyDelegateRelationship(
-        ObjectType delegateSuperclass, ObjectType delegateBase,
-        ObjectType delegator, FunctionType delegateProxy,
-        FunctionType findDelegate) {
+        NominalTypeBuilder delegateSuperclass,
+        NominalTypeBuilder delegateBase,
+        NominalTypeBuilder delegator,
+        ObjectTypeI delegateProxy,
+        FunctionTypeI findDelegate) {
       // do nothing.
     }
 
@@ -502,16 +503,15 @@ public final class CodingConventions {
     }
 
     @Override
-    public void checkForCallingConventionDefiningCalls(Node n,
+    public void checkForCallingConventionDefinitions(Node n,
         Map<String, String> delegateCallingConventions) {
       // do nothing.
     }
 
     @Override
     public void defineDelegateProxyPrototypeProperties(
-        JSTypeRegistry registry,
-        StaticTypedScope<com.google.javascript.rhino.jstype.JSType> scope,
-        List<ObjectType> delegateProxyPrototypes,
+        TypeIRegistry registry,
+        List<NominalTypeBuilder> delegateProxies,
         Map<String, String> delegateCallingConventions) {
       // do nothing.
     }
@@ -522,8 +522,13 @@ public final class CodingConventions {
     }
 
     @Override
+    public boolean isAliasingGlobalThis(Node n) {
+      return CodingConventions.isAliasingGlobalThis(this, n);
+    }
+
+    @Override
     public boolean isPropertyTestFunction(Node call) {
-      return "Array.isArray".equals(call.getFirstChild().getQualifiedName());
+      return call.getFirstChild().matchesQualifiedName("Array.isArray");
     }
 
     @Override

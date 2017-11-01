@@ -16,9 +16,11 @@
 
 package com.google.javascript.jscomp.newtypes;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -35,7 +37,7 @@ import java.util.Map;
  * @author blickly@google.com (Ben Lickly)
  * @author dimvar@google.com (Dimitris Vardoulakis)
  */
-public final class DeclaredFunctionType {
+public final class DeclaredFunctionType implements Serializable {
   private final List<JSType> requiredFormals;
   private final List<JSType> optionalFormals;
   private final JSType restFormals;
@@ -46,8 +48,7 @@ public final class DeclaredFunctionType {
   // If this DeclaredFunctionType is a prototype method, this field stores the
   // type of the instance.
   private final JSType receiverType;
-  // Non-empty iff this function has an @template annotation
-  private final ImmutableList<String> typeParameters;
+  private final TypeParameters typeParameters;
 
   private final JSTypes commonTypes;
   private final boolean isAbstract;
@@ -60,10 +61,10 @@ public final class DeclaredFunctionType {
       JSType retType,
       JSType nominalType,
       JSType receiverType,
-      ImmutableList<String> typeParameters,
+      TypeParameters typeParameters,
       boolean isAbstract) {
-    Preconditions.checkArgument(retType == null || !retType.isBottom());
-    Preconditions.checkNotNull(commonTypes);
+    checkArgument(retType == null || !retType.isBottom());
+    checkNotNull(commonTypes);
     this.commonTypes = commonTypes;
     this.requiredFormals = requiredFormals;
     this.optionalFormals = optionalFormals;
@@ -100,16 +101,13 @@ public final class DeclaredFunctionType {
       JSType retType,
       JSType nominalType,
       JSType receiverType,
-      ImmutableList<String> typeParameters,
+      TypeParameters typeParameters,
       boolean isAbstract) {
     if (requiredFormals == null) {
       requiredFormals = new ArrayList<>();
     }
     if (optionalFormals == null) {
       optionalFormals = new ArrayList<>();
-    }
-    if (typeParameters == null) {
-      typeParameters = ImmutableList.of();
     }
     return new DeclaredFunctionType(
         commonTypes,
@@ -163,7 +161,7 @@ public final class DeclaredFunctionType {
   }
 
   public JSType getRestFormalsType() {
-    Preconditions.checkState(restFormals != null);
+    checkState(restFormals != null);
     return restFormals;
   }
 
@@ -191,8 +189,8 @@ public final class DeclaredFunctionType {
     return !typeParameters.isEmpty();
   }
 
-  public ImmutableList<String> getTypeParameters() {
-    return typeParameters;
+  public TypeParameters getTypeParameters() {
+    return this.typeParameters;
   }
 
   public boolean isAbstract() {
@@ -204,7 +202,7 @@ public final class DeclaredFunctionType {
   }
 
   public String getTypeVariableDefinedLocally(String tvar) {
-    String tmp = UniqueNameGenerator.findGeneratedName(tvar, this.typeParameters);
+    String tmp = UniqueNameGenerator.findGeneratedName(tvar, this.typeParameters.asList());
     if (tmp != null) {
       return tmp;
     }
@@ -249,7 +247,7 @@ public final class DeclaredFunctionType {
           superType.restFormals, superType.returnType,
           nt == null ? null : nt.getInstanceAsJSType(),
           rt == null ? null : rt.getInstanceAsJSType(),
-          superType.typeParameters, false);
+          superType.typeParameters, this.isAbstract);
     }
 
     FunctionTypeBuilder builder = new FunctionTypeBuilder(this.commonTypes);
@@ -276,6 +274,7 @@ public final class DeclaredFunctionType {
     } else if (!superType.typeParameters.isEmpty()) {
       builder.addTypeParameters(superType.typeParameters);
     }
+    builder.addAbstract(this.isAbstract);
     return builder.buildDeclaration();
   }
 
@@ -284,47 +283,54 @@ public final class DeclaredFunctionType {
     if (!nt.isGeneric()) {
       return this;
     }
-    Map<String, JSType> typeMap = nt.getTypeMap();
-    Preconditions.checkState(!typeMap.isEmpty());
-    Map<String, JSType> reducedMap = typeMap;
-    boolean foundShadowedTypeParam = false;
-    for (String typeParam : typeParameters) {
-      if (typeMap.containsKey(typeParam)) {
-        foundShadowedTypeParam = true;
-        break;
-      }
-    }
-    if (foundShadowedTypeParam) {
-      ImmutableMap.Builder<String, JSType> builder = ImmutableMap.builder();
-      for (Map.Entry<String, JSType> entry : typeMap.entrySet()) {
-        if (!typeParameters.contains(entry.getKey())) {
-          builder.put(entry);
-        }
-      }
-      reducedMap = builder.build();
-    }
-    FunctionTypeBuilder builder = new FunctionTypeBuilder(this.commonTypes);
-    for (JSType reqFormal : requiredFormals) {
-      builder.addReqFormal(reqFormal == null ? null : reqFormal.substituteGenerics(reducedMap));
-    }
-    for (JSType optFormal : optionalFormals) {
-      builder.addOptFormal(optFormal == null ? null : optFormal.substituteGenerics(reducedMap));
-    }
-    if (restFormals != null) {
-      builder.addRestFormals(restFormals.substituteGenerics(reducedMap));
-    }
-    if (returnType != null) {
-      builder.addRetType(returnType.substituteGenerics(reducedMap));
-    }
+    FunctionTypeBuilder builder = substituteGenerics(nt.getTypeMap());
     // Explicitly forget nominalType and receiverType. This method is used when
     // calculating the declared type of a method using the inherited types.
     // In withTypeInfoFromSuper, we ignore super's nominalType and receiverType.
-    builder.addTypeParameters(this.typeParameters);
+    builder.addReceiverType(null);
+    builder.addNominalType(null);
     return builder.buildDeclaration();
   }
 
-  public static DeclaredFunctionType meet(
-      Collection<DeclaredFunctionType> toMeet) {
+  public DeclaredFunctionType instantiateGenericsWithUnknown() {
+    return substituteGenerics(this.commonTypes.MAP_TO_UNKNOWN).buildDeclaration();
+  }
+
+  private FunctionTypeBuilder substituteGenerics(Map<String, JSType> typeMap) {
+    checkState(!typeMap.isEmpty());
+    // Before we switched to unique generated names for type variables, a method's type variables
+    // could shadow type variables defined on the class. Check that this no longer happens.
+    if (!this.commonTypes.MAP_TO_UNKNOWN.equals(typeMap)) {
+      for (String typeParam : this.typeParameters.asList()) {
+        checkState(!typeMap.containsKey(typeParam));
+      }
+    }
+    FunctionTypeBuilder builder = new FunctionTypeBuilder(this.commonTypes);
+    for (JSType reqFormal : requiredFormals) {
+      builder.addReqFormal(reqFormal == null ? null : reqFormal.substituteGenerics(typeMap));
+    }
+    for (JSType optFormal : optionalFormals) {
+      builder.addOptFormal(optFormal == null ? null : optFormal.substituteGenerics(typeMap));
+    }
+    if (restFormals != null) {
+      builder.addRestFormals(restFormals.substituteGenerics(typeMap));
+    }
+    if (returnType != null) {
+      builder.addRetType(returnType.substituteGenerics(typeMap));
+    }
+    if (this.receiverType != null) {
+      builder.addReceiverType(this.receiverType.substituteGenerics(typeMap));
+    }
+    if (this.nominalType != null) {
+      builder.addNominalType(this.nominalType.substituteGenerics(typeMap));
+    }
+    // Technically, we should only be adding the type parameters that haven't been substituted
+    // away, but AFAICT, it makes no difference to just add them all.
+    builder.addTypeParameters(this.typeParameters);
+    return builder;
+  }
+
+  public static DeclaredFunctionType meet(Collection<DeclaredFunctionType> toMeet) {
     DeclaredFunctionType result = null;
     for (DeclaredFunctionType declType : toMeet) {
       if (result == null) {
@@ -336,29 +342,24 @@ public final class DeclaredFunctionType {
     return result;
   }
 
-  private static DeclaredFunctionType meet(
-      DeclaredFunctionType f1, DeclaredFunctionType f2) {
+  private static DeclaredFunctionType meet(DeclaredFunctionType f1, DeclaredFunctionType f2) {
     if (f1.equals(f2)) {
       return f1;
     }
     JSTypes commonTypes = f1.commonTypes;
     FunctionTypeBuilder builder = new FunctionTypeBuilder(f1.commonTypes);
-    int minRequiredArity = Math.min(
-        f1.requiredFormals.size(), f2.requiredFormals.size());
+    int minRequiredArity = Math.min(f1.requiredFormals.size(), f2.requiredFormals.size());
     for (int i = 0; i < minRequiredArity; i++) {
-      builder.addReqFormal(nullAcceptingJoin(
-          f1.getFormalType(i), f2.getFormalType(i)));
+      builder.addReqFormal(nullAcceptingJoin(f1.getFormalType(i), f2.getFormalType(i)));
     }
     int maxTotalArity = Math.max(
         f1.requiredFormals.size() + f1.optionalFormals.size(),
         f2.requiredFormals.size() + f2.optionalFormals.size());
     for (int i = minRequiredArity; i < maxTotalArity; i++) {
-      builder.addOptFormal(nullAcceptingJoin(
-          f1.getFormalType(i), f2.getFormalType(i)));
+      builder.addOptFormal(nullAcceptingJoin(f1.getFormalType(i), f2.getFormalType(i)));
     }
     if (f1.restFormals != null || f2.restFormals != null) {
-      builder.addRestFormals(
-          nullAcceptingJoin(f1.restFormals, f2.restFormals));
+      builder.addRestFormals(nullAcceptingJoin(f1.restFormals, f2.restFormals));
     }
     JSType retType = nullAcceptingMeet(f1.returnType, f2.returnType);
     if (commonTypes.BOTTOM.equals(retType)) {

@@ -16,28 +16,31 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.errorprone.annotations.Immutable;
 import com.google.javascript.jscomp.newtypes.DeclaredTypeRegistry;
 import com.google.javascript.jscomp.newtypes.JSType;
 import com.google.javascript.jscomp.newtypes.QualifiedName;
-import com.google.javascript.jscomp.newtypes.RawNominalType;
+import com.google.javascript.rhino.FunctionTypeI;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.NominalTypeBuilder;
 import com.google.javascript.rhino.jstype.FunctionType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
-import com.google.javascript.rhino.jstype.ObjectType;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 
 /**
  * This describes the Closure-specific JavaScript coding conventions.
  *
  */
+@Immutable
 public final class ClosureCodingConvention extends CodingConventions.Proxy {
 
   private static final long serialVersionUID = 1L;
@@ -46,7 +49,7 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
       "JSC_REFLECT_OBJECTLIT_EXPECTED",
       "Object literal expected as second argument");
 
-  private final Set<String> indirectlyDeclaredProperties;
+  private final ImmutableSet<String> indirectlyDeclaredProperties;
 
   public ClosureCodingConvention() {
     this(CodingConventions.getDefault());
@@ -69,22 +72,21 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
    * subclass, and a {@code constructor} property.
    */
   @Override
-  public void applySubclassRelationship(FunctionType parentCtor,
-      FunctionType childCtor, SubclassType type) {
-    super.applySubclassRelationship(parentCtor, childCtor, type);
+  public void applySubclassRelationship(
+      final NominalTypeBuilder parent, final NominalTypeBuilder child, SubclassType type) {
+    super.applySubclassRelationship(parent, child, type);
     if (type == SubclassType.INHERITS) {
-      childCtor.defineDeclaredProperty("superClass_",
-          parentCtor.getPrototype(), childCtor.getSource());
-      childCtor.getPrototype().defineDeclaredProperty("constructor",
-          // Notice that constructor functions do not need to be covariant
-          // on the superclass.
-          // So if G extends F, new G() and new F() can accept completely
-          // different argument types, but G.prototype.constructor needs
-          // to be covariant on F.prototype.constructor.
-          // To get around this, we just turn off type-checking on arguments
-          // and return types of G.prototype.constructor.
-          childCtor.forgetParameterAndReturnTypes(),
-          childCtor.getSource());
+      final FunctionTypeI childCtor = child.constructor();
+      child.declareConstructorProperty(
+          "superClass_", parent.prototypeOrInstance(), childCtor.getSource());
+      // Notice that constructor functions do not need to be covariant on the superclass.
+      // So if G extends F, new G() and new F() can accept completely different argument
+      // types, but G.prototype.constructor needs to be covariant on F.prototype.constructor.
+      // To get around this, we just turn off type-checking on arguments and return types
+      // of G.prototype.constructor.
+      FunctionTypeI qmarkCtor =
+          childCtor.toBuilder().withUnknownReturnType().withNoParameters().build();
+      child.declarePrototypeProperty("constructor", qmarkCtor, childCtor.getSource());
     }
   }
 
@@ -108,19 +110,12 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
       Node subclass = null;
       Node superclass = callNode.getLastChild();
 
-      // There are six possible syntaxes for a class-defining method:
-      // SubClass.inherits(SuperClass)
+      // There are four possible syntaxes for a class-defining method:
       // goog.inherits(SubClass, SuperClass)
       // goog$inherits(SubClass, SuperClass)
-      // SubClass.mixin(SuperClass.prototype)
       // goog.mixin(SubClass.prototype, SuperClass.prototype)
       // goog$mixin(SubClass.prototype, SuperClass.prototype)
-      boolean isDeprecatedCall = callNode.getChildCount() == 2 &&
-          callName.isGetProp();
-      if (isDeprecatedCall) {
-        // SubClass.inherits(SuperClass)
-        subclass = callName.getFirstChild();
-      } else if (callNode.getChildCount() == 3) {
+      if (callNode.hasXChildren(3)) {
         // goog.inherits(SubClass, SuperClass)
         subclass = callName.getNext();
       } else {
@@ -133,13 +128,11 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
         if (!endsWithPrototype(superclass)) {
           return null;
         }
-        if (!isDeprecatedCall) {
-          if (!endsWithPrototype(subclass)) {
-            return null;
-          }
-          // Strip off the prototype from the name.
-          subclass = subclass.getFirstChild();
+        if (!endsWithPrototype(subclass)) {
+          return null;
         }
+        // Strip off the prototype from the name.
+        subclass = subclass.getFirstChild();
         superclass = superclass.getFirstChild();
       }
 
@@ -147,9 +140,9 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
       // isn't a real class name. This prevents us from
       // doing something weird in cases like:
       // goog.inherits(MySubClass, cond ? SuperClass1 : BaseClass2)
-      if (subclass != null &&
-          subclass.isUnscopedQualifiedName() &&
-          superclass.isUnscopedQualifiedName()) {
+      if (subclass != null
+          && subclass.isUnscopedQualifiedName()
+          && superclass.isUnscopedQualifiedName()) {
         return new SubclassRelationship(type, subclass, superclass);
       }
     }
@@ -293,8 +286,7 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
     }
 
     // Identify forward declaration of form goog.forwardDeclare('foo.bar')
-    if (callName.matchesQualifiedName("goog.forwardDeclare") &&
-        n.getChildCount() == 2) {
+    if (callName.matchesQualifiedName("goog.forwardDeclare") && n.hasTwoChildren()) {
       Node typeDeclaration = n.getSecondChild();
       if (typeDeclaration.isString()) {
         return ImmutableList.of(typeDeclaration.getString());
@@ -313,7 +305,7 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
   public String getSingletonGetterClassName(Node callNode) {
     Node callArg = callNode.getFirstChild();
     // Use both the original name and the post-CollapseProperties name.
-    if (callNode.getChildCount() == 2
+    if (callNode.hasTwoChildren()
         && (callArg.matchesQualifiedName("goog.addSingletonGetter")
             || callArg.matchesQualifiedName("goog$addSingletonGetter"))) {
       return callArg.getNext().getQualifiedName();
@@ -322,19 +314,10 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
   }
 
   @Override
-  public void applySingletonGetterOld(FunctionType functionType,
-      FunctionType getterType, ObjectType objectType) {
-    functionType.defineDeclaredProperty("getInstance", getterType,
-        functionType.getSource());
-    functionType.defineDeclaredProperty("instance_", objectType,
-        functionType.getSource());
-  }
-
-  @Override
-  public void applySingletonGetterNew(
-      RawNominalType rawType, JSType getInstanceType, JSType instanceType) {
-    rawType.addCtorProperty("getInstance", null, getInstanceType, true);
-    rawType.addCtorProperty("instance_", null, instanceType, true);
+  public void applySingletonGetter(NominalTypeBuilder classType, FunctionTypeI getterType) {
+    Node defSite = classType.constructor().getSource();
+    classType.declareConstructorProperty("getInstance", getterType, defSite);
+    classType.declareConstructorProperty("instance_", classType.instance(), defSite);
   }
 
   @Override
@@ -342,14 +325,19 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
     return "goog.global";
   }
 
-  private final Set<String> propertyTestFunctions = ImmutableSet.of(
+  @Override
+  public boolean isAliasingGlobalThis(Node n) {
+    return CodingConventions.isAliasingGlobalThis(this, n);
+  }
+
+  private final ImmutableSet<String> propertyTestFunctions = ImmutableSet.of(
       "goog.isDef", "goog.isNull", "goog.isDefAndNotNull",
       "goog.isString", "goog.isNumber", "goog.isBoolean",
       "goog.isFunction", "goog.isArray", "goog.isArrayLike", "goog.isObject");
 
   @Override
   public boolean isPropertyTestFunction(Node call) {
-    Preconditions.checkArgument(call.isCall());
+    checkArgument(call.isCall());
     return propertyTestFunctions.contains(
         call.getFirstChild().getQualifiedName()) ||
         super.isPropertyTestFunction(call);
@@ -368,15 +356,16 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
 
   @Override
   public ObjectLiteralCast getObjectLiteralCast(Node callNode) {
-    Preconditions.checkArgument(callNode.isCall());
+    Preconditions.checkArgument(callNode.isCall(), "Expected call node but found %s", callNode);
     ObjectLiteralCast proxyCast = super.getObjectLiteralCast(callNode);
     if (proxyCast != null) {
       return proxyCast;
     }
 
     Node callName = callNode.getFirstChild();
-    if (!callName.matchesQualifiedName("goog.reflect.object") ||
-        callNode.getChildCount() != 3) {
+    if (!(callName.matchesQualifiedName("goog.reflect.object")
+            || callName.matchesQualifiedName("$jscomp.reflectObject"))
+        || callNode.getChildCount() != 3) {
       return null;
     }
 
@@ -390,8 +379,7 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
       return new ObjectLiteralCast(null, null, OBJECTLIT_EXPECTED);
     }
 
-    return new ObjectLiteralCast(
-        typeNode.getQualifiedName(), typeNode.getNext(), null);
+    return new ObjectLiteralCast(typeNode.getQualifiedName(), typeNode.getNext(), null);
   }
 
   @Override
@@ -538,7 +526,7 @@ public final class ClosureCodingConvention extends CodingConventions.Proxy {
               functionType = functionType.getProp(qname.getAllButLeftmost());
             }
             com.google.javascript.jscomp.newtypes.FunctionType ctorType =
-                functionType.getFunTypeIfSingletonObj();
+                functionType == null ? null : functionType.getFunTypeIfSingletonObj();
             if (ctorType != null && ctorType.isUniqueConstructor()) {
               return ctorType.getInstanceTypeOfCtor();
             }

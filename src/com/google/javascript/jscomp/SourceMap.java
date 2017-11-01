@@ -23,12 +23,12 @@ import com.google.debugging.sourcemap.SourceMapGenerator;
 import com.google.debugging.sourcemap.SourceMapGeneratorFactory;
 import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 import com.google.javascript.rhino.Node;
-
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
@@ -95,19 +95,35 @@ public final class SourceMap {
   }
 
   /**
-   * A simple pair of path prefixes to the desired "destination" location to use within the
-   * source map.
+   * A simple pair of path prefixes to the desired "destination" location to use within the source
+   * map.
    */
-  public static class LocationMapping {
+  public static final class LocationMapping {
     final String prefix;
     final String replacement;
     public LocationMapping(String prefix, String replacement) {
       this.prefix = prefix;
       this.replacement = replacement;
     }
+
     @Override
     public String toString() {
       return "(" + prefix + "|" + replacement + ")";
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (other instanceof LocationMapping) {
+        return ((LocationMapping) other).prefix.equals(prefix)
+            && ((LocationMapping) other).replacement.equals(replacement);
+      } else {
+        return false;
+      }
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(prefix, replacement);
     }
   }
 
@@ -142,18 +158,19 @@ public final class SourceMap {
 
     int lineNo = node.getLineno();
     int charNo = node.getCharno();
+    String originalName = node.getOriginalName();
+
     if (mapping != null) {
       OriginalMapping sourceMapping = mapping.getSourceMapping(sourceFile, lineNo, charNo);
       if (sourceMapping != null) {
         sourceFile = sourceMapping.getOriginalFile();
         lineNo = sourceMapping.getLineNumber();
         charNo = sourceMapping.getColumnPosition();
+        originalName = sourceMapping.getIdentifier();
       }
     }
 
     sourceFile = fixupSourceLocation(sourceFile);
-
-    String originalName = node.getOriginalName();
 
     // Rhino source lines are one based but for v3 source maps, we make
     // them zero based.

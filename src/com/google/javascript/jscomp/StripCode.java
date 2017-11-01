@@ -20,10 +20,8 @@ import com.google.javascript.jscomp.CodingConvention.SubclassRelationship;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-
 import java.util.HashSet;
 import java.util.Set;
-
 import javax.annotation.Nullable;
 
 /**
@@ -165,19 +163,19 @@ class StripCode implements CompilerPass {
           nameNode = next) {
         next = nameNode.getNext();
         String name = nameNode.getString();
-        if (isStripName(name) ||
-            isCallWhoseReturnValueShouldBeStripped(nameNode.getFirstChild())) {
+        if (isStripName(name)
+            || isCallWhoseReturnValueShouldBeStripped(nameNode.getFirstChild())) {
           // Remove the NAME.
           Scope scope = t.getScope();
           varsToRemove.add(scope.getVar(name));
           n.removeChild(nameNode);
-          compiler.reportCodeChange();
+          NodeUtil.markFunctionsDeleted(nameNode, compiler);
         }
       }
       if (!n.hasChildren()) {
         // Must also remove the VAR.
         replaceWithEmpty(n, parent);
-        compiler.reportCodeChange();
+        t.reportCodeChange();
       }
     }
 
@@ -204,7 +202,7 @@ class StripCode implements CompilerPass {
           //   NAME
           //   NUMBER|STRING|NAME|...
           if (parent.getFirstChild() == n && isReferenceToRemovedVar(t, n)) {
-            replaceHighestNestedCallWithNull(parent, parent.getParent());
+            replaceHighestNestedCallWithNull(t, parent, parent.getParent());
           }
           break;
 
@@ -227,18 +225,18 @@ class StripCode implements CompilerPass {
                 // Remove the assignment.
                 Node greatGrandparent = grandparent.getParent();
                 replaceWithEmpty(grandparent, greatGrandparent);
-                compiler.reportCodeChange();
+                t.reportCodeChange();
               } else {
                 // Substitute the r-value for the assignment.
                 Node rvalue = n.getNext();
                 parent.removeChild(rvalue);
                 grandparent.replaceChild(parent, rvalue);
-                compiler.reportCodeChange();
+                t.reportCodeChange();
               }
             } else {
               // The var reference is the r-value. Replace it with null.
               replaceWithNull(n, parent);
-              compiler.reportCodeChange();
+              t.reportCodeChange();
             }
           }
           break;
@@ -246,7 +244,7 @@ class StripCode implements CompilerPass {
         default:
           if (isReferenceToRemovedVar(t, n)) {
             replaceWithNull(n, parent);
-            compiler.reportCodeChange();
+            t.reportCodeChange();
           }
           break;
       }
@@ -258,23 +256,24 @@ class StripCode implements CompilerPass {
      * in a.b().c().d(), we'll have to remove all of the calls, and it
      * will take a few iterations through this loop to get up to d().
      */
-    void replaceHighestNestedCallWithNull(Node node, Node parent) {
+    void replaceHighestNestedCallWithNull(NodeTraversal t, Node node, Node parent) {
       Node ancestor = parent;
       Node ancestorChild = node;
+      Node ancestorParent;
       while (true) {
+        ancestorParent = ancestor.getParent();
+
         if (ancestor.getFirstChild() != ancestorChild) {
           replaceWithNull(ancestorChild, ancestor);
           break;
         }
         if (ancestor.isExprResult()) {
           // Remove the entire expression statement.
-          Node ancParent = ancestor.getParent();
-          replaceWithEmpty(ancestor, ancParent);
+          replaceWithEmpty(ancestor, ancestorParent);
           break;
         }
         if (ancestor.isAssign()) {
-          Node ancParent = ancestor.getParent();
-          ancParent.replaceChild(ancestor, ancestor.getLastChild().detach());
+          ancestorParent.replaceChild(ancestor, ancestor.getLastChild().detach());
           break;
         }
         if (!NodeUtil.isGet(ancestor)
@@ -282,10 +281,12 @@ class StripCode implements CompilerPass {
           replaceWithNull(ancestorChild, ancestor);
           break;
         }
+
+        // Is not executed on the last iteration so can't be used for change reporting.
         ancestorChild = ancestor;
-        ancestor = ancestor.getParent();
+        ancestor = ancestorParent;
       }
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
 
     /**
@@ -312,7 +313,7 @@ class StripCode implements CompilerPass {
         if (parent.isExprResult()) {
           Node grandparent = parent.getParent();
           replaceWithEmpty(parent, grandparent);
-          compiler.reportCodeChange();
+          compiler.reportChangeToEnclosingScope(grandparent);
         } else {
           t.report(n, STRIP_ASSIGNMENT_ERROR, lvalue.getQualifiedName());
         }
@@ -341,10 +342,11 @@ class StripCode implements CompilerPass {
         if (parent.isExprResult()) {
           Node grandparent = parent.getParent();
           replaceWithEmpty(parent, grandparent);
+          compiler.reportChangeToEnclosingScope(grandparent);
         } else {
           replaceWithEmpty(n, parent);
+          compiler.reportChangeToEnclosingScope(parent);
         }
-        compiler.reportCodeChange();
       }
     }
 
@@ -361,7 +363,7 @@ class StripCode implements CompilerPass {
       //   function
       //   arguments
       if (isMethodOrCtorCallThatTriggersRemoval(t, n, parent)) {
-        replaceHighestNestedCallWithNull(n, parent);
+        replaceHighestNestedCallWithNull(t, n, parent);
       }
     }
 
@@ -383,8 +385,9 @@ class StripCode implements CompilerPass {
         if (isStripName(key.getString())) {
           Node next = key.getNext();
           n.removeChild(key);
+          NodeUtil.markFunctionsDeleted(key, compiler);
           key = next;
-          compiler.reportCodeChange();
+          compiler.reportChangeToEnclosingScope(n);
         } else {
           key = key.getNext();
         }
@@ -602,6 +605,7 @@ class StripCode implements CompilerPass {
      */
     void replaceWithNull(Node n, Node parent) {
       parent.replaceChild(n, IR.nullNode());
+      NodeUtil.markFunctionsDeleted(n, compiler);
     }
 
     /**
@@ -613,6 +617,7 @@ class StripCode implements CompilerPass {
      */
     void replaceWithEmpty(Node n, Node parent) {
       NodeUtil.removeChild(parent, n);
+      NodeUtil.markFunctionsDeleted(n, compiler);
     }
   }
 }

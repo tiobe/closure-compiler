@@ -17,14 +17,14 @@
 package com.google.javascript.jscomp;
 
 import com.google.common.collect.Lists;
-import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import java.util.List;
 
 public class J2clPropertyInlinerPassTest extends CompilerTestCase {
 
-  public J2clPropertyInlinerPassTest() {
-    this.enableNormalize(); // Inlining will fail if normailization hasn't happened yet.
-    setAcceptedLanguage(LanguageMode.ECMASCRIPT6_TYPED);
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    enableNormalize(); // Inlining will fail if normailization hasn't happened yet.
   }
 
   @Override
@@ -33,10 +33,10 @@ public class J2clPropertyInlinerPassTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerOptions getOptions() {
-    CompilerOptions options = super.getOptions();
-    options.setJ2clPass(CompilerOptions.J2clPassMode.ON);
-    return options;
+  protected Compiler createCompiler() {
+    Compiler compiler = super.createCompiler();
+    J2clSourceFileChecker.markToRunJ2clPasses(compiler);
+    return compiler;
   }
 
   @Override
@@ -67,7 +67,7 @@ public class J2clPropertyInlinerPassTest extends CompilerTestCase {
                     + "var A$$0x = null;"
                     + "var x = A.x;")));
   }
-  
+
   public void testNoInlineNonJ2clPropsValue() {
     testDoesntChange(
         Lists.newArrayList(
@@ -86,8 +86,8 @@ public class J2clPropertyInlinerPassTest extends CompilerTestCase {
                     + "var x = A.x;")));
   }
 
-  // In this test we want to remove the j2cl property but not the entire Object.defineProperties
-  // since it also defines another non j2cl property.
+  // In this test we want to remove the J2CL property but not the entire Object.defineProperties
+  // since it also defines another non J2CL property.
   public void testNoStripDefineProperties() {
     test(
         Lists.newArrayList(

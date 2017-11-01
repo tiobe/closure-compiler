@@ -16,13 +16,16 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Predicate;
+import com.google.javascript.jscomp.MinimizedCondition.MeasuredNode;
 import com.google.javascript.jscomp.MinimizedCondition.MinimizationStyle;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.TernaryValue;
 
 /**
@@ -39,7 +42,6 @@ class PeepholeMinimizeConditions
   private static final int AND_PRECEDENCE = NodeUtil.precedence(Token.AND);
 
   private final boolean late;
-  private final boolean useTypes;
 
   /**
    * @param late When late is false, this mean we are currently running before
@@ -48,9 +50,8 @@ class PeepholeMinimizeConditions
    * merging statements with commas, etc). When this is true, we would
    * do anything to minimize for size.
    */
-  PeepholeMinimizeConditions(boolean late, boolean useTypes) {
+  PeepholeMinimizeConditions(boolean late) {
     this.late = late;
-    this.useTypes = useTypes;
   }
 
   /**
@@ -77,17 +78,14 @@ class PeepholeMinimizeConditions
         return tryMinimizeNot(node);
 
       case IF:
-        performCoercionSubstitutions(node.getFirstChild());
         performConditionSubstitutions(node.getFirstChild());
         return tryMinimizeIf(node);
 
       case EXPR_RESULT:
-        performCoercionSubstitutions(node.getFirstChild());
         performConditionSubstitutions(node.getFirstChild());
         return tryMinimizeExprResult(node);
 
       case HOOK:
-        performCoercionSubstitutions(node.getFirstChild());
         performConditionSubstitutions(node.getFirstChild());
         return tryMinimizeHook(node);
 
@@ -97,20 +95,12 @@ class PeepholeMinimizeConditions
         return node;
 
       case FOR:
-        if (!NodeUtil.isForIn(node)) {
-          tryJoinForCondition(node);
-          tryMinimizeCondition(NodeUtil.getConditionExpression(node));
-        }
+        tryJoinForCondition(node);
+        tryMinimizeCondition(NodeUtil.getConditionExpression(node));
         return node;
 
       case BLOCK:
         return tryReplaceIf(node);
-
-      case EQ:
-      case NE:
-      case SHEQ:
-      case SHNE:
-        return tryReplaceComparisonWithCoercion(node, true /* booleanResult */);
 
       default:
         return node; //Nothing changed
@@ -147,14 +137,14 @@ class PeepholeMinimizeConditions
         Node forCondition = NodeUtil.getConditionExpression(n);
         if (forCondition.isEmpty()) {
           n.replaceChild(forCondition, fixedIfCondition);
+          compiler.reportChangeToEnclosingScope(fixedIfCondition);
         } else {
           Node replacement = new Node(Token.AND);
           n.replaceChild(forCondition, replacement);
           replacement.addChildToBack(forCondition);
           replacement.addChildToBack(fixedIfCondition);
+          compiler.reportChangeToEnclosingScope(replacement);
         }
-
-        reportCodeChange();
       }
     }
   }
@@ -190,7 +180,7 @@ class PeepholeMinimizeConditions
             Node newCond = new Node(Token.OR, cond);
             nextNode.replaceChild(nextCond, newCond);
             newCond.addChildToBack(nextCond);
-            reportCodeChange();
+            compiler.reportChangeToEnclosingScope(newCond);
           } else if (nextElse != null
               && thenBranch.isEquivalentToTyped(nextElse)) {
             // Transform
@@ -203,10 +193,10 @@ class PeepholeMinimizeConditions
                 IR.not(cond).srcref(cond));
             nextNode.replaceChild(nextCond, newCond);
             newCond.addChildToBack(nextCond);
-            reportCodeChange();
+            compiler.reportChangeToEnclosingScope(newCond);
           }
-        } else if (nextNode != null && elseBranch == null &&
-            isReturnBlock(thenBranch) && isReturnExpression(nextNode)) {
+        } else if (nextNode != null && elseBranch == null
+            && isReturnBlock(thenBranch) && isReturnExpression(nextNode)) {
           Node thenExpr = null;
           // if(x)return; return 1 -> return x?void 0:1
           if (isReturnExpressBlock(thenBranch)) {
@@ -226,13 +216,13 @@ class PeepholeMinimizeConditions
                                     .srcref(child));
           n.replaceChild(child, returnNode);
           n.removeChild(nextNode);
-          reportCodeChange();
+          compiler.reportChangeToEnclosingScope(n);
           // everything else in the block is dead code.
           break;
         } else if (elseBranch != null && statementMustExitParent(thenBranch)) {
           child.removeChild(elseBranch);
           n.addChildAfter(elseBranch, child);
-          reportCodeChange();
+          compiler.reportChangeToEnclosingScope(n);
         }
       }
     }
@@ -314,7 +304,7 @@ class PeepholeMinimizeConditions
     if (follow == null || areMatchingExits(n, follow)) {
       Node replacement = IR.breakNode();
       n.replaceWith(replacement);
-      this.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(replacement);
       return replacement;
     }
 
@@ -356,8 +346,8 @@ class PeepholeMinimizeConditions
     // When follow is null, this mean the follow of a break target is the
     // end of a function. This means a break is same as return.
     if (follow == null || areMatchingExits(n, follow)) {
+      compiler.reportChangeToEnclosingScope(n);
       n.detach();
-      reportCodeChange();
       return null;
     }
 
@@ -398,7 +388,7 @@ class PeepholeMinimizeConditions
 
   static boolean isExceptionPossible(Node n) {
     // TODO(johnlenz): maybe use ControlFlowAnalysis.mayThrowException?
-    Preconditions.checkState(n.isReturn() || n.isThrow(), n);
+    checkState(n.isReturn() || n.isThrow(), n);
     return n.isThrow()
         || (n.hasChildren()
             && !NodeUtil.isLiteralValue(n.getLastChild(), true));
@@ -414,7 +404,7 @@ class PeepholeMinimizeConditions
    * Returns the replacement for n or the original if no change was made
    */
   private Node tryMinimizeNot(Node n) {
-    Preconditions.checkArgument(n.isNot());
+    checkArgument(n.isNot());
     Node parent = n.getParent();
 
     Node notChild = n.getFirstChild();
@@ -440,7 +430,7 @@ class PeepholeMinimizeConditions
     Node newOperator = n.removeFirstChild();
     newOperator.setToken(complementOperator);
     parent.replaceChild(n, newOperator);
-    reportCodeChange();
+    compiler.reportChangeToEnclosingScope(parent);
     return newOperator;
   }
 
@@ -452,17 +442,15 @@ class PeepholeMinimizeConditions
    * necessary.
    */
   private Node tryMinimizeExprResult(Node n) {
-    MinimizedCondition minCond =
-        MinimizedCondition.fromConditionNode(n.getFirstChild());
-    MinimizedCondition.MeasuredNode mNode =
+    Node originalExpr = n.getFirstChild();
+    MinimizedCondition minCond = MinimizedCondition.fromConditionNode(originalExpr);
+    MeasuredNode mNode =
         minCond.getMinimized(MinimizationStyle.ALLOW_LEADING_NOT);
-    Node placeholder = minCond.getPlaceholder();
-    if (mNode.getNode().isNot()) {
+    if (mNode.isNot()) {
       // Remove the leading NOT in the EXPR_RESULT.
-      n.replaceChild(placeholder, mNode.getNode().removeFirstChild());
-      reportCodeChange();
+      replaceNode(originalExpr, mNode.withoutNot());
     } else {
-      replaceNode(placeholder, mNode);
+      replaceNode(originalExpr, mNode);
     }
     return n;
   }
@@ -474,20 +462,19 @@ class PeepholeMinimizeConditions
    * necessary.
    */
   private Node tryMinimizeHook(Node n) {
-    MinimizedCondition minCond =
-      MinimizedCondition.fromConditionNode(n.getFirstChild());
-    MinimizedCondition.MeasuredNode mNode =
+    Node originalCond = n.getFirstChild();
+    MinimizedCondition minCond = MinimizedCondition.fromConditionNode(originalCond);
+    MeasuredNode mNode =
         minCond.getMinimized(MinimizationStyle.ALLOW_LEADING_NOT);
-    Node placeholder = minCond.getPlaceholder();
-    if (mNode.getNode().isNot()) {
+    if (mNode.isNot()) {
       // Swap the HOOK
       Node thenBranch = n.getSecondChild();
-      n.replaceChild(placeholder, mNode.getNode().removeFirstChild());
+      replaceNode(originalCond, mNode.withoutNot());
       n.removeChild(thenBranch);
       n.addChildToBack(thenBranch);
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(n);
     } else {
-      replaceNode(placeholder, mNode);
+      replaceNode(originalCond, mNode);
     }
     return n;
   }
@@ -514,21 +501,15 @@ class PeepholeMinimizeConditions
     Node thenBranch = originalCond.getNext();
     Node elseBranch = thenBranch.getNext();
 
-    MinimizedCondition minCond =
-        MinimizedCondition.fromConditionNode(originalCond);
-    originalCond = null;  // originalCond was mutated and should not be used.
+    MinimizedCondition minCond = MinimizedCondition.fromConditionNode(originalCond);
 
-    Node placeholder = minCond.getPlaceholder();
-
-    MinimizedCondition.MeasuredNode unnegatedCond;
-    MinimizedCondition.MeasuredNode shortCond;
     // Compute two minimized representations. The first representation counts
     // a leading NOT node, and the second ignores a leading NOT node.
     // If we can fold the if statement into a HOOK or boolean operation,
     // then the NOT node does not matter, and we prefer the second condition.
     // If we cannot fold the if statement, then we prefer the first condition.
-    unnegatedCond = minCond.getMinimized(MinimizationStyle.PREFER_UNNEGATED);
-    shortCond = minCond.getMinimized(MinimizationStyle.ALLOW_LEADING_NOT);
+    MeasuredNode unnegatedCond = minCond.getMinimized(MinimizationStyle.PREFER_UNNEGATED);
+    MeasuredNode shortCond = minCond.getMinimized(MinimizationStyle.ALLOW_LEADING_NOT);
 
     if (elseBranch == null) {
       if (isFoldableExpressBlock(thenBranch)) {
@@ -537,18 +518,19 @@ class PeepholeMinimizeConditions
           // Keep opportunities for CollapseProperties such as
           // a.longIdentifier || a.longIdentifier = ... -> var a = ...;
           // until CollapseProperties has been run.
-          replaceNode(placeholder, unnegatedCond);
+          replaceNode(originalCond, unnegatedCond);
           return n;
         }
 
-        if (shortCond.getNode().isNot()) {
+        if (shortCond.isNot()) {
           // if(!x)bar(); -> x||bar();
+          Node replacementCond = replaceNode(originalCond, shortCond.withoutNot()).detach();
           Node or = IR.or(
-              shortCond.getNode().removeFirstChild(),
+              replacementCond,
               expr.removeFirstChild()).srcref(n);
           Node newExpr = NodeUtil.newExpr(or);
           parent.replaceChild(n, newExpr);
-          reportCodeChange();
+          compiler.reportChangeToEnclosingScope(parent);
 
           return newExpr;
         }
@@ -556,29 +538,27 @@ class PeepholeMinimizeConditions
         // Preconditions.checkState(shortCond.isEquivalentTo(unnegatedCond));
 
         // if(x)foo(); -> x&&foo();
-        if (isLowerPrecedence(shortCond.getNode(), AND_PRECEDENCE) &&
-            isLowerPrecedence(expr.getFirstChild(),
-                AND_PRECEDENCE)) {
+        if (shortCond.isLowerPrecedenceThan(AND_PRECEDENCE)
+            && isLowerPrecedence(expr.getFirstChild(), AND_PRECEDENCE)) {
           // One additional set of parentheses is worth the change even if
           // there is no immediate code size win. However, two extra pair of
           // {}, we would have to think twice. (unless we know for sure the
           // we can further optimize its parent.
-          replaceNode(placeholder, shortCond);
+          replaceNode(originalCond, shortCond);
           return n;
         }
 
-        n.removeChild(placeholder);
-        Node and = IR.and(shortCond.getNode(), expr.removeFirstChild()).srcref(n);
+        Node replacementCond = replaceNode(originalCond, shortCond).detach();
+        Node and = IR.and(replacementCond, expr.removeFirstChild()).srcref(n);
         Node newExpr = NodeUtil.newExpr(and);
         parent.replaceChild(n, newExpr);
-        reportCodeChange();
+        compiler.reportChangeToEnclosingScope(parent);
 
         return newExpr;
       } else {
 
         // Try to combine two IF-ELSE
-        if (NodeUtil.isStatementBlock(thenBranch) &&
-            thenBranch.hasOneChild()) {
+        if (NodeUtil.isStatementBlock(thenBranch) && thenBranch.hasOneChild()) {
           Node innerIf = thenBranch.getFirstChild();
 
           if (innerIf.isIf()) {
@@ -586,17 +566,18 @@ class PeepholeMinimizeConditions
             Node innerThenBranch = innerCond.getNext();
             Node innerElseBranch = innerThenBranch.getNext();
 
-            if (innerElseBranch == null &&
-                 !(isLowerPrecedence(unnegatedCond.getNode(), AND_PRECEDENCE) &&
-                   isLowerPrecedence(innerCond, AND_PRECEDENCE))) {
+            if (innerElseBranch == null
+                 && !(unnegatedCond.isLowerPrecedenceThan(AND_PRECEDENCE)
+                   && isLowerPrecedence(innerCond, AND_PRECEDENCE))) {
+              Node replacementCond = replaceNode(originalCond, unnegatedCond).detach();
               n.detachChildren();
               n.addChildToBack(
                   IR.and(
-                      unnegatedCond.getNode(),
+                      replacementCond,
                       innerCond.detach())
-                      .srcref(placeholder));
+                      .srcref(originalCond));
               n.addChildToBack(innerThenBranch.detach());
-              reportCodeChange();
+              compiler.reportChangeToEnclosingScope(n);
               // Not worth trying to fold the current IF-ELSE into && because
               // the inner IF-ELSE wasn't able to be folded into && anyways.
               return n;
@@ -604,7 +585,7 @@ class PeepholeMinimizeConditions
           }
         }
       }
-      replaceNode(placeholder, unnegatedCond);
+      replaceNode(originalCond, unnegatedCond);
       return n;
     }
 
@@ -615,11 +596,11 @@ class PeepholeMinimizeConditions
 
     // if(!x)foo();else bar(); -> if(x)bar();else foo();
     // An additional set of curly braces isn't worth it.
-    if (shortCond.getNode().isNot() && !consumesDanglingElse(elseBranch)) {
-      n.replaceChild(placeholder, shortCond.getNode().removeFirstChild());
+    if (shortCond.isNot() && !consumesDanglingElse(elseBranch)) {
+      replaceNode(originalCond, shortCond.withoutNot());
       n.removeChild(thenBranch);
       n.addChildToBack(thenBranch);
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(n);
       return n;
     }
 
@@ -627,7 +608,8 @@ class PeepholeMinimizeConditions
     if (isReturnExpressBlock(thenBranch) && isReturnExpressBlock(elseBranch)) {
       Node thenExpr = getBlockReturnExpression(thenBranch);
       Node elseExpr = getBlockReturnExpression(elseBranch);
-      n.removeChild(placeholder);
+
+      Node replacementCond = replaceNode(originalCond, shortCond).detach();
       thenExpr.detach();
       elseExpr.detach();
 
@@ -635,10 +617,10 @@ class PeepholeMinimizeConditions
       // can be converted to "return undefined;" or some variant, but
       // that does not help code size.
       Node returnNode = IR.returnNode(
-                            IR.hook(shortCond.getNode(), thenExpr, elseExpr)
+                            IR.hook(replacementCond, thenExpr, elseExpr)
                                 .srcref(n));
       parent.replaceChild(n, returnNode);
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(returnNode);
       return returnNode;
     }
 
@@ -652,40 +634,40 @@ class PeepholeMinimizeConditions
         // if(x)a=1;else a=2; -> a=x?1:2;
         if (NodeUtil.isAssignmentOp(thenOp)) {
           Node lhs = thenOp.getFirstChild();
-          if (areNodesEqualForInlining(lhs, elseOp.getFirstChild()) &&
+          if (areNodesEqualForInlining(lhs, elseOp.getFirstChild())
               // if LHS has side effects, don't proceed [since the optimization
               // evaluates LHS before cond]
               // NOTE - there are some circumstances where we can
               // proceed even if there are side effects...
-              !mayEffectMutableState(lhs) &&
-              (!mayHaveSideEffects(unnegatedCond.getNode()) ||
-                  (thenOp.isAssign() && thenOp.getFirstChild().isName()))) {
+              && !mayEffectMutableState(lhs)
+              && (!mayHaveSideEffects(originalCond)
+                  || (thenOp.isAssign() && thenOp.getFirstChild().isName()))) {
 
-            n.removeChild(placeholder);
+            Node replacementCond = replaceNode(originalCond, shortCond).detach();
             Node assignName = thenOp.removeFirstChild();
             Node thenExpr = thenOp.removeFirstChild();
             Node elseExpr = elseOp.getLastChild();
             elseOp.removeChild(elseExpr);
 
-            Node hookNode = IR.hook(shortCond.getNode(), thenExpr, elseExpr)
+            Node hookNode = IR.hook(replacementCond, thenExpr, elseExpr)
                 .srcref(n);
             Node assign = new Node(thenOp.getToken(), assignName, hookNode).srcref(thenOp);
             Node expr = NodeUtil.newExpr(assign);
             parent.replaceChild(n, expr);
-            reportCodeChange();
+            compiler.reportChangeToEnclosingScope(parent);
 
             return expr;
           }
         }
       }
       // if(x)foo();else bar(); -> x?foo():bar()
-      n.removeChild(placeholder);
+      Node replacementCond = replaceNode(originalCond, shortCond).detach();
       thenOp.detach();
       elseOp.detach();
       Node expr = IR.exprResult(
-          IR.hook(shortCond.getNode(), thenOp, elseOp).srcref(n));
+          IR.hook(replacementCond, thenOp, elseOp).srcref(n));
       parent.replaceChild(n, expr);
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(parent);
       return expr;
     }
 
@@ -693,8 +675,8 @@ class PeepholeMinimizeConditions
     boolean elseBranchIsVar = isVarBlock(elseBranch);
 
     // if(x)var y=1;else y=2  ->  var y=x?1:2
-    if (thenBranchIsVar && elseBranchIsExpressionBlock &&
-        getBlockExpression(elseBranch).getFirstChild().isAssign()) {
+    if (thenBranchIsVar && elseBranchIsExpressionBlock
+        && getBlockExpression(elseBranch).getFirstChild().isAssign()) {
 
       Node var = getBlockVar(thenBranch);
       Node elseAssign = getBlockExpression(elseBranch).getFirstChild();
@@ -705,22 +687,21 @@ class PeepholeMinimizeConditions
       if (name1.hasChildren()
           && maybeName2.isName()
           && name1.getString().equals(maybeName2.getString())) {
-        Preconditions.checkState(name1.hasOneChild());
+        checkState(name1.hasOneChild());
         Node thenExpr = name1.removeFirstChild();
         Node elseExpr = elseAssign.getLastChild().detach();
-        placeholder.detach();
-        Node hookNode = IR.hook(shortCond.getNode(), thenExpr, elseExpr)
-                            .srcref(n);
+        Node replacementCond = replaceNode(originalCond, shortCond).detach();
+        Node hookNode = IR.hook(replacementCond, thenExpr, elseExpr).srcref(n);
         var.detach();
         name1.addChildToBack(hookNode);
         parent.replaceChild(n, var);
-        reportCodeChange();
+        compiler.reportChangeToEnclosingScope(parent);
         return var;
       }
 
     // if(x)y=1;else var y=2  ->  var y=x?1:2
-    } else if (elseBranchIsVar && thenBranchIsExpressionBlock &&
-        getBlockExpression(thenBranch).getFirstChild().isAssign()) {
+    } else if (elseBranchIsVar && thenBranchIsExpressionBlock
+        && getBlockExpression(thenBranch).getFirstChild().isAssign()) {
 
       Node var = getBlockVar(elseBranch);
       Node thenAssign = getBlockExpression(thenBranch).getFirstChild();
@@ -732,21 +713,20 @@ class PeepholeMinimizeConditions
           && maybeName1.isName()
           && maybeName1.getString().equals(name2.getString())) {
         Node thenExpr = thenAssign.getLastChild().detach();
-        Preconditions.checkState(name2.hasOneChild());
+        checkState(name2.hasOneChild());
         Node elseExpr = name2.removeFirstChild();
-        placeholder.detach();
-        Node hookNode = IR.hook(shortCond.getNode(), thenExpr, elseExpr)
-                            .srcref(n);
+        Node replacementCond = replaceNode(originalCond, shortCond).detach();
+        Node hookNode = IR.hook(replacementCond, thenExpr, elseExpr).srcref(n);
         var.detach();
         name2.addChildToBack(hookNode);
         parent.replaceChild(n, var);
-        reportCodeChange();
+        compiler.reportChangeToEnclosingScope(parent);
 
         return var;
       }
     }
 
-    replaceNode(placeholder, unnegatedCond);
+    replaceNode(originalCond, unnegatedCond);
     return n;
   }
 
@@ -773,7 +753,7 @@ class PeepholeMinimizeConditions
    * @param n The IF node to examine.
    */
   private void tryRemoveRepeatedStatements(Node n) {
-    Preconditions.checkState(n.isIf(), n);
+    checkState(n.isIf(), n);
 
     Node parent = n.getParent();
     if (!NodeUtil.isStatementBlock(parent)) {
@@ -785,8 +765,8 @@ class PeepholeMinimizeConditions
     Node cond = n.getFirstChild();
     Node trueBranch = cond.getNext();
     Node falseBranch = trueBranch.getNext();
-    Preconditions.checkNotNull(trueBranch);
-    Preconditions.checkNotNull(falseBranch);
+    checkNotNull(trueBranch);
+    checkNotNull(falseBranch);
 
     while (true) {
       Node lastTrue = trueBranch.getLastChild();
@@ -798,7 +778,7 @@ class PeepholeMinimizeConditions
       lastTrue.detach();
       lastFalse.detach();
       parent.addChildAfter(lastTrue, n);
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(parent);
     }
   }
 
@@ -807,14 +787,14 @@ class PeepholeMinimizeConditions
    *     an expression.
    */
   private static boolean isFoldableExpressBlock(Node n) {
-    if (n.isBlock()) {
+    if (n.isNormalBlock()) {
       if (n.hasOneChild()) {
         Node maybeExpr = n.getFirstChild();
         if (maybeExpr.isExprResult()) {
           // IE has a bug where event handlers behave differently when
           // their return value is used vs. when their return value is in
           // an EXPR_RESULT. It's pretty freaking weird. See:
-          // http://code.google.com/p/closure-compiler/issues/detail?id=291
+          // http://blickly.github.io/closure-compiler-issues/#291
           // We try to detect this case, and not fold EXPR_RESULTs
           // into other expressions.
           if (maybeExpr.getFirstChild().isCall()) {
@@ -824,8 +804,8 @@ class PeepholeMinimizeConditions
             // param, or this doesn't happen.
             if (calledFn.isGetElem()) {
               return false;
-            } else if (calledFn.isGetProp() &&
-                       calledFn.getLastChild().getString().startsWith("on")) {
+            } else if (calledFn.isGetProp()
+                       && calledFn.getLastChild().getString().startsWith("on")) {
               return false;
             }
           }
@@ -843,7 +823,7 @@ class PeepholeMinimizeConditions
    * @return The expression node.
    */
   private static Node getBlockExpression(Node n) {
-    Preconditions.checkState(isFoldableExpressBlock(n));
+    checkState(isFoldableExpressBlock(n));
     return n.getFirstChild();
   }
 
@@ -852,7 +832,7 @@ class PeepholeMinimizeConditions
    *     an return with or without an expression.
    */
   private static boolean isReturnBlock(Node n) {
-    if (n.isBlock()) {
+    if (n.isNormalBlock()) {
       if (n.hasOneChild()) {
         Node first = n.getFirstChild();
         return first.isReturn();
@@ -867,7 +847,7 @@ class PeepholeMinimizeConditions
    *     an return.
    */
   private static boolean isReturnExpressBlock(Node n) {
-    if (n.isBlock()) {
+    if (n.isNormalBlock()) {
       if (n.hasOneChild()) {
         Node first = n.getFirstChild();
         if (first.isReturn()) {
@@ -893,7 +873,7 @@ class PeepholeMinimizeConditions
    * @return The expression that is part of the return.
    */
   private static Node getBlockReturnExpression(Node n) {
-    Preconditions.checkState(isReturnExpressBlock(n));
+    checkState(isReturnExpressBlock(n));
     return n.getFirstFirstChild();
   }
 
@@ -902,7 +882,7 @@ class PeepholeMinimizeConditions
    *     a VAR declaration of a single variable.
    */
   private static boolean isVarBlock(Node n) {
-    if (n.isBlock()) {
+    if (n.isNormalBlock()) {
       if (n.hasOneChild()) {
         Node first = n.getFirstChild();
         if (first.isVar()) {
@@ -918,7 +898,7 @@ class PeepholeMinimizeConditions
    * @return The var node.
    */
   private static Node getBlockVar(Node n) {
-    Preconditions.checkState(isVarBlock(n));
+    checkState(isVarBlock(n));
     return n.getFirstChild();
   }
 
@@ -938,7 +918,7 @@ class PeepholeMinimizeConditions
           n = n.getLastChild();
           continue;
         case BLOCK:
-          if (n.getChildCount() != 1) {
+          if (!n.hasOneChild()) {
             return false;
           }
           // This BLOCK has no curly braces.
@@ -947,6 +927,7 @@ class PeepholeMinimizeConditions
         case WITH:
         case WHILE:
         case FOR:
+        case FOR_IN:
           n = n.getLastChild();
           continue;
         default:
@@ -958,7 +939,7 @@ class PeepholeMinimizeConditions
   /**
    * Whether the node type has lower precedence than "precedence"
    */
-  static boolean isLowerPrecedence(Node n, final int precedence) {
+  static boolean isLowerPrecedence(Node n, int precedence) {
     return NodeUtil.precedence(n.getToken()) < precedence;
   }
 
@@ -970,8 +951,8 @@ class PeepholeMinimizeConditions
         new Predicate<Node>() {
       @Override
       public boolean apply(Node input) {
-        return (input.isGetProp() &&
-            input.getParent().isAssign());
+        return (input.isGetProp()
+            && input.getParent().isAssign());
       }
     };
 
@@ -987,160 +968,20 @@ class PeepholeMinimizeConditions
    * @return The replacement for n, or the original if no change was made.
    */
   private Node tryMinimizeCondition(Node n) {
-    n = performCoercionSubstitutions(n);
     n = performConditionSubstitutions(n);
     MinimizedCondition minCond = MinimizedCondition.fromConditionNode(n);
     return replaceNode(
-        minCond.getPlaceholder(),
+        n,
         minCond.getMinimized(MinimizationStyle.PREFER_UNNEGATED));
   }
 
-  /**
-   * Replaces 'foo ==/!=/===/!== null' with 'foo' or '!foo'. Should only be used for expressions
-   * used in conditions where the final result is coerced to a boolean.
-   *
-   * @return The replacement for n, or the original if no change was made.
-   */
-  private Node performCoercionSubstitutions(Node n) {
-    if (!useTypes) {
-      return n;
-    }
-
-    switch (n.getToken()) {
-      case OR:
-      case AND:
-        performCoercionSubstitutions(n.getFirstChild());
-        performCoercionSubstitutions(n.getLastChild());
-        break;
-
-      case EQ:
-      case NE:
-      case SHEQ:
-      case SHNE:
-        return tryReplaceComparisonWithCoercion(n, false /* booleanResult */);
-      default:
-        break;
-    }
-    return n;
-  }
-
-  /**
-   * Replaces comparisons (e.g. obj == null, num == 0) with the equivalent type
-   * coercion (e.g. !obj, !num), if possible.
-   * @param n a comparison node
-   * @param booleanResult whether the replacement must evaluate to a boolean
-   * @return the replacement node or the original node if no replacement was made
-   */
-  private Node tryReplaceComparisonWithCoercion(Node n, boolean booleanResult) {
-    if (!useTypes) {
-      return n;
-    }
-
-    Token op = n.getToken();
-    Preconditions.checkArgument(
-        op == Token.EQ || op == Token.NE || op == Token.SHEQ || op == Token.SHNE);
-
-    Node left = n.getFirstChild();
-    Node right = n.getLastChild();
-    BooleanCoercability booleanCoercability =
-        canConvertComparisonToBooleanCoercion(left, right, op);
-    if (booleanCoercability != BooleanCoercability.NONE) {
-      n.detachChildren();
-      Node objExpression = booleanCoercability == BooleanCoercability.LEFT ? left : right;
-      Node replacement;
-      if (n.getToken() == Token.EQ || n.getToken() == Token.SHEQ) {
-        replacement = IR.not(objExpression);
-      } else {
-        replacement = booleanResult ? IR.not(IR.not(objExpression)) : objExpression;
-      }
-      n.replaceWith(replacement);
-      reportCodeChange();
+  private Node replaceNode(Node original, MeasuredNode measuredNodeReplacement) {
+    if (measuredNodeReplacement.willChange(original)) {
+      Node replacement = measuredNodeReplacement.applyTo(original);
+      compiler.reportChangeToEnclosingScope(replacement);
       return replacement;
     }
-    return n;
-  }
-
-  /**
-   * The ability of a comparison node to be converted to a coercion.
-   */
-  private enum BooleanCoercability {
-    // Comparison cannot be converted to coercion.
-    NONE,
-    // Comparison can be converted to coercion of the left child.
-    LEFT,
-    // Comparison can be converted to coercion of the right child.
-    RIGHT
-  }
-
-  private static BooleanCoercability canConvertComparisonToBooleanCoercion(
-      Node left, Node right, Token op) {
-    // Convert null or undefined check of an object to coercion.
-    boolean leftIsNull = left.isNull();
-    boolean rightIsNull = right.isNull();
-    boolean leftIsUndefined = NodeUtil.isUndefined(left);
-    boolean rightIsUndefined = NodeUtil.isUndefined(right);
-    boolean leftIsNullOrUndefined = leftIsNull || leftIsUndefined;
-    boolean rightIsNullOrUndefined = rightIsNull || rightIsUndefined;
-
-    boolean leftIsObjectType = isObjectType(left);
-    boolean rightIsObjectType = isObjectType(right);
-    if (op == Token.SHEQ || op == Token.SHNE) {
-      if ((leftIsObjectType && !left.getJSType().isVoidable() && rightIsNull)
-          || (leftIsObjectType && !left.getJSType().isNullable() && rightIsUndefined)
-          || (rightIsObjectType && !right.getJSType().isVoidable() && leftIsNull)
-          || (rightIsObjectType && !right.getJSType().isNullable() && leftIsUndefined)) {
-        return leftIsNullOrUndefined ? BooleanCoercability.RIGHT : BooleanCoercability.LEFT;
-      }
-    } else {
-      if ((leftIsObjectType && rightIsNullOrUndefined)
-          || (rightIsObjectType && leftIsNullOrUndefined)) {
-        return leftIsNullOrUndefined ? BooleanCoercability.RIGHT : BooleanCoercability.LEFT;
-      }
-    }
-
-    // Convert comparing a number to zero with coercion.
-    boolean leftIsZero = (left.isNumber() && left.getDouble() == 0);
-    boolean rightIsZero = (right.isNumber() && right.getDouble() == 0);
-    boolean leftIsNumberType = isNumberType(left);
-    boolean rightIsNumberType = isNumberType(right);
-    if ((leftIsNumberType && rightIsZero) || (rightIsNumberType && leftIsZero)) {
-      return leftIsZero ? BooleanCoercability.RIGHT : BooleanCoercability.LEFT;
-    }
-
-    return BooleanCoercability.NONE;
-  }
-
-  private static boolean isObjectType(Node n) {
-    JSType jsType = n.getJSType();
-    if (jsType == null) {
-      return false;
-    }
-    jsType = jsType.restrictByNotNullOrUndefined();
-    return !jsType.isUnknownType()
-        && !jsType.isNoType()
-        && !jsType.isAllType()
-        && jsType.isObject();
-  }
-
-  private static boolean isNumberType(Node n) {
-    JSType jsType = n.getJSType();
-    if (jsType == null) {
-      return false;
-    }
-    // Don't restrict by nullable. Nullable numbers are not coercable.
-    return !jsType.isUnknownType()
-        && !jsType.isNoType()
-        && !jsType.isAllType()
-        && jsType.isNumberValueType();
-  }
-
-  private Node replaceNode(Node lhs, MinimizedCondition.MeasuredNode rhs) {
-    Node parent = lhs.getParent();
-    parent.replaceChild(lhs, rhs.getNode());
-    if (rhs.isChanged()) {
-      reportCodeChange();
-    }
-    return rhs.getNode();
+    return original;
   }
 
   /**
@@ -1151,6 +992,7 @@ class PeepholeMinimizeConditions
    *   x && true        --> x
    *   x ? false : true --> !x
    *   x ? true : y     --> x || y
+   *   x ? x : y        --> x || y
    *
    *   Returns the replacement for n, or the original if no change was made
    */
@@ -1207,7 +1049,7 @@ class PeepholeMinimizeConditions
           if (replacement != null) {
             n.detachChildren();
             parent.replaceChild(n, replacement);
-            reportCodeChange();
+            compiler.reportChangeToEnclosingScope(parent);
             return replacement;
           }
         }
@@ -1225,11 +1067,14 @@ class PeepholeMinimizeConditions
         trueNode = performConditionSubstitutions(trueNode);
         falseNode = performConditionSubstitutions(falseNode);
 
-        // Handle four cases:
+        // Handle five cases:
         //   x ? true : false --> x
         //   x ? false : true --> !x
         //   x ? true : y     --> x || y
         //   x ? y : false    --> x && y
+
+        //   Only when x is NAME, hence x does not have side effects
+        //   x ? x : y        --> x || y
         Node replacement = null;
         TernaryValue trueNodeVal = NodeUtil.getPureBooleanValue(trueNode);
         TernaryValue falseNodeVal = NodeUtil.getPureBooleanValue(falseNode);
@@ -1251,12 +1096,18 @@ class PeepholeMinimizeConditions
           // Remove useless false case
           n.detachChildren();
           replacement = IR.and(condition, trueNode);
+        } else if (!mayHaveSideEffects(condition)
+            && !mayHaveSideEffects(trueNode)
+            && condition.isEquivalentTo(trueNode)) {
+          // Remove redundant condition
+          n.detachChildren();
+          replacement = IR.or(trueNode, falseNode);
         }
 
         if (replacement != null) {
           parent.replaceChild(n, replacement);
+          compiler.reportChangeToEnclosingScope(replacement);
           n = replacement;
-          reportCodeChange();
         }
 
         return n;
@@ -1285,7 +1136,8 @@ class PeepholeMinimizeConditions
     Node newNode = IR.number(num);
     if (!newNode.isEquivalentTo(n)) {
       parent.replaceChild(n, newNode);
-      reportCodeChange();
+      compiler.reportChangeToEnclosingScope(newNode);
+      NodeUtil.markFunctionsDeleted(n, compiler);
 
       return newNode;
     }

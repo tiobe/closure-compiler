@@ -19,7 +19,6 @@ package com.google.javascript.jscomp;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.Node;
 import com.google.protobuf.TextFormat;
-
 import java.io.IOException;
 import java.util.List;
 
@@ -35,7 +34,8 @@ public final class InstrumentFunctionsTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() {
+  protected void setUp() throws Exception {
+    super.setUp();
     this.instrumentationPb = null;
   }
 
@@ -126,7 +126,7 @@ public final class InstrumentFunctionsTest extends CompilerTestCase {
 
   public void testEmpty() {
     this.instrumentationPb = "";
-    test("function a(){b}", "function a(){b}");
+    testSame("function a(){b}");
   }
 
   public void testAppNameSetter() {
@@ -252,7 +252,7 @@ public final class InstrumentFunctionsTest extends CompilerTestCase {
 
     @Override
     public void process(Node externs, Node root) {
-      FunctionNames functionNames = new FunctionNames(compiler);
+      CollectFunctionNames functionNames = new CollectFunctionNames(compiler);
       functionNames.process(externs, root);
 
       Instrumentation.Builder builder = Instrumentation.newBuilder();
@@ -263,7 +263,7 @@ public final class InstrumentFunctionsTest extends CompilerTestCase {
       }
 
       InstrumentFunctions instrumentation = new InstrumentFunctions(
-          compiler, functionNames, builder.build(), "testfile.js");
+          compiler, functionNames.getFunctionNames(), builder.build(), "testfile.js");
       instrumentation.process(externs, root);
     }
   }

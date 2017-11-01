@@ -16,10 +16,11 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.jscomp.ControlFlowGraph.Branch;
 import com.google.javascript.jscomp.NodeTraversal.AbstractShallowCallback;
-import com.google.javascript.jscomp.NodeTraversal.FunctionCallback;
+import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphEdge;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
 import com.google.javascript.jscomp.graph.GraphReachability;
@@ -50,20 +51,17 @@ class UnreachableCodeElimination implements CompilerPass {
   private static final Logger logger =
     Logger.getLogger(UnreachableCodeElimination.class.getName());
   private final AbstractCompiler compiler;
-  private final boolean removeNoOpStatements;
   private boolean codeChanged;
 
-  UnreachableCodeElimination(AbstractCompiler compiler,
-      boolean removeNoOpStatements) {
+  UnreachableCodeElimination(AbstractCompiler compiler) {
     this.compiler = compiler;
-    this.removeNoOpStatements = removeNoOpStatements;
   }
 
   @Override
   public void process(Node externs, Node toplevel) {
-    NodeTraversal.traverseChangedFunctions(compiler, new FunctionCallback() {
+    NodeTraversal.traverseChangedFunctions(compiler, new ChangeScopeRootCallback() {
         @Override
-        public void enterFunction(AbstractCompiler compiler, Node root) {
+        public void enterChangeScopeRoot(AbstractCompiler compiler, Node root) {
           // Computes the control flow graph.
           ControlFlowAnalysis cfa =
               new ControlFlowAnalysis(compiler, false, false);
@@ -97,8 +95,8 @@ class UnreachableCodeElimination implements CompilerPass {
       if (gNode == null) { // Not in CFG.
         return;
       }
-      if (gNode.getAnnotation() != GraphReachability.REACHABLE ||
-          (removeNoOpStatements && !NodeUtil.mayHaveSideEffects(n, compiler))) {
+      if (gNode.getAnnotation() != GraphReachability.REACHABLE
+          || !NodeUtil.mayHaveSideEffects(n, compiler)) {
         removeDeadExprStatementSafely(n);
         return;
       }
@@ -107,7 +105,7 @@ class UnreachableCodeElimination implements CompilerPass {
 
     /**
      * Tries to remove n if it is an unconditional branch node (break, continue,
-     * or return) and the target of n is the same as the the follow of n.
+     * or return) and the target of n is the same as the follow of n.
      * That is, if removing n preserves the control flow. Also if n targets
      * another unconditional branch, this function will recursively try to
      * remove the target branch as well. The reason why we want to cascade this
@@ -154,12 +152,12 @@ class UnreachableCodeElimination implements CompilerPass {
           // branches to the same node. If after removing it control still
           // branches to the same node, it is safe to remove.
           List<DiGraphEdge<Node, Branch>> outEdges = gNode.getOutEdges();
-          if (outEdges.size() == 1 &&
+          if (outEdges.size() == 1
+              &&
               // If there is a next node, this jump is not useless.
               (n.getNext() == null || n.getNext().isFunction())) {
 
-            Preconditions.checkState(
-                outEdges.get(0).getValue() == Branch.UNCOND);
+            checkState(outEdges.get(0).getValue() == Branch.UNCOND);
             Node fallThrough = computeFollowing(n);
             Node nextCfgNode = outEdges.get(0).getDestination().getValue();
             if (nextCfgNode == fallThrough && !inFinally(n.getParent(), n)) {
@@ -184,7 +182,7 @@ class UnreachableCodeElimination implements CompilerPass {
 
     private Node computeFollowing(Node n) {
       Node next = ControlFlowAnalysis.computeFollowNode(n);
-      while (next != null && next.isBlock()) {
+      while (next != null && next.isNormalBlock()) {
         if (next.hasChildren()) {
           next = next.getFirstChild();
         } else {
@@ -196,19 +194,18 @@ class UnreachableCodeElimination implements CompilerPass {
 
     private void removeDeadExprStatementSafely(Node n) {
       Node parent = n.getParent();
-      if (n.isEmpty() || (n.isBlock() && !n.hasChildren())) {
+      if (n.isEmpty() || (n.isNormalBlock() && !n.hasChildren())) {
         // Not always trivial to remove, let FoldConstants work its magic later.
         return;
       }
 
-      // TODO(user): This is a problem with removeNoOpStatements.
-      // Every expression in a FOR-IN header looks side effect free on its own.
-      if (NodeUtil.isForIn(parent)) {
+      // Every expression in a FOR-IN or FOR-OF header looks side effect free on its own.
+      if (NodeUtil.isEnhancedFor(parent)) {
         return;
       }
 
       switch (n.getToken()) {
-        // In the CFG, the only incoming edges the the DO node are from
+        // In the CFG, the only incoming edges of the DO node are from
         // breaks/continues and the condition. The edge from the previous
         // statement connects directly to the body of the DO.
         //
@@ -231,6 +228,8 @@ class UnreachableCodeElimination implements CompilerPass {
           Node tryNode = parent.getParent();
           NodeUtil.maybeAddFinally(tryNode);
           break;
+        case EXPORT:
+          return;
         default:
           break;
       }
@@ -259,6 +258,7 @@ class UnreachableCodeElimination implements CompilerPass {
         logger.fine("Removing " + n);
       }
       NodeUtil.removeChild(n.getParent(), n);
+      NodeUtil.markFunctionsDeleted(n, compiler);
     }
   }
 }

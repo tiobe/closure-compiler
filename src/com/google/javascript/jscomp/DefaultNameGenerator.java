@@ -20,6 +20,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Chars;
 import com.google.javascript.rhino.TokenStream;
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -35,10 +36,10 @@ import javax.annotation.Nullable;
 final class DefaultNameGenerator implements NameGenerator {
 
   /**
-   * Represents a char that can be used in renaming as well as how often
-   * that char appears in the generated code.
+   * Represents a char that can be used in renaming as well as how often that char appears in the
+   * generated code.
    */
-  private static final class CharPriority implements Comparable<CharPriority>{
+  private static final class CharPriority implements Comparable<CharPriority>, Serializable {
     final char name;
     int occurrence;
 
@@ -106,20 +107,30 @@ final class DefaultNameGenerator implements NameGenerator {
     reset(reservedNames, "", null);
   }
 
+  public DefaultNameGenerator(
+      Set<String> reservedNames, String prefix, @Nullable char[] reservedCharacters) {
+    this(reservedNames, prefix, reservedCharacters, reservedCharacters);
+  }
+
   /**
    * Creates a DefaultNameGenerator.
    *
-   * @param reservedNames set of names that are reserved; generated names will
-   *   not include these names. This set is referenced rather than copied,
-   *   so changes to the set will be reflected in how names are generated.
+   * @param reservedNames set of names that are reserved; generated names will not include these
+   *     names. This set is referenced rather than copied, so changes to the set will be reflected
+   *     in how names are generated.
    * @param prefix all generated names begin with this prefix.
-   * @param reservedCharacters If specified these characters won't be used in
-   *   generated names
+   * @param reservedFirstCharacters If specified these characters won't be used in generated names
+   *     for the first character
+   * @param reservedNonFirstCharacters If specified these characters won't be used in generated
+   *     names for characters after the first
    */
-  public DefaultNameGenerator(Set<String> reservedNames, String prefix,
-      @Nullable char[] reservedCharacters) {
+  public DefaultNameGenerator(
+      Set<String> reservedNames,
+      String prefix,
+      @Nullable char[] reservedFirstCharacters,
+      @Nullable char[] reservedNonFirstCharacters) {
     buildPriorityLookupMap();
-    reset(reservedNames, prefix, reservedCharacters);
+    reset(reservedNames, prefix, reservedFirstCharacters, reservedNonFirstCharacters);
   }
 
   private DefaultNameGenerator(Set<String> reservedNames, String prefix,
@@ -134,7 +145,7 @@ final class DefaultNameGenerator implements NameGenerator {
       this.priorityLookupMap.put(entry.getKey(), entry.getValue().clone());
     }
 
-    reset(reservedNames, prefix, reservedCharacters);
+    reset(reservedNames, prefix, reservedCharacters, reservedCharacters);
   }
 
   private void buildPriorityLookupMap() {
@@ -146,26 +157,31 @@ final class DefaultNameGenerator implements NameGenerator {
     }
   }
 
+  @Override
+  public void reset(Set<String> reservedNames, String prefix, @Nullable char[] reservedCharacters) {
+    reset(reservedNames, prefix, reservedCharacters, reservedCharacters);
+  }
+
   /**
-   * Note that the history of what characters are most used in the program
-   * (set through calls to 'favor') is not deleted. Upon 'reset', that history
-   * is taken into account for the names that will be generated later: it
-   * re-calculates how characters are prioritized based on how often the they
-   * appear in the final output.
+   * Note that the history of what characters are most used in the program (set through calls to
+   * 'favor') is not deleted. Upon 'reset', that history is taken into account for the names that
+   * will be generated later: it re-calculates how characters are prioritized based on how often the
+   * they appear in the final output.
    */
   @Override
   public void reset(
       Set<String> reservedNames,
       String prefix,
-      @Nullable char[] reservedCharacters) {
+      @Nullable char[] reservedFirstCharacters,
+      @Nullable char[] reservedNonFirstCharacters) {
 
     this.reservedNames = reservedNames;
     this.prefix = prefix;
     this.nameCount = 0;
 
     // build the character arrays to use
-    this.firstChars = reserveCharacters(FIRST_CHAR, reservedCharacters);
-    this.nonFirstChars = reserveCharacters(NONFIRST_CHAR, reservedCharacters);
+    this.firstChars = reserveCharacters(FIRST_CHAR, reservedFirstCharacters);
+    this.nonFirstChars = reserveCharacters(NONFIRST_CHAR, reservedNonFirstCharacters);
     Arrays.sort(firstChars);
     Arrays.sort(nonFirstChars);
 

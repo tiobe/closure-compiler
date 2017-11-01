@@ -15,13 +15,18 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.CheckRequiresForConstructors.EXTRA_REQUIRE_WARNING;
-import static com.google.javascript.jscomp.CheckRequiresForConstructors.MISSING_REQUIRE_WARNING;
+import static com.google.javascript.jscomp.CheckMissingAndExtraRequires.EXTRA_REQUIRE_WARNING;
+import static com.google.javascript.jscomp.CheckMissingAndExtraRequires.MISSING_REQUIRE_WARNING;
 
-/**
- * Tests for {@link CheckRequiresForConstructors} in single-file mode.
- */
-public final class SingleFileCheckRequiresTest extends Es6CompilerTestCase {
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+
+/** Tests for {@link CheckMissingAndExtraRequires} in single-file mode. */
+public final class SingleFileCheckRequiresTest extends CompilerTestCase {
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
+  }
 
   @Override
   protected CompilerOptions getOptions(CompilerOptions options) {
@@ -32,8 +37,8 @@ public final class SingleFileCheckRequiresTest extends Es6CompilerTestCase {
 
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
-    return new CheckRequiresForConstructors(compiler,
-        CheckRequiresForConstructors.Mode.SINGLE_FILE);
+    return new CheckMissingAndExtraRequires(
+        compiler, CheckMissingAndExtraRequires.Mode.SINGLE_FILE);
   }
 
   public void testReferenceToSingleName() {
@@ -48,10 +53,22 @@ public final class SingleFileCheckRequiresTest extends Es6CompilerTestCase {
     testSame("/** @constructor @extends {Array} */ function MyArray() {}");
   }
 
+  public void testCtorExtendsSingleName_withES6Modules() {
+    testSame("export /** @constructor @extends {Foo} */ function MyFoo() {}");
+    testSame("export /** @constructor @extends {Error} */ function MyError() {}");
+    testSame("export /** @constructor @extends {Array} */ function MyArray() {}");
+  }
+
   public void testClassExtendsSingleName() {
-    testSameEs6("class MyFoo extends Foo {}");
-    testSameEs6("class MyError extends Error {}");
-    testSameEs6("class MyArray extends Array {}");
+    testSame("class MyFoo extends Foo {}");
+    testSame("class MyError extends Error {}");
+    testSame("class MyArray extends Array {}");
+  }
+
+  public void testClassExtendsSingleName_withES6Modules() {
+    testSame("export class MyFoo extends Foo {}");
+    testSame("export class MyError extends Error {}");
+    testSame("export class MyArray extends Array {}");
   }
 
   public void testReferenceToQualifiedName() {
@@ -76,27 +93,27 @@ public final class SingleFileCheckRequiresTest extends Es6CompilerTestCase {
   }
 
   public void testReferenceToUnqualifiedName() {
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "goog.module('a.b.c');",
             "var z = goog.require('x.y.z');",
             "",
             "exports = { foobar : z };"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "goog.module('a.b.c');",
             "var {z} = goog.require('x.y');",
             "",
             "exports = { foobar : z };"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "import {z} from 'x.y'",
             "",
             "export var foobar = z;"));
 
-    testSameEs6(
+    testSame(
         LINE_JOINER.join(
             "import z from 'x.y.z'",
             "",
@@ -104,26 +121,106 @@ public final class SingleFileCheckRequiresTest extends Es6CompilerTestCase {
   }
 
   public void testExtraRequire() {
-    testErrorEs6("goog.require('foo.Bar');", EXTRA_REQUIRE_WARNING);
+    testError("goog.require('foo.Bar');", EXTRA_REQUIRE_WARNING);
+  }
+
+  public void testExtraImport() {
+    testError("import z from 'x.y';", EXTRA_REQUIRE_WARNING);
   }
 
   public void testUnqualifiedRequireUsedInJSDoc() {
-    testSameEs6("goog.require('Bar'); /** @type {Bar} */ var x;");
+    testSame("goog.require('Bar'); /** @type {Bar} */ var x;");
   }
 
   public void testUnqualifiedImportUsedInJSDoc() {
-    testSameEs6("import { Something } from 'somewhere'; /** @type {Something} */ var x;");
+    testSame("import { Something } from 'somewhere'; /** @type {Something} */ var x;");
   }
 
   public void testReferenceToSingleNameWithRequire() {
-    testSameEs6("goog.require('Foo'); new Foo();");
+    testSame("goog.require('Foo'); new Foo();");
+  }
+
+  public void testReferenceToSingleNameWithImport() {
+    testSame("import 'Foo'; new Foo();");
   }
 
   public void testReferenceInDefaultParam() {
-    testSameEs6("function func( a = new Bar() ){}; func();");
+    testSame("function func( a = new Bar() ){}; func();");
+  }
+
+  public void testReferenceInDefaultParam_withES6Modules() {
+    testSame("export function func( a = new Bar() ){}; func();");
   }
 
   public void testReferenceInDestructuringParam() {
-    testSameEs6("var {a = new Bar()} = b;");
+    testSame("var {a = new Bar()} = b;");
+  }
+
+  public void testReferenceInDestructuringParam_withES6Modules() {
+    testSame("export var {a = new Bar()} = b;");
+  }
+
+  public void testPassForwardDeclareInModule() {
+    testSame(
+        LINE_JOINER.join(
+            "goog.module('example');",
+            "",
+            "var Event = goog.forwardDeclare('goog.events.Event');",
+            "",
+            "/**",
+            " * @param {!Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}",
+            "",
+            "exports = listener;"));
+  }
+
+  public void testFailForwardDeclareInModule() {
+    testError(
+        LINE_JOINER.join(
+            "goog.module('example');",
+            "",
+            "var Event = goog.forwardDeclare('goog.events.Event');",
+            "var Unused = goog.forwardDeclare('goog.events.Unused');",
+            "",
+            "/**",
+            " * @param {!Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}",
+            "",
+            "exports = listener;"),
+        EXTRA_REQUIRE_WARNING);
+  }
+
+  public void testPassForwardDeclare() {
+    testSame(
+        LINE_JOINER.join(
+            "goog.forwardDeclare('goog.events.Event');",
+            "",
+            "/**",
+            " * @param {!goog.events.Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}"));
+  }
+
+  public void testFailForwardDeclare() {
+    testError(
+        LINE_JOINER.join(
+            "goog.forwardDeclare('goog.events.Event');",
+            "goog.forwardDeclare('goog.events.Unused');",
+            "",
+            "/**",
+            " * @param {!goog.events.Event} event",
+            " */",
+            "function listener(event) {",
+            "  alert(event);",
+            "}"),
+        EXTRA_REQUIRE_WARNING);
   }
 }

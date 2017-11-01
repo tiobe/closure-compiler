@@ -16,12 +16,12 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
 import com.google.javascript.jscomp.DefinitionsRemover.Definition;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -101,7 +101,7 @@ class OptimizeReturns
       Node useNodeParent = site.node.getParent();
       if (isCall(site)) {
         Node callNode = useNodeParent;
-        Preconditions.checkState(callNode.isCall());
+        checkState(callNode.isCall());
         if (NodeUtil.isExpressionResultUsed(callNode)) {
           return true;
         }
@@ -127,9 +127,10 @@ class OptimizeReturns
    */
   private void rewriteReturns(
       final DefinitionUseSiteFinder defFinder, Node fnNode) {
-    Preconditions.checkState(fnNode.isFunction());
+    checkState(fnNode.isFunction());
+    final Node body = fnNode.getLastChild();
     NodeUtil.visitPostOrder(
-      fnNode.getLastChild(),
+      body,
       new NodeUtil.Visitor() {
         @Override
         public void visit(Node node) {
@@ -143,8 +144,10 @@ class OptimizeReturns
             if (keepValue) {
               node.getParent().addChildBefore(
                 IR.exprResult(result).srcref(result), node);
+            } else {
+              NodeUtil.markFunctionsDeleted(result, compiler);
             }
-            compiler.reportCodeChange();
+            compiler.reportChangeToEnclosingScope(body);
           }
         }
       },

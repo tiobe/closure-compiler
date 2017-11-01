@@ -192,6 +192,8 @@ angular.module = function(name, opt_requires, opt_configFn) {};
 
 angular.noop = function() {};
 
+angular.reloadWithDebugInfo = function() {};
+
 /**
  * @param {Object|Array|Date|string|number|boolean} obj
  * @param {boolean=} opt_pretty
@@ -440,13 +442,16 @@ angular.Directive;
 
 
 
-/** @interface */
+/**
+ * @interface
+ * @template T
+ */
 angular.Change;
 
-/** @type {*} */
+/** @type {T} */
 angular.Change.prototype.currentValue;
 
-/** @type {*} */
+/** @type {T} */
 angular.Change.prototype.previousValue;
 
 /** @return {boolean} */
@@ -968,9 +973,10 @@ angular.Scope.prototype.$emit = function(name, args) {};
 angular.Scope.prototype.$eval = function(opt_exp, opt_locals) {};
 
 /**
- * @param {(string|function())=} opt_exp
+ * @param {(string|function(angular.Scope, ?))=} opt_exp
+ * @param {!Object=} opt_locals
  */
-angular.Scope.prototype.$evalAsync = function(opt_exp) {};
+angular.Scope.prototype.$evalAsync = function(opt_exp, opt_locals) {};
 
 /** @type {string} */
 angular.Scope.prototype.$id;
@@ -1286,6 +1292,12 @@ angular.$compileProvider = function() {};
 angular.$compileProvider.prototype.debugInfoEnabled = function(opt_enabled) {};
 
 /**
+ * @param {number} iterations
+ * @return {boolean|!angular.$compileProvider}
+ */
+angular.$compileProvider.prototype.onChangesTtl = function(iterations) {};
+
+/**
  * @param {!RegExp=} opt_expression
  * @return {!RegExp|!angular.$compileProvider}
  */
@@ -1298,6 +1310,27 @@ angular.$compileProvider.prototype.aHrefSanitizationWhitelist = function(
  */
 angular.$compileProvider.prototype.imgSrcSanitizationWhitelist = function(
     opt_expression) {};
+
+/**
+ * @param {boolean=} opt_enabled
+ * @return {boolean|!angular.$compileProvider}
+ */
+angular.$compileProvider.prototype.commentDirectivesEnabled = function(
+    opt_enabled) {};
+
+/**
+ * @param {boolean=} opt_enabled
+ * @return {boolean|!angular.$compileProvider}
+ */
+angular.$compileProvider.prototype.cssClassDirectivesEnabled = function(
+    opt_enabled) {};
+
+/**
+ * @param {boolean=} opt_enabled
+ * @return {boolean|!angular.$compileProvider}
+ */
+angular.$compileProvider.prototype.preAssignBindingsEnabled = function(
+    opt_enabled) {};
 
 /**
  * @param {string} name
@@ -1540,11 +1573,14 @@ angular.$http.Config.prototype.responseType;
 /** @type {(number|!angular.$q.Promise|undefined)} */
 angular.$http.Config.prototype.timeout;
 
+/** @typedef {function(string=): (?string | !Object<string>)} */
+angular.$http.HeadersGetter;
+
 /**
  * @type {
  *   (undefined|
- *    function(?, Object):?|
- *    Array<function(?, Object):?>)
+ *    function(?, !angular.$http.HeadersGetter):?|
+ *    !Array<function(?, !angular.$http.HeadersGetter):?>)
  * }
  */
 angular.$http.Config.prototype.transformRequest;
@@ -1552,8 +1588,8 @@ angular.$http.Config.prototype.transformRequest;
 /**
  * @type {
  *   (undefined|
- *    function(?, Object, Object):?|
- *    Array<function(?, Object, Object):?>)
+ *    function(?, !angular.$http.HeadersGetter, number):?|
+ *    !Array<function(?, !angular.$http.HeadersGetter, number):?>)
  * }
  */
 angular.$http.Config.prototype.transformResponse;
@@ -1844,7 +1880,8 @@ angular.$location.prototype.protocol = function() {};
 angular.$location.prototype.replace = function() {};
 
 /**
- * @param {(string|Object.<string, string>)=} opt_search
+ * @param {(string|Object.<string, string>|Object.<string, Array.<string>>)=}
+ *     opt_search
  * @param {?(string|Array.<string>|boolean|number)=} opt_paramValue
  * @return {(!Object|!angular.$location)}
  */
@@ -2170,8 +2207,16 @@ angular.FormController.prototype.$valid;
  */
 angular.$parse;
 
+/** @const */
+angular.parse = {};
+
 /**
  * @typedef {function((!angular.Scope|!Object), Object=):*}
+ */
+angular.parse.Expression;
+
+/**
+ * @typedef {angular.parse.Expression}
  */
 angular.$parse.Expression;
 

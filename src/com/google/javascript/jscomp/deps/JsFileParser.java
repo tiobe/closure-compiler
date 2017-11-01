@@ -16,6 +16,8 @@
 
 package com.google.javascript.jscomp.deps;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.annotations.GwtIncompatible;
 import com.google.common.base.CharMatcher;
 import com.google.javascript.jscomp.CheckLevel;
@@ -27,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -135,6 +138,7 @@ public final class JsFileParser extends JsFileLineParser {
    * @return this for easy chaining.
    */
   public JsFileParser setIncludeGoogBase(boolean include) {
+    checkState(JsFileParser.isSupported());
     includeGoogBase = include;
     return this;
   }
@@ -162,8 +166,7 @@ public final class JsFileParser extends JsFileLineParser {
    */
   public DependencyInfo parseFile(String filePath, String closureRelativePath,
       String fileContents) {
-    return parseReader(filePath, closureRelativePath,
-        new StringReader(fileContents));
+    return parseReader(filePath, closureRelativePath, new StringReader(fileContents));
   }
 
   private DependencyInfo parseReader(String filePath,
@@ -174,7 +177,9 @@ public final class JsFileParser extends JsFileLineParser {
     this.file = loader.resolve(filePath);
     this.moduleType = ModuleType.NON_MODULE;
 
-    logger.fine("Parsing Source: " + filePath);
+    if (logger.isLoggable(Level.FINE)) {
+      logger.fine("Parsing Source: " + filePath);
+    }
     doParse(filePath, fileContents);
 
     if (moduleType == ModuleType.ES6_MODULE) {
@@ -195,7 +200,9 @@ public final class JsFileParser extends JsFileLineParser {
 
     DependencyInfo dependencyInfo = new SimpleDependencyInfo(
         closureRelativePath, filePath, provides, requires, loadFlags);
-    logger.fine("DepInfo: " + dependencyInfo);
+    if (logger.isLoggable(Level.FINE)) {
+      logger.fine("DepInfo: " + dependencyInfo);
+    }
     return dependencyInfo;
   }
 
@@ -220,8 +227,7 @@ public final class JsFileParser extends JsFileLineParser {
       setModuleType(ModuleType.WRAPPED_GOOG_MODULE);
     }
 
-    // Quick sanity check that will catch most cases. This is a performance
-    // win for people with a lot of JS.
+    // Quick check that will catch most cases. This is a performance win for teams with a lot of JS.
     if (line.contains("provide")
         || line.contains("require")
         || line.contains("module")
@@ -281,7 +287,11 @@ public final class JsFileParser extends JsFileLineParser {
           if (arg.startsWith("goog:")) {
             requires.add(arg.substring(5)); // cut off the "goog:" prefix
           } else {
-            requires.add(file.resolveEs6Module(arg).toModuleName());
+            ModuleLoader.ModulePath path = file.resolveJsModule(arg);
+            if (path == null) {
+              path = file.resolveModuleAsPath(arg);
+            }
+            requires.add(path.toModuleName());
           }
         }
       }
@@ -297,5 +307,9 @@ public final class JsFileParser extends JsFileLineParser {
         || !line.contains(";")
         || line.contains("goog.setTestOnly")
         || line.contains("goog.module.declareLegacyNamespace");
+  }
+
+  public static boolean isSupported() {
+    return true;
   }
 }

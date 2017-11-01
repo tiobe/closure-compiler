@@ -20,13 +20,25 @@ package com.google.javascript.jscomp;
 public final class ImplicitNullabilityCheckTest extends TypeICompilerTestCase {
 
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerOptions getOptions(CompilerOptions options) {
+    options.setWarningLevel(DiagnosticGroups.ANALYZER_CHECKS, CheckLevel.WARNING);
+    return options;
+  }
+
+  @Override
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new ImplicitNullabilityCheck(compiler);
   }
 
   @Override
   protected int getNumRepetitions() {
     return 1;
+  }
+
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    enableTranspile();
   }
 
   public void testExplicitJsdocDoesntWarn() {
@@ -52,27 +64,33 @@ public final class ImplicitNullabilityCheckTest extends TypeICompilerTestCase {
     warnImplicitlyNullable("var /** Object */ x;");
     warnImplicitlyNullable("/** @typedef {Object} */ var x;");
     warnImplicitlyNullable("/** @param {Object} x */ function f(x){}");
-    warnImplicitlyNullable(
-        "/** @return {Object} */ function f(x){ return {}; }");
+    warnImplicitlyNullable("/** @return {Object} */ function f(x){ return {}; }");
+  }
+
+  public void testParameterizedObject() {
+    warnImplicitlyNullable(LINE_JOINER.join(
+        "/** @param {Object<string, string>=} opt_values */",
+        "function getMsg(opt_values) {};"));
   }
 
   public void testNullableTypedef() {
     // Arguable whether or not this deserves a warning, so leaving
     // out of NTI for now.
     this.mode = TypeInferenceMode.OTI_ONLY;
-    warnImplicitlyNullable(
-        "/** @typedef {?number} */ var Num; var /** Num */ x;");
+    warnImplicitlyNullable("/** @typedef {?number} */ var Num; var /** Num */ x;");
   }
 
-  public void testUnkownTypenameDoesntWarn() {
+  public void testUnknownTypenameDoesntWarn() {
     // Different warnings in OTI and NTI
     this.mode = TypeInferenceMode.OTI_ONLY;
     testSame(
-        DEFAULT_EXTERNS, "/** @type {gibberish} */ var x;", RhinoErrorReporter.TYPE_PARSE_ERROR);
+        DEFAULT_EXTERNS, "/** @type {gibberish} */ var x;",
+        RhinoErrorReporter.UNRECOGNIZED_TYPE_ERROR);
 
     this.mode = TypeInferenceMode.NTI_ONLY;
     testSame(
-        DEFAULT_EXTERNS, "/** @type {gibberish} */ var x;", GlobalTypeInfo.UNRECOGNIZED_TYPE_NAME);
+        DEFAULT_EXTERNS, "/** @type {gibberish} */ var x;",
+        GlobalTypeInfoCollector.UNRECOGNIZED_TYPE_NAME);
   }
 
   public void testThrowsDoesntWarn() {
@@ -108,6 +126,6 @@ public final class ImplicitNullabilityCheckTest extends TypeICompilerTestCase {
   }
 
   private void noWarning(String js) {
-    testSame(DEFAULT_EXTERNS, js, null);
+    testSame(DEFAULT_EXTERNS, js);
   }
 }

@@ -15,7 +15,10 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 
@@ -50,13 +53,14 @@ public final class DartSuperAccessorsPass implements NodeTraversal.Callback,
 
     this.renameProperties = options.propertyRenaming == PropertyRenamingPolicy.ALL_UNQUOTED;
 
-    Preconditions.checkState(options.getLanguageOut().isEs5OrHigher(),
+    checkState(
+        options.getLanguageOut().toFeatureSet().contains(FeatureSet.ES5),
         "Dart super accessors pass requires ES5+ output");
 
     // We currently rely on JSCompiler_renameProperty, which is not type-aware.
     // We would need something like goog.reflect.object (with the super class type),
     // but right now this would yield much larger code.
-    Preconditions.checkState(
+    checkState(
         !options.shouldAmbiguateProperties() && !options.shouldDisambiguateProperties(),
         "Dart super accessors pass is not compatible with property (dis)ambiguation yet");
   }
@@ -132,11 +136,12 @@ public final class DartSuperAccessorsPass implements NodeTraversal.Callback,
         IR.thisNode().srcref(superGet),
         superGet.isGetProp() ? renameProperty(name) : name);
     replace(superGet, callSuperGet);
-    reportEs6Change();
+    compiler.ensureLibraryInjected("es6_dart_runtime", false);
+    compiler.reportChangeToEnclosingScope(callSuperGet);
   }
 
   private void visitSuperSet(Node superSet) {
-    Preconditions.checkArgument(superSet.isAssign());
+    checkArgument(superSet.isAssign());
 
     // First, recurse on the assignment's right-hand-side.
     NodeTraversal.traverseEs6(compiler, superSet.getLastChild(), this);
@@ -151,12 +156,8 @@ public final class DartSuperAccessorsPass implements NodeTraversal.Callback,
         superGet.isGetProp() ? renameProperty(name) : name,
         rhs.cloneTree());
     replace(superSet, callSuperSet);
-    reportEs6Change();
-  }
-
-  private void reportEs6Change() {
     compiler.ensureLibraryInjected("es6_dart_runtime", false);
-    compiler.reportCodeChange();
+    compiler.reportChangeToEnclosingScope(callSuperSet);
   }
 
   private static Node replace(Node original, Node replacement) {
@@ -171,7 +172,7 @@ public final class DartSuperAccessorsPass implements NodeTraversal.Callback,
    * if such a pass is even used (see {@link #renameProperties}).
    */
   private Node renameProperty(Node propertyName) {
-    Preconditions.checkArgument(propertyName.isString());
+    checkArgument(propertyName.isString());
     if (!renameProperties) {
       return propertyName;
     }
@@ -192,6 +193,6 @@ public final class DartSuperAccessorsPass implements NodeTraversal.Callback,
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverse(compiler, scriptRoot, this);
+    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
   }
 }

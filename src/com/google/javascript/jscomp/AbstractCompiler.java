@@ -16,13 +16,15 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableMap;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.ReferenceCollection;
-import com.google.javascript.jscomp.TypeValidator.TypeMismatch;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.parsing.Config;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.trees.Comment;
 import com.google.javascript.jscomp.type.ReverseAbstractInterpreter;
 import com.google.javascript.rhino.ErrorReporter;
@@ -30,6 +32,7 @@ import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.TypeIRegistry;
 import com.google.javascript.rhino.jstype.JSTypeRegistry;
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,9 +49,9 @@ import javax.annotation.Nullable;
  */
 public abstract class AbstractCompiler implements SourceExcerptProvider {
   static final DiagnosticType READ_ERROR = DiagnosticType.error(
-      "JSC_READ_ERROR", "Cannot read: {0}");
+      "JSC_READ_ERROR", "Cannot read file {0}: {1}");
 
-  private final Map<String, Object> annotationMap = new HashMap<>();
+  protected Map<String, Object> annotationMap = new HashMap<>();
 
   /** Will be called before each pass runs. */
   abstract void beforePass(String passName);
@@ -70,10 +73,12 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    */
   public abstract CompilerInput getInput(InputId inputId);
 
-  /**
-   * Looks up a source file by name. May return null.
-   */
+  /** Looks up a source file by name. May return null. */
+  @Nullable
   abstract SourceFile getSourceFileByName(String sourceName);
+
+  @Nullable
+  abstract Node getScriptNode(String filename);
 
   /**
    * Gets the module graph. May return null if there aren't at least two
@@ -87,6 +92,53 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    */
   abstract List<CompilerInput> getInputsInOrder();
 
+  /**
+   * Gets the total number of inputs.
+   *
+   * <p>This can be useful as a guide for the initial allocated size for data structures.
+   */
+  abstract int getNumberOfInputs();
+
+  //
+  // Intermediate state and results produced and needed by particular passes.
+  // TODO(rluble): move these into the general structure for keeping state between pass runs.
+  //
+  /** Adds exported names to keep track. */
+  public abstract void addExportedNames(Set<String> exportedVariableNames);
+
+  /** Gets the names that have been exported. */
+  public abstract Set<String> getExportedNames();
+
+  /** Sets the variable renaming map */
+  public abstract void setVariableMap(VariableMap variableMap);
+
+  /** Sets the property renaming map */
+  public abstract void setPropertyMap(VariableMap propertyMap);
+
+  /** Sets the string replacement map */
+  public abstract void setStringMap(VariableMap stringMap);
+
+  /** Sets the fully qualified function name and globally unique id mapping. */
+  public abstract void setFunctionNames(FunctionNames functionNames);
+
+  /** Gets the fully qualified function name and globally unique id mapping. */
+  public abstract FunctionNames getFunctionNames();
+
+  /** Sets the css names found during compilation. */
+  public abstract void setCssNames(Map<String, Integer> newCssNames);
+
+  /** Sets the id generator for cross-module motion. */
+  public abstract void setIdGeneratorMap(String serializedIdMappings);
+
+  /** Gets the id generator for cross-module motion. */
+  public abstract IdGenerator getCrossModuleIdGenerator();
+
+  /** Sets the naming map for anonymous functions */
+  public abstract void setAnonymousFunctionNameMap(VariableMap functionMap);
+  //
+  // End of intermediate state needed by passes.
+  //
+
   static enum MostRecentTypechecker {
     NONE,
     OTI,
@@ -98,12 +150,17 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    */
   abstract void setMostRecentTypechecker(MostRecentTypechecker mostRecent);
 
+  /** Gets the type-checking pass that ran most recently. */
+  abstract MostRecentTypechecker getMostRecentTypechecker();
+
   /**
    * Gets a central registry of type information from the compiled JS.
    */
   public abstract JSTypeRegistry getTypeRegistry();
 
   public abstract TypeIRegistry getTypeIRegistry();
+
+  public abstract void clearTypeIRegistry();
 
   abstract void forwardDeclareType(String typeName);
 
@@ -118,6 +175,18 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   public abstract TypedScope getTopScope();
 
   /**
+   * Gets a memoized scope creator without type information, used by the checks and optimization
+   * passes to avoid continuously recreating the entire scope.
+   */
+  abstract IncrementalScopeCreator getScopeCreator();
+
+  /**
+   * Stores a memoized scope creator without type information, used by the checks and optimization
+   * passes to avoid continuously recreating the entire scope.
+   */
+  abstract void putScopeCreator(IncrementalScopeCreator creator);
+
+  /**
    * Report an error or warning.
    */
   public abstract void report(JSError error);
@@ -125,7 +194,7 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   /**
    * Report an internal error.
    */
-  abstract void throwInternalError(String msg, Exception cause);
+  abstract void throwInternalError(String msg, Throwable cause);
 
   /**
    * Gets the current coding convention.
@@ -137,13 +206,35 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    *
    * Passes should call reportCodeChange when they alter the JS tree. This is
    * verified by CompilerTestCase. This allows us to optimize to a fixed point.
+   *
+   * @deprecated
+   * Use #reportChangeToEnclosingScope or NodeTraversal#reportCodeChange instead
    */
+  @Deprecated
   public abstract void reportCodeChange();
+
+  /**
+   * Passes that make modifications in a scope that is different than the Compiler.currentScope use
+   * this (eg, InlineVariables and many others)
+   */
+  public abstract void reportChangeToEnclosingScope(Node n);
+
+  /**
+   * Mark modifications in a scope that is different than the Compiler.currentScope use this (eg,
+   * InlineVariables and many others)
+   */
+  public abstract void reportChangeToChangeScope(Node changeScopeRoot);
+
+  /**
+   * Mark a specific function node as known to be deleted. Is part of having accurate change
+   * tracking which is necessary to streamline optimizations.
+   */
+  abstract void reportFunctionDeleted(Node node);
 
   /**
    * Logs a message under a central logger.
    */
-  abstract void addToDebugLog(String message);
+  abstract void addToDebugLog(String... message);
 
   /**
    * Sets the CssRenamingMap.
@@ -186,9 +277,9 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   abstract Iterable<TypeMismatch> getImplicitInterfaceUses();
 
   /**
-   * Used only by the new type inference
+   * Global type registry used by NTI.
    */
-  abstract CompilerPass getSymbolTable();
+  abstract <T extends TypeIRegistry> T getGlobalTypeInfo();
 
   /**
    * Used by three passes that run in sequence (optimize-returns,
@@ -198,6 +289,8 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   abstract DefinitionUseSiteFinder getDefinitionFinder();
 
   abstract void setDefinitionFinder(DefinitionUseSiteFinder defFinder);
+
+  abstract void setExternExports(String externExports);
 
   /**
    * Parses code for injecting.
@@ -212,6 +305,7 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   /**
    * Parses code for testing.
    */
+  @VisibleForTesting
   abstract Node parseTestCode(String code);
 
   /**
@@ -262,17 +356,43 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    */
   abstract void removeChangeHandler(CodeChangeHandler handler);
 
-  /** Let the PhaseOptimizer know which scope a pass is currently analyzing */
-  abstract void setScope(Node n);
+  /** Register a provider for some type of index. */
+  abstract void addIndexProvider(IndexProvider<?> indexProvider);
+
+  /**
+   * Returns, from a provider, the desired index of type T, otherwise null if no provider is
+   * registered for the given type.
+   */
+  abstract <T> T getIndex(Class<T> type);
+
+  @Deprecated
+  abstract void setChangeScope(Node n);
+
+  /** A monotonically increasing value to identify a change */
+  abstract int getChangeStamp();
+
+  /**
+   * An accumulation of changed scope nodes since the last time the given pass was run. A returned
+   * empty list means no scope nodes have changed since the last run and a returned null means this
+   * is the first time the pass has run.
+   */
+  abstract List<Node> getChangedScopeNodesForPass(String passName);
+
+  /**
+   * An accumulation of deleted scope nodes since the last time the given pass was run. A returned
+   * null or empty list means no scope nodes have been deleted since the last run or this is the
+   * first time the pass has run.
+   */
+  abstract List<Node> getDeletedScopeNodesForPass(String passName);
+
+  /** Called to indicate that the current change stamp has been used */
+  abstract void incrementChangeStamp();
 
   /** Returns the root of the source tree, ignoring externs */
   abstract Node getJsRoot();
 
   /** True iff a function changed since the last time a pass was run */
   abstract boolean hasScopeChanged(Node n);
-
-  /** Passes that do cross-scope modifications use this (eg, InlineVariables) */
-  abstract void reportChangeToEnclosingScope(Node n);
 
   /**
    * Represents the different contexts for which the compiler could have
@@ -338,7 +458,7 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    */
   abstract CheckLevel getErrorLevel(JSError error);
 
-  static enum LifeCycleStage {
+  static enum LifeCycleStage implements Serializable {
     RAW,
 
     // See constraints put on the tree by Normalize.java
@@ -375,14 +495,9 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
 
   abstract CompilerOptions getOptions();
 
-  /**
-   * The language mode of the current root node. This will match the languageIn
-   * field of the {@link CompilerOptions} before transpilation happens, and
-   * match the languageOut field after transpilation.
-   */
-  abstract CompilerOptions.LanguageMode getLanguageMode();
+  abstract FeatureSet getFeatureSet();
 
-  abstract void setLanguageMode(CompilerOptions.LanguageMode mode);
+  abstract void setFeatureSet(FeatureSet fs);
 
   // TODO(bashir) It would be good to extract a single dumb data object with
   // only getters and setters that keeps all global information we keep for a
@@ -436,7 +551,7 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   /**
    * Sets the progress percentage as well as the name of the last pass that
    * ran (if available).
-   * @param progress A precentage expressed as a double in the range [0, 1].
+   * @param progress A percentage expressed as a double in the range [0, 1].
    *     Use -1 if you just want to set the last pass name.
    */
   abstract void setProgress(double progress, @Nullable String lastPassName);
@@ -485,13 +600,13 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
 
    /**
     * Stores a map of default @define values.  These values
-    * can be overriden by values specifically set in the CompilerOptions.
+    * can be overridden by values specifically set in the CompilerOptions.
     */
    abstract void setDefaultDefineValues(ImmutableMap<String, Node> values);
 
    /**
     * Gets a map of default @define values.  These values
-    * can be overriden by values specifically set in the CompilerOptions.
+    * can be overridden by values specifically set in the CompilerOptions.
     */
    abstract ImmutableMap<String, Node> getDefaultDefineValues();
 
@@ -507,7 +622,7 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
    * @param object the object to store as the annotation
    */
   void setAnnotation(String key, Object object) {
-    Preconditions.checkArgument(object != null, "The stored annotation value cannot be null.");
+    checkArgument(object != null, "The stored annotation value cannot be null.");
     Preconditions.checkArgument(
         !annotationMap.containsKey(key), "Cannot overwrite the existing annotation '%s'.", key);
     annotationMap.put(key, object);
@@ -522,5 +637,16 @@ public abstract class AbstractCompiler implements SourceExcerptProvider {
   @Nullable
   Object getAnnotation(String key) {
     return annotationMap.get(key);
+  }
+
+  private @Nullable PersistentInputStore persistentInputStore;
+
+  void setPersistentInputStore(PersistentInputStore persistentInputStore) {
+    this.persistentInputStore = persistentInputStore;
+  }
+
+  @Nullable
+  PersistentInputStore getPersistentInputStore() {
+    return persistentInputStore;
   }
 }

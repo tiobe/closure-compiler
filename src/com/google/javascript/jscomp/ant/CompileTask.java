@@ -34,17 +34,6 @@ import com.google.javascript.jscomp.SourceMap;
 import com.google.javascript.jscomp.SourceMap.Format;
 import com.google.javascript.jscomp.SourceMap.LocationMapping;
 import com.google.javascript.jscomp.WarningLevel;
-
-import org.apache.tools.ant.BuildException;
-import org.apache.tools.ant.Project;
-import org.apache.tools.ant.Task;
-import org.apache.tools.ant.types.FileList;
-import org.apache.tools.ant.types.Parameter;
-import org.apache.tools.ant.types.Path;
-import org.apache.tools.ant.types.Resource;
-import org.apache.tools.ant.types.ResourceCollection;
-import org.apache.tools.ant.types.resources.FileResource;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
@@ -59,6 +48,15 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
+import org.apache.tools.ant.BuildException;
+import org.apache.tools.ant.Project;
+import org.apache.tools.ant.Task;
+import org.apache.tools.ant.types.FileList;
+import org.apache.tools.ant.types.Parameter;
+import org.apache.tools.ant.types.Path;
+import org.apache.tools.ant.types.Resource;
+import org.apache.tools.ant.types.ResourceCollection;
+import org.apache.tools.ant.types.resources.FileResource;
 
 /**
  * This class implements a simple Ant task to do almost the same as
@@ -102,7 +100,7 @@ public final class CompileTask
   private boolean applyInputSourceMaps;
 
   public CompileTask() {
-    this.languageIn = CompilerOptions.LanguageMode.ECMASCRIPT6;
+    this.languageIn = CompilerOptions.LanguageMode.ECMASCRIPT_2015;
     this.languageOut = CompilerOptions.LanguageMode.ECMASCRIPT3;
     this.warningLevel = WarningLevel.DEFAULT;
     this.debugOptions = false;
@@ -129,10 +127,9 @@ public final class CompileTask
     switch (value) {
       case "ECMASCRIPT6_STRICT":
       case "ES6_STRICT":
-        return CompilerOptions.LanguageMode.ECMASCRIPT6_STRICT;
       case "ECMASCRIPT6":
       case "ES6":
-        return CompilerOptions.LanguageMode.ECMASCRIPT6;
+        return CompilerOptions.LanguageMode.ECMASCRIPT_2015;
       case "ECMASCRIPT5_STRICT":
       case "ES5_STRICT":
         return CompilerOptions.LanguageMode.ECMASCRIPT5_STRICT;
@@ -389,15 +386,14 @@ public final class CompileTask
 
         if (this.outputWrapperFile != null) {
           try {
-            this.outputWrapper = Files.toString(this.outputWrapperFile, UTF_8);
+            this.outputWrapper = Files.asCharSource(this.outputWrapperFile, UTF_8).read();
           } catch (Exception e) {
             throw new BuildException("Invalid output_wrapper_file specified.");
           }
         }
 
         if (this.outputWrapper != null) {
-          int pos = -1;
-          pos = this.outputWrapper.indexOf(CommandLineRunner.OUTPUT_MARKER);
+          int pos = this.outputWrapper.indexOf(CommandLineRunner.OUTPUT_MARKER);
           if (pos > -1) {
             String prefix = this.outputWrapper.substring(0, pos);
             source.insert(0, prefix);
@@ -414,8 +410,6 @@ public final class CompileTask
 
         if (result.sourceMap != null) {
           flushSourceMap(result.sourceMap);
-          source.append(System.getProperty("line.separator"));
-          source.append("//# sourceMappingURL=" + sourceMapOutputFile.getName());
         }
         writeResult(source.toString());
       } else {
@@ -427,10 +421,8 @@ public final class CompileTask
   }
 
   private void flushSourceMap(SourceMap sourceMap) {
-    try {
-      FileWriter out = new FileWriter(sourceMapOutputFile);
+    try (FileWriter out = new FileWriter(sourceMapOutputFile)) {
       sourceMap.appendTo(out, outputFile.getName());
-      out.close();
     } catch (IOException e) {
       throw new BuildException("Cannot write sourcemap to file.", e);
     }
@@ -688,12 +680,9 @@ public final class CompileTask
           this.outputFile.getParentFile(), Project.MSG_DEBUG);
     }
 
-    try {
-      OutputStreamWriter out = new OutputStreamWriter(
-          new FileOutputStream(this.outputFile), outputEncoding);
+    try (OutputStreamWriter out =
+        new OutputStreamWriter(new FileOutputStream(this.outputFile), outputEncoding)) {
       out.append(source);
-      out.flush();
-      out.close();
     } catch (IOException e) {
       throw new BuildException(e);
     }

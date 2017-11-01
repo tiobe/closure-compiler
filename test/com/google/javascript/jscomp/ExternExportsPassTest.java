@@ -13,291 +13,371 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.common.base.Joiner;
-import com.google.common.collect.ImmutableList;
-import com.google.javascript.jscomp.testing.BlackHoleErrorManager;
-import java.util.List;
-import junit.framework.TestCase;
+import java.util.function.Consumer;
 
 /**
  * Tests for {@link ExternExportsPass}.
  *
  */
+public final class ExternExportsPassTest extends TypeICompilerTestCase {
 
-public final class ExternExportsPassTest extends TestCase {
-
-  private boolean runCheckTypes = true;
-
-  /**
-   * ExternExportsPass relies on type information to emit JSDoc annotations for
-   * exported externs. However, the user can disable type checking and still
-   * ask for externs to be exported. Set this flag to enable or disable checking
-   * of types during a test.
-   */
-  private void setRunCheckTypes(boolean shouldRunCheckTypes) {
-    runCheckTypes = shouldRunCheckTypes;
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    enableNormalize();
+    this.mode = TypeInferenceMode.BOTH;
   }
 
   @Override
-  public void setUp() throws Exception {
-    super.setUp();
-    setRunCheckTypes(true);
+  public CompilerOptions getOptions(CompilerOptions options) {
+    super.getOptions(options);
+    options.externExportsPath = "externs.js";
+    // Check types so we can make sure our exported externs have type information.
+    options.setCheckSymbols(true);
+    return options;
+  }
+
+  @Override
+  protected CompilerPass getProcessor(Compiler compiler) {
+    return new ExternExportsPass(compiler);
   }
 
   public void testExportSymbol() throws Exception {
-    compileAndCheck("var a = {}; a.b = {}; a.b.c = function(d, e, f) {};" +
-                    "goog.exportSymbol('foobar', a.b.c)",
-                    "/**\n" +
-                    " * @param {?} d\n" +
-                    " * @param {?} e\n" +
-                    " * @param {?} f\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "var foobar = function(d, e, f) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/** @const */ var a = {}; /** @const */ a.b = {}; a.b.c = function(d, e, f) {};",
+            "goog.exportSymbol('foobar', a.b.c)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {?} d",
+            " * @param {?} e",
+            " * @param {?} f",
+            " * @return {undefined}",
+            " */",
+            "var foobar = function(d, e, f) {",
+            "};",
+            ""));
   }
 
   public void testInterface() {
     compileAndCheck(
         "/** @interface */ function Iface() {}; goog.exportSymbol('Iface', Iface)",
-        "/**\n" +
-        " * @interface\n" +
-        " */\n" +
-        "var Iface = function() {\n};\n");
+        LINE_JOINER.join(
+            "/**",
+            " * @interface",
+            " */",
+            "var Iface = function() {",
+            "};",
+            ""));
   }
 
   public void testRecord() {
     compileAndCheck(
         "/** @record */ function Iface() {}; goog.exportSymbol('Iface', Iface)",
-        "/**\n" +
-        " * @record\n" +
-        " */\n" +
-        "var Iface = function() {\n};\n");
+        LINE_JOINER.join(
+            "/**",
+            " * @record",
+            " */",
+            "var Iface = function() {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolDefinedInVar() throws Exception {
-    compileAndCheck("var a = function(d, e, f) {};" +
-                    "goog.exportSymbol('foobar', a)",
-                    "/**\n" +
-                    " * @param {?} d\n" +
-                    " * @param {?} e\n" +
-                    " * @param {?} f\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "var foobar = function(d, e, f) {\n};\n");
+    compileAndCheck(
+        "var a = function(d, e, f) {}; goog.exportSymbol('foobar', a)",
+        LINE_JOINER.join(
+            "/**",
+            " * @param {?} d",
+            " * @param {?} e",
+            " * @param {?} f",
+            " * @return {undefined}",
+            " */",
+            "var foobar = function(d, e, f) {",
+            "};",
+            ""));
   }
 
   public void testExportProperty() throws Exception {
-    compileAndCheck("var a = {}; a.b = {}; a.b.c = function(d, e, f) {};" +
-                    "goog.exportProperty(a.b, 'cprop', a.b.c)",
-                    "var a;\n" +
-                    "a.b;\n" +
-                    "/**\n" +
-                    " * @param {?} d\n" +
-                    " * @param {?} e\n" +
-                    " * @param {?} f\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "a.b.cprop = function(d, e, f) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/** @const */ var a = {}; /** @const */ a.b = {}; a.b.c = function(d, e, f) {};",
+            "goog.exportProperty(a.b, 'cprop', a.b.c)"),
+        LINE_JOINER.join(
+            "var a;",
+            "a.b;",
+            "/**",
+            " * @param {?} d",
+            " * @param {?} e",
+            " * @param {?} f",
+            " * @return {undefined}",
+            " */",
+            "a.b.cprop = function(d, e, f) {",
+            "};",
+            ""));
   }
 
   public void testExportMultiple() throws Exception {
-    compileAndCheck("var a = {}; a.b = function(p1) {}; " +
-                    "a.b.c = function(d, e, f) {};" +
-                    "a.b.prototype.c = function(g, h, i) {};" +
-                    "goog.exportSymbol('a.b', a.b);" +
-                    "goog.exportProperty(a.b, 'c', a.b.c);" +
-                    "goog.exportProperty(a.b.prototype, 'c', a.b.prototype.c);",
-
-                    "var a;\n" +
-                    "/**\n" +
-                    " * @param {?} p1\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "a.b = function(p1) {\n};\n" +
-                    "/**\n" +
-                    " * @param {?} d\n" +
-                    " * @param {?} e\n" +
-                    " * @param {?} f\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "a.b.c = function(d, e, f) {\n};\n" +
-                    "/**\n" +
-                    " * @param {?} g\n" +
-                    " * @param {?} h\n" +
-                    " * @param {?} i\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "a.b.prototype.c = function(g, h, i) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/** @const */ var a = {}; a.b = function(p1) {};",
+            "a.b.c = function(d, e, f) {};",
+            "a.b.prototype.c = function(g, h, i) {};",
+            "goog.exportSymbol('a.b', a.b);",
+            "goog.exportProperty(a.b, 'c', a.b.c);",
+            "goog.exportProperty(a.b.prototype, 'c', a.b.prototype.c);"),
+        LINE_JOINER.join(
+            "var a;",
+            "/**",
+            " * @param {?} p1",
+            " * @return {undefined}",
+            " */",
+            "a.b = function(p1) {",
+            "};",
+            "/**",
+            " * @param {?} d",
+            " * @param {?} e",
+            " * @param {?} f",
+            " * @return {undefined}",
+            " */",
+            "a.b.c = function(d, e, f) {",
+            "};",
+            "/**",
+            " * @param {?} g",
+            " * @param {?} h",
+            " * @param {?} i",
+            " * @return {undefined}",
+            " */",
+            "a.b.prototype.c = function(g, h, i) {",
+            "};",
+            ""));
   }
 
   public void testExportMultiple2() throws Exception {
-    compileAndCheck("var a = {}; a.b = function(p1) {}; " +
-                    "a.b.c = function(d, e, f) {};" +
-                    "a.b.prototype.c = function(g, h, i) {};" +
-                    "goog.exportSymbol('hello', a);" +
-                    "goog.exportProperty(a.b, 'c', a.b.c);" +
-                    "goog.exportProperty(a.b.prototype, 'c', a.b.prototype.c);",
-
-                    "/** @type {{b: function (?): undefined}} */\n" +
-                    "var hello = {};\n" +
-                    "hello.b;\n" +
-                    "/**\n" +
-                    " * @param {?} d\n" +
-                    " * @param {?} e\n" +
-                    " * @param {?} f\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "hello.b.c = function(d, e, f) {\n};\n" +
-                    "/**\n" +
-                    " * @param {?} g\n" +
-                    " * @param {?} h\n" +
-                    " * @param {?} i\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "hello.b.prototype.c = function(g, h, i) {\n};\n");
+    // TODO(sdh): NTI leaves out the annotation for hello for some reason.
+    this.mode = TypeInferenceMode.OTI_ONLY;
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/** @const */ var a = {};",
+            "a.b = function(p1) {};",
+            "a.b.c = function(d, e, f) {};",
+            "a.b.prototype.c = function(g, h, i) {};",
+            "goog.exportSymbol('hello', a);",
+            "goog.exportProperty(a.b, 'c', a.b.c);",
+            "goog.exportProperty(a.b.prototype, 'c', a.b.prototype.c);"),
+        LINE_JOINER.join(
+            "/** @type {{b: function(?): undefined}} */",
+            "var hello = {};",
+            "hello.b;",
+            "/**",
+            " * @param {?} d",
+            " * @param {?} e",
+            " * @param {?} f",
+            " * @return {undefined}",
+            " */",
+            "hello.b.c = function(d, e, f) {",
+            "};",
+            "/**",
+            " * @param {?} g",
+            " * @param {?} h",
+            " * @param {?} i",
+            " * @return {undefined}",
+            " */",
+            "hello.b.prototype.c = function(g, h, i) {",
+            "};",
+            ""));
   }
 
   public void testExportMultiple3() throws Exception {
-    compileAndCheck("var a = {}; a.b = function(p1) {}; " +
-                    "a.b.c = function(d, e, f) {};" +
-                    "a.b.prototype.c = function(g, h, i) {};" +
-                    "goog.exportSymbol('prefix', a.b);" +
-                    "goog.exportProperty(a.b, 'c', a.b.c);",
-
-                    "/**\n" +
-                    " * @param {?} p1\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "var prefix = function(p1) {\n};\n" +
-                    "/**\n" +
-                    " * @param {?} d\n" +
-                    " * @param {?} e\n" +
-                    " * @param {?} f\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "prefix.c = function(d, e, f) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/** @const */ var a = {}; a.b = function(p1) {};",
+            "a.b.c = function(d, e, f) {};",
+            "a.b.prototype.c = function(g, h, i) {};",
+            "goog.exportSymbol('prefix', a.b);",
+            "goog.exportProperty(a.b, 'c', a.b.c);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {?} p1",
+            " * @return {undefined}",
+            " */",
+            "var prefix = function(p1) {",
+            "};",
+            "/**",
+            " * @param {?} d",
+            " * @param {?} e",
+            " * @param {?} f",
+            " * @return {undefined}",
+            " */",
+            "prefix.c = function(d, e, f) {",
+            "};",
+            ""));
   }
 
   public void testExportNonStaticSymbol() throws Exception {
-    compileAndCheck("var a = {}; a.b = {}; var d = {}; a.b.c = d;" +
-                    "goog.exportSymbol('foobar', a.b.c)",
-                    "var foobar;\n");
+    compileAndCheck(
+        lines(
+            "/** @const */ var a = {};",
+            "/** @const */ a.b = {};",
+            "/** @const */ var d = {};",
+            "a.b.c = d;",
+            "goog.exportSymbol('foobar', a.b.c)"),
+        "var foobar;\n");
   }
 
   public void testExportNonStaticSymbol2() throws Exception {
-    compileAndCheck("var a = {}; a.b = {}; var d = null; a.b.c = d;" +
-                    "goog.exportSymbol('foobar', a.b.c())",
-                    "var foobar;\n");
+    compileAndCheck(
+        lines(
+            "/** @const */ var a = {};",
+            "/** @const */ a.b = {};",
+            "var d = function() {};",
+            "a.b.c = d;",
+            "goog.exportSymbol('foobar', a.b.c())"),
+        "var foobar;\n");
   }
 
   public void testExportNonexistentProperty() throws Exception {
-    compileAndCheck("var a = {}; a.b = {}; a.b.c = function(d, e, f) {};" +
-                    "goog.exportProperty(a.b, 'none', a.b.none)",
-                    "var a;\n" +
-                    "a.b;\n" +
-                    "a.b.none;\n");
+    compileAndCheck(
+        lines(
+            "/** @fileoverview @suppress {missingProperties} */",
+            "/** @const */ var a = {};",
+            "/** @const */ a.b = {};",
+            "a.b.c = function(d, e, f) {};",
+            "goog.exportProperty(a.b, 'none', a.b.none)"),
+        lines(
+            "var a;",
+            "a.b;",
+            "a.b.none;",
+            ""));
   }
 
   public void testExportSymbolWithTypeAnnotation() {
 
-    compileAndCheck("var internalName;\n" +
-                    "/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @param {number} param2\n" +
-                    " * @return {string}\n" +
-                    " */\n" +
-                    "internalName = function(param1, param2) {" +
-                      "return param1 + param2;" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @param {number} param2\n" +
-                    " * @return {string}\n" +
-                    " */\n" +
-                    "var externalName = function(param1, param2) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "/**",
+            " * @param {string} param1",
+            " * @param {number} param2",
+            " * @return {string}",
+            " */",
+            "internalName = function(param1, param2) {",
+            "return param1 + param2;",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {string} param1",
+            " * @param {number} param2",
+            " * @return {string}",
+            " */",
+            "var externalName = function(param1, param2) {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithTemplateAnnotation() {
 
-    compileAndCheck("var internalName;\n" +
-                    "/**\n" +
-                    " * @param {T} param1\n" +
-                    " * @return {T}\n" +
-                    " * @template T\n" +
-                    " */\n" +
-                    "internalName = function(param1) {" +
-                      "return param1;" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "/**\n" +
-                    " * @param {T} param1\n" +
-                    " * @return {T}\n" +
-                    " * @template T\n" +
-                    " */\n" +
-                    "var externalName = function(param1) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "/**",
+            " * @param {T} param1",
+            " * @return {T}",
+            " * @template T",
+            " */",
+            "internalName = function(param1) {",
+            "return param1;",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {T} param1",
+            " * @return {T}",
+            " * @template T",
+            " */",
+            "var externalName = function(param1) {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithMultipleTemplateAnnotation() {
 
-    compileAndCheck("var internalName;\n" +
-                    "/**\n" +
-                    " * @param {K} param1\n" +
-                    " * @return {V}\n" +
-                    " * @template K,V\n" +
-                    " */\n" +
-                    "internalName = function(param1) {" +
-                      "return /** @type {V} */ (param1);" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "/**\n" +
-                    " * @param {K} param1\n" +
-                    " * @return {V}\n" +
-                    " * @template K,V\n" +
-                    " */\n" +
-                    "var externalName = function(param1) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @param {K} param1",
+            " * @return {V}",
+            " * @template K,V",
+            " */",
+            "internalName = function(param1) {",
+            "  return /** @type {?} */ (param1);",
+            "};",
+            "goog.exportSymbol('externalName', internalName);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {K} param1",
+            " * @return {V}",
+            " * @template K,V",
+            " */",
+            "var externalName = function(param1) {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithoutTypeCheck() {
     // ExternExportsPass should not emit annotations
     // if there is no type information available.
-    setRunCheckTypes(false);
+    this.mode = TypeInferenceMode.NEITHER;
 
-    compileAndCheck("var internalName;\n" +
-                    "/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @param {number} param2\n" +
-                    " * @return {string}\n" +
-                    " */\n" +
-                    "internalName = function(param1, param2) {" +
-                      "return param1 + param2;" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "var externalName = function(param1, param2) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @param {string} param1",
+            " * @param {number} param2",
+            " * @return {string}",
+            " */",
+            "internalName = function(param1, param2) {",
+            "return param1 + param2;",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "var externalName = function(param1, param2) {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithConstructor() {
-    compileAndCheck("var internalName;\n" +
-                    "/**\n" +
-                    " * @constructor\n" +
-                    " */\n" +
-                    "internalName = function() {" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "/**\n" +
-                    " * @constructor\n" +
-                    " */\n" +
-                    "var externalName = function() {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @constructor",
+            " */",
+            "internalName = function() {",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var externalName = function() {",
+            "};",
+            ""));
   }
 
   public void testNonNullTypes() {
     compileAndCheck(
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/**",
             " * @constructor",
             " */",
@@ -309,16 +389,19 @@ public final class ExternExportsPassTest extends TestCase {
             " */",
             "Foo.f = function(x) { return x; };",
             "goog.exportProperty(Foo, 'f', Foo.f);"),
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/**",
             " * @constructor",
             " */",
-            "var Foo = function() {\n};",
+            "var Foo = function() {",
+            "};",
             "/**",
             " * @param {!Foo} x",
             " * @return {!Foo}",
             " */",
-            "Foo.f = function(x) {\n};\n"));
+            "Foo.f = function(x) {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithConstructorWithoutTypeCheck() {
@@ -328,96 +411,182 @@ public final class ExternExportsPassTest extends TestCase {
     // to JSTypes and not Nodes (and no JSTypes are created when checkTypes
     // is false), we don't really have a choice.
 
-    setRunCheckTypes(false);
+    this.mode = TypeInferenceMode.NEITHER;
 
-    compileAndCheck("var internalName;\n" +
-                    "/**\n" +
-                    " * @constructor\n" +
-                    " */\n" +
-                    "internalName = function() {" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "var externalName = function() {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "/**",
+            " * @constructor",
+            " */",
+            "internalName = function() {",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "var externalName = function() {",
+            "};",
+            ""));
+  }
+
+  // x.Y is present in the generated externs but lacks the @constructor annotation.
+  public void testExportPrototypePropsWithoutConstructor() {
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/** @constructor */",
+            "x.Y = function() {};",
+            "x.Y.prototype.z = function() {};",
+            "goog.exportProperty(x.Y.prototype, 'z', x.Y.prototype.z);"),
+        LINE_JOINER.join(
+            "var x;",
+            "x.Y;",
+            "/**",
+            " * @return {undefined}",
+            " */",
+            "x.Y.prototype.z = function() {",
+            "};",
+            ""));
   }
 
   public void testExportFunctionWithOptionalArguments1() {
-    compileAndCheck("var internalName;\n" +
-        "/**\n" +
-        " * @param {number=} a\n" +
-        " */\n" +
-        "internalName = function(a) {" +
-        "};" +
-        "goog.exportSymbol('externalName', internalName)",
-        "/**\n" +
-        " * @param {number=} a\n" +
-        " * @return {undefined}\n" +
-        " */\n" +
-        "var externalName = function(a) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @param {number=} a",
+            " */",
+            "internalName = function(a) {",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {number=} a",
+            " * @return {undefined}",
+            " */",
+            "var externalName = function(a) {",
+            "};",
+            ""));
   }
 
   public void testExportFunctionWithOptionalArguments2() {
-    compileAndCheck("var internalName;\n" +
-        "/**\n" +
-        " * @param {number=} a\n" +
-        " */\n" +
-        "internalName = function(a) {" +
-        "  return 6;\n" +
-        "};" +
-        "goog.exportSymbol('externalName', internalName)",
-        "/**\n" +
-        " * @param {number=} a\n" +
-        " * @return {?}\n" +
-        " */\n" +
-        "var externalName = function(a) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @param {number=} a",
+            " */",
+            "internalName = function(a) {",
+            "  return /** @type {?} */ (6);",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {number=} a",
+            " * @return {?}",
+            " */",
+            "var externalName = function(a) {",
+            "};",
+            ""));
   }
 
   public void testExportFunctionWithOptionalArguments3() {
-    compileAndCheck("var internalName;\n" +
-        "/**\n" +
-        " * @param {number=} a\n" +
-        " */\n" +
-        "internalName = function(a) {" +
-        "  return a;\n" +
-        "};" +
-        "goog.exportSymbol('externalName', internalName)",
-        "/**\n" +
-        " * @param {number=} a\n" +
-        " * @return {?}\n" +
-        " */\n" +
-        "var externalName = function(a) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @param {number=} a",
+            " */",
+            "internalName = function(a) {",
+            "  return /** @type {?} */ (a);",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {number=} a",
+            " * @return {?}",
+            " */",
+            "var externalName = function(a) {",
+            "};",
+            ""));
   }
 
   public void testExportFunctionWithVariableArguments() {
-    compileAndCheck("var internalName;\n" +
-        "/**\n" +
-        " * @param {...number} a\n" +
-        " * @return {number}\n" +
-        " */\n" +
-        "internalName = function(a) {" +
-        "  return 6;\n" +
-        "};" +
-        "goog.exportSymbol('externalName', internalName)",
-        "/**\n" +
-        " * @param {...number} a\n" +
-        " * @return {number}\n" +
-        " */\n" +
-        "var externalName = function(a) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "var internalName;",
+            "",
+            "/**",
+            " * @param {...number} a",
+            " * @return {number}",
+            " */",
+            "internalName = function(a) {",
+            "  return 6;",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {...number} a",
+            " * @return {number}",
+            " */",
+            "var externalName = function(a) {",
+            "};",
+            ""));
   }
 
-  /**
-   * Enums are not currently handled.
-   */
-   public void testExportEnum() {
-     // We don't care what the values of the object properties are.
-     // They're ignored by the type checker, and even if they weren't, it'd
-     // be incomputable to get them correct in all cases
-     // (think complex objects).
-     compileAndCheck(
-         "/** @enum {string}\n @export */ var E = {A:8, B:9};" +
-         "goog.exportSymbol('E', E);",
-         "/** @enum {string} */\n" +
-         "var E = {A:1, B:2};\n");
-   }
+  /** Enums are not currently handled. */
+  public void testExportEnum() {
+    // We don't care what the values of the object properties are.
+    // They're ignored by the type checker, and even if they weren't, it'd
+    // be incomputable to get them correct in all cases
+    // (think complex objects).
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/**",
+            " * @enum {string}",
+            " * @export",
+            " */",
+            "var E = {A:'a', B:'b'};",
+            "goog.exportSymbol('E', E);"),
+        LINE_JOINER.join(
+            "/** @enum {string} */",
+            "var E = {A:1, B:2};",
+            ""));
+  }
+
+  public void testExportWithReferenceToEnum() {
+    String js = lines(
+        "/**",
+        " * @enum {number}",
+        " * @export",
+        " */",
+        "var E = {A:1, B:2};",
+        "goog.exportSymbol('E', E);",
+        "",
+        "/**",
+        " * @param {!E} e",
+        " * @export",
+        " */",
+        "function f(e) {}",
+        "goog.exportSymbol('f', f);");
+    String expected = lines(
+        "/** @enum {number} */",
+        "var E = {A:1, B:2};",
+        "/**",
+        " * @param {E} e",
+        " * @return {undefined}",
+        " */",
+        "var f = function(e) {",
+        "};",
+        "");
+
+    this.mode = TypeInferenceMode.OTI_ONLY;
+    // NOTE: OTI should print {E} for the @param, but does not.
+    compileAndCheck(js, expected.replace("{E}", "{number}"));
+    this.mode = TypeInferenceMode.NTI_ONLY;
+    compileAndCheck(js, expected);
+  }
 
   /** If we export a property with "prototype" as a path component, there
     * is no need to emit the initializer for prototype because every namespace
@@ -425,25 +594,29 @@ public final class ExternExportsPassTest extends TestCase {
     */
   public void testExportDontEmitPrototypePathPrefix() {
     compileAndCheck(
-        "/**\n" +
-        " * @constructor\n" +
-        " */\n" +
-        "var Foo = function() {};" +
-        "/**\n" +
-        " * @return {number}\n" +
-        " */\n" +
-        "Foo.prototype.m = function() {return 6;};\n" +
-        "goog.exportSymbol('Foo', Foo);\n" +
-        "goog.exportProperty(Foo.prototype, 'm', Foo.prototype.m);",
-        "/**\n" +
-        " * @constructor\n" +
-        " */\n" +
-        "var Foo = function() {\n};\n" +
-        "/**\n" +
-        " * @return {number}\n" +
-        " */\n" +
-        "Foo.prototype.m = function() {\n};\n"
-    );
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var Foo = function() {};",
+            "/**",
+            " * @return {number}",
+            " */",
+            "Foo.prototype.m = function() {return 6;};",
+            "goog.exportSymbol('Foo', Foo);",
+            "goog.exportProperty(Foo.prototype, 'm', Foo.prototype.m);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var Foo = function() {",
+            "};",
+            "/**",
+            " * @return {number}",
+            " */",
+            "Foo.prototype.m = function() {",
+            "};",
+            ""));
   }
 
   /**
@@ -456,216 +629,246 @@ public final class ExternExportsPassTest extends TestCase {
    */
   public void testUseExportsAsExterns() {
     String librarySource =
-    "/**\n" +
-    " * @param {number} a\n" +
-    " * @constructor\n" +
-    " */\n" +
-    "var InternalName = function(a) {" +
-    "};" +
-    "goog.exportSymbol('ExternalName', InternalName)";
+        LINE_JOINER.join(
+            "/**",
+            " * @param {number} n",
+            " * @constructor",
+            " */",
+            "var InternalName = function(n) {",
+            "};",
+            "goog.exportSymbol('ExternalName', InternalName)");
 
     String clientSource =
-      "var a = new ExternalName(6);\n" +
-      "/**\n" +
-      " * @param {ExternalName} x\n" +
-      " */\n" +
-      "var b = function(x) {};";
+        LINE_JOINER.join(
+            "var foo = new ExternalName(6);",
+            "/**",
+            " * @param {ExternalName} x",
+            " */",
+            "var bar = function(x) {};");
 
-    Result libraryCompileResult = compileAndExportExterns(librarySource);
-
-    assertThat(libraryCompileResult.warnings).isEmpty();
-    assertThat(libraryCompileResult.errors).isEmpty();
-
-    String generatedExterns = libraryCompileResult.externExport;
-
-    Result clientCompileResult = compileAndExportExterns(clientSource,
-        generatedExterns);
-
-    assertThat(clientCompileResult.warnings).isEmpty();
-    assertThat(clientCompileResult.errors).isEmpty();
+    compileAndExportExterns(librarySource, MINIMAL_EXTERNS, new Consumer<String>() {
+      @Override public void accept(String generatedExterns) {
+        compileAndExportExterns(clientSource, MINIMAL_EXTERNS + generatedExterns);
+      }
+    });
   }
 
   public void testDontWarnOnExportFunctionWithUnknownReturnType() {
-    String librarySource =
-      "var InternalName = function() {" +
-      "  return 6;" +
-      "};" +
-      "goog.exportSymbol('ExternalName', InternalName)";
+    String librarySource = LINE_JOINER.join(
+        "var InternalName = function() {",
+        "  return 6;",
+        "};",
+        "goog.exportSymbol('ExternalName', InternalName)");
 
-      Result libraryCompileResult = compileAndExportExterns(librarySource);
-
-      assertThat(libraryCompileResult.warnings).isEmpty();
-      assertThat(libraryCompileResult.errors).isEmpty();
+    compileAndExportExterns(librarySource);
   }
 
   public void testDontWarnOnExportConstructorWithUnknownReturnType() {
-    String librarySource =
-      "/**\n" +
-      " * @constructor\n" +
-      " */\n " +
-      "var InternalName = function() {" +
-      "};" +
-      "goog.exportSymbol('ExternalName', InternalName)";
+    String librarySource = LINE_JOINER.join(
+        "/**",
+        " * @constructor",
+        " */",
+        "var InternalName = function() {",
+        "};",
+        "goog.exportSymbol('ExternalName', InternalName)");
 
-      Result libraryCompileResult = compileAndExportExterns(librarySource);
-
-      assertThat(libraryCompileResult.warnings).isEmpty();
-      assertThat(libraryCompileResult.errors).isEmpty();
+    compileAndExportExterns(librarySource);
   }
 
   public void testTypedef() {
     compileAndCheck(
-        "/** @typedef {{x: number, y: number}} */ var Coord;\n" +
-        "/**\n" +
-        " * @param {Coord} a\n" +
-        " * @export\n" +
-        " */\n" +
-        "var fn = function(a) {};" +
-        "goog.exportSymbol('fn', fn);",
-        "/**\n" +
-        " * @param {{x: number, y: number}} a\n" +
-        " * @return {undefined}\n" +
-        " */\n" +
-        "var fn = function(a) {\n};\n");
+        LINE_JOINER.join(
+            "/** @typedef {{x: number, y: number}} */ var Coord;",
+            "/**",
+            " * @param {Coord} a",
+            " * @export",
+            " */",
+            "var fn = function(a) {};",
+            "goog.exportSymbol('fn', fn);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {{x: number, y: number}} a",
+            " * @return {undefined}",
+            " */",
+            "var fn = function(a) {",
+            "};",
+            ""));
   }
 
   public void testExportParamWithNull() throws Exception {
     compileAndCheck(
-        "/** @param {string|null=} d */\n" +
-        "var f = function(d) {};\n" +
-        "goog.exportSymbol('foobar', f)\n",
-        "/**\n" +
-        " * @param {(null|string)=} d\n" +
-        " * @return {undefined}\n" +
-        " */\n" +
-        "var foobar = function(d) {\n" +
-        "};\n");
+        LINE_JOINER.join(
+            "/** @param {string|null=} d */",
+            "var f = function(d) {};",
+            "goog.exportSymbol('foobar', f)",
+            ""),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {(null|string)=} d",
+            " * @return {undefined}",
+            " */",
+            "var foobar = function(d) {",
+            "};",
+            ""));
   }
 
   public void testExportConstructor() throws Exception {
-    compileAndCheck("/** @constructor */ var a = function() {};" +
-                    "goog.exportSymbol('foobar', a)",
-                    "/**\n" +
-                    " * @constructor\n" +
-                    " */\n" +
-                    "var foobar = function() {\n};\n");
+    compileAndCheck(
+        "/** @constructor */ var a = function() {}; goog.exportSymbol('foobar', a)",
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var foobar = function() {",
+            "};",
+            ""));
   }
 
   public void testExportLocalPropertyInConstructor() throws Exception {
     compileAndCheck(
-        "/** @constructor */function F() { /** @export */ this.x = 5;}"
-        + "goog.exportSymbol('F', F);",
-        "/**\n"
-        + " * @constructor\n"
-        + " */\n"
-        + "var F = function() {\n};\n"
-        + "F.prototype.x;\n");
+        "/** @constructor */function F() { /** @export */ this.x = 5;} goog.exportSymbol('F', F);",
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var F = function() {",
+            "};",
+            "F.prototype.x;",
+            ""));
   }
 
   public void testExportLocalPropertyInConstructor2() throws Exception {
+    ignoreWarnings(NewTypeInference.INEXISTENT_PROPERTY);
     compileAndCheck(
-        "/** @constructor */function F() { /** @export */ this.x = 5;}"
-        + "goog.exportSymbol('F', F);"
-        + "goog.exportProperty(F.prototype, 'x', F.prototype.x);",
-        "/**\n"
-        + " * @constructor\n"
-        + " */\n"
-        + "var F = function() {\n};\n"
-        + "F.prototype.x;\n");
+        LINE_JOINER.join(
+            "/** @constructor */function F() { /** @export */ this.x = 5;}",
+            "goog.exportSymbol('F', F);",
+            "goog.exportProperty(F.prototype, 'x', F.prototype.x);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var F = function() {",
+            "};",
+            "F.prototype.x;",
+            ""));
   }
 
   public void testExportLocalPropertyInConstructor3() throws Exception {
     compileAndCheck(
-        "/** @constructor */function F() { /** @export */ this.x;}"
-        + "goog.exportSymbol('F', F);",
-        "/**\n"
-        + " * @constructor\n"
-        + " */\n"
-        + "var F = function() {\n};\n"
-        + "F.prototype.x;\n");
+        "/** @constructor */function F() { /** @export */ this.x;} goog.exportSymbol('F', F);",
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var F = function() {",
+            "};",
+            "F.prototype.x;",
+            ""));
   }
 
   public void testExportLocalPropertyInConstructor4() throws Exception {
     compileAndCheck(
-        "/** @constructor */function F() { /** @export */ this.x = function(/** string */ x){};}"
-        + "goog.exportSymbol('F', F);",
-        "/**\n"
-        + " * @constructor\n"
-        + " */\n"
-        + "var F = function() {\n};\n"
-        + "/**\n"
-        + " * @param {string} x\n"
-        + " * @return {undefined}\n"
-        + " */\n"
-        + "F.prototype.x = function(x) {\n};\n");
+        LINE_JOINER.join(
+            "/** @constructor */",
+            "function F() { /** @export */ this.x = function(/** string */ x){};}",
+            "goog.exportSymbol('F', F);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @constructor",
+            " */",
+            "var F = function() {",
+            "};",
+            "/**",
+            " * @param {string} x",
+            " * @return {undefined}",
+            " */",
+            "F.prototype.x = function(x) {",
+            "};",
+            ""));
   }
 
   public void testExportLocalPropertyNotInConstructor() throws Exception {
     compileAndCheck(
-        "function f() { /** @export */ this.x = 5;}"
-        + "goog.exportSymbol('f', f);",
-        "/**\n"
-        + " * @return {undefined}\n"
-        + " */\n"
-        + "var f = function() {\n};\n");
+        "/** @this {?} */ function f() { /** @export */ this.x = 5;} goog.exportSymbol('f', f);",
+        LINE_JOINER.join(
+            "/**",
+            " * @return {undefined}",
+            " */",
+            "var f = function() {",
+            "};",
+            ""));
   }
 
   public void testExportParamWithSymbolDefinedInFunction() throws Exception {
     compileAndCheck(
-        "var id = function() {return 'id'};\n" +
-        "var ft = function() {\n" +
-        "  var id;\n" +
-        "  return 1;\n" +
-        "};\n" +
-        "goog.exportSymbol('id', id);\n",
-        "/**\n" +
-        " * @return {?}\n" +
-        " */\n" +
-        "var id = function() {\n" +
-        "};\n");
+        LINE_JOINER.join(
+            "var id = function() {return /** @type {?} */ ('id')};",
+            "var ft = function() {",
+            "  var id;",
+            "  return 1;",
+            "};",
+            "goog.exportSymbol('id', id);"),
+        LINE_JOINER.join(
+            "/**",
+            " * @return {?}",
+            " */",
+            "var id = function() {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithFunctionDefinedAsFunction() {
 
-    compileAndCheck("/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @return {string}\n" +
-                    " */\n" +
-                    "function internalName(param1) {" +
-                      "return param1" +
-                    "};" +
-                    "goog.exportSymbol('externalName', internalName)",
-                    "/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @return {string}\n" +
-                    " */\n" +
-                    "var externalName = function(param1) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/**",
+            " * @param {string} param1",
+            " * @return {string}",
+            " */",
+            "function internalName(param1) {",
+            "  return param1",
+            "};",
+            "goog.exportSymbol('externalName', internalName)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {string} param1",
+            " * @return {string}",
+            " */",
+            "var externalName = function(param1) {",
+            "};",
+            ""));
   }
 
   public void testExportSymbolWithFunctionAlias() {
 
-    compileAndCheck("/**\n" +
-                    " * @param {string} param1\n" +
-                    " */\n" +
-                    "var y = function(param1) {" +
-                    "};" +
-                    "/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @param {string} param2\n" +
-                    " */\n" +
-                    "var x = function y(param1, param2) {" +
-                    "};" +
-                    "goog.exportSymbol('externalName', y)",
-                    "/**\n" +
-                    " * @param {string} param1\n" +
-                    " * @return {undefined}\n" +
-                    " */\n" +
-                    "var externalName = function(param1) {\n};\n");
+    compileAndCheck(
+        LINE_JOINER.join(
+            "/**",
+            " * @param {string} param1",
+            " */",
+            "var y = function(param1) {",
+            "};",
+            "/**",
+            " * @param {string} param1",
+            " * @param {string} param2",
+            " */",
+            "var x = function y(param1, param2) {",
+            "};",
+            "goog.exportSymbol('externalName', y)"),
+        LINE_JOINER.join(
+            "/**",
+            " * @param {string} param1",
+            " * @return {undefined}",
+            " */",
+            "var externalName = function(param1) {",
+            "};",
+            ""));
   }
 
   public void testNamespaceDefinitionInExterns() throws Exception {
     compileAndCheck(
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/** @const */",
             "var ns = {};",
             "/** @const */",
@@ -673,7 +876,7 @@ public final class ExternExportsPassTest extends TestCase {
             "/** @constructor */",
             "ns.subns.Foo = function() {};",
             "goog.exportSymbol('ns.subns.Foo', ns.subns.Foo);"),
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/**",
             " @const",
             " @suppress {const,duplicate}",
@@ -694,17 +897,17 @@ public final class ExternExportsPassTest extends TestCase {
 
   public void testNullabilityInFunctionTypes() throws Exception {
     compileAndCheck(
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/**",
             " * @param {function(Object)} takesNullable",
             " * @param {function(!Object)} takesNonNullable",
             " */",
             "function x(takesNullable, takesNonNullable) {}",
             "goog.exportSymbol('x', x);"),
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/**",
-            " * @param {function ((Object|null)): ?} takesNullable",
-            " * @param {function (!Object): ?} takesNonNullable",
+            " * @param {function((Object|null)): ?} takesNullable",
+            " * @param {function(!Object): ?} takesNonNullable",
             " * @return {undefined}",
             " */",
             "var x = function(takesNullable, takesNonNullable) {",
@@ -714,13 +917,13 @@ public final class ExternExportsPassTest extends TestCase {
 
   public void testNullabilityInRecordTypes() throws Exception {
     compileAndCheck(
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/** @typedef {{ nonNullable: !Object, nullable: Object }} */",
             "var foo;",
             "/** @param {foo} record */",
             "function x(record) {}",
             "goog.exportSymbol('x', x);"),
-        Joiner.on("\n").join(
+        LINE_JOINER.join(
             "/**",
             " * @param {{nonNullable: !Object, nullable: (Object|null)}} record",
             " * @return {undefined}",
@@ -730,39 +933,46 @@ public final class ExternExportsPassTest extends TestCase {
             ""));
   }
 
-  private void compileAndCheck(String js, String expected) {
-    Result result = compileAndExportExterns(js);
+  private void compileAndCheck(String js, final String expected) {
+    compileAndExportExterns(js, MINIMAL_EXTERNS, new Consumer<String>() {
+      @Override public void accept(String generatedExterns) {
+        String fileoverview = LINE_JOINER.join(
+            "/**",
+            " * @fileoverview Generated externs.",
+            " * @externs",
+            " */",
+            "");
+        // NOTE(sdh): NTI produces {?=} for many params, while OTI just produces {?}.
+        // For now we will not worry about this distinction and just normalize it.
+        generatedExterns = generatedExterns.replace("?=", "?");
 
-    String fileoverview = Joiner.on("\n").join(
-        "/**",
-        " * @fileoverview Generated externs.",
-        " * @externs",
-        " */",
-        "");
-
-    assertEquals(fileoverview + expected, result.externExport);
+        assertThat(generatedExterns).isEqualTo(fileoverview + expected);
+      }
+    });
   }
 
   public void testDontWarnOnExportFunctionWithUnknownParameterTypes() {
     /* This source is missing types for the b and c parameters */
-    String librarySource =
-      "/**\n" +
-      " * @param {number} a\n" +
-      " * @return {number}" +
-      " */\n " +
-      "var InternalName = function(a,b,c) {" +
-      "  return 6;" +
-      "};" +
-      "goog.exportSymbol('ExternalName', InternalName)";
+    String librarySource = LINE_JOINER.join(
+        "/**",
+        " * @param {number} a",
+        " * @return {number}",
+        " */",
+        "var InternalName = function(a,b,c) {",
+        "  return 6;",
+        "};",
+        "goog.exportSymbol('ExternalName', InternalName)");
 
-      Result libraryCompileResult = compileAndExportExterns(librarySource);
-
-      assertThat(libraryCompileResult.warnings).isEmpty();
-      assertThat(libraryCompileResult.errors).isEmpty();
+    compileAndExportExterns(librarySource);
   }
 
-  private Result compileAndExportExterns(String js) {
-    return compileAndExportExterns(js, "");
+  /**
+   * Compiles the passed in JavaScript and returns the new externs exported by the this pass.
+   *
+   * @param js the source to be compiled
+   */
+  private void compileAndExportExterns(String js) {
+    compileAndExportExterns(js, MINIMAL_EXTERNS);
   }
 
   /**
@@ -771,38 +981,32 @@ public final class ExternExportsPassTest extends TestCase {
    *
    * @param js the source to be compiled
    * @param externs the externs the {@code js} source needs
-   * @return the externs generated from {@code js}
    */
-  private Result compileAndExportExterns(String js, String externs) {
-    Compiler compiler = new Compiler();
-    BlackHoleErrorManager.silence(compiler);
-    CompilerOptions options = new CompilerOptions();
-    options.externExportsPath = "externs.js";
-    options.declaredGlobalExternsOnWindow = false;
+  private void compileAndExportExterns(String js, String externs) {
+    compileAndExportExterns(js, externs, null);
+  }
 
-    /* Check types so we can make sure our exported externs have
-     * type information.
-     */
-    options.setCheckSymbols(true);
-    options.setCheckTypes(runCheckTypes);
+  /**
+   * Compiles the passed in JavaScript with the passed in externs and returns
+   * the new externs exported by the this pass.
+   *
+   * @param js the source to be compiled
+   * @param externs the externs the {@code js} source needs
+   * @param consumer consumer for the externs generated from {@code js}
+   */
+  private void compileAndExportExterns(String js, String externs, final Consumer<String> consumer) {
+    js = LINE_JOINER.join(
+        "/** @const */ var goog = {};",
+        "goog.exportSymbol = function(a, b) {};",
+        "goog.exportProperty = function(a, b, c) {};",
+        js);
 
-    List<SourceFile> inputs = ImmutableList.of(SourceFile.fromCode(
-        "testcode",
-        "var goog = {};"
-        + "goog.exportSymbol = function(a, b) {}; "
-        + "goog.exportProperty = function(a, b, c) {}; " + js));
-
-    List<SourceFile> externFiles = ImmutableList.of(
-        SourceFile.fromCode("externs", externs));
-
-    Result result = compiler.compile(externFiles, inputs, options);
-
-    if (!result.success) {
-      String msg = "Errors:";
-      msg += Joiner.on("\n").join(result.errors);
-      assertTrue(msg, result.success);
-    }
-
-    return result;
+    testSame(externs(externs), srcs(js), new Postcondition() {
+      @Override public void verify(Compiler compiler) {
+        if (consumer != null) {
+          consumer.accept(compiler.getResult().externExport);
+        }
+      }
+    });
   }
 }

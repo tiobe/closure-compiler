@@ -19,9 +19,8 @@ package com.google.javascript.jscomp;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.List;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -93,23 +92,31 @@ class InlineSimpleMethods extends MethodCompilerPass {
           Node returned = returnedExpression(firstDefinition);
           if (returned != null) {
             if (isPropertyTree(returned)) {
-              logger.fine("Inlining property accessor: " + callName);
+              if (logger.isLoggable(Level.FINE)) {
+                logger.fine("Inlining property accessor: " + callName);
+              }
               inlinePropertyReturn(parent, callNode, returned);
             } else if (NodeUtil.isLiteralValue(returned, false) &&
               !NodeUtil.mayHaveSideEffects(
                   callNode.getFirstChild(), compiler)) {
-              logger.fine("Inlining constant accessor: " + callName);
+              if (logger.isLoggable(Level.FINE)) {
+                logger.fine("Inlining constant accessor: " + callName);
+              }
               inlineConstReturn(parent, callNode, returned);
             }
           } else if (isEmptyMethod(firstDefinition) &&
               !NodeUtil.mayHaveSideEffects(
                   callNode.getFirstChild(), compiler)) {
-            logger.fine("Inlining empty method: " + callName);
-            inlineEmptyMethod(parent, callNode);
+            if (logger.isLoggable(Level.FINE)) {
+              logger.fine("Inlining empty method: " + callName);
+            }
+            inlineEmptyMethod(t, parent, callNode);
           }
         }
       } else {
-        logger.fine("Method '" + callName + "' has conflicting definitions.");
+        if (logger.isLoggable(Level.FINE)) {
+          logger.fine("Method '" + callName + "' has conflicting definitions.");
+        }
       }
     }
   }
@@ -198,22 +205,18 @@ class InlineSimpleMethods extends MethodCompilerPass {
     }
 
     Node expectedBlock = fn.getLastChild();
-    return  expectedBlock.isBlock() ?
-        expectedBlock : null;
+    return expectedBlock.isNormalBlock() ? expectedBlock : null;
   }
 
-  /**
-   * Given a set of method definitions, verify they are the same.
-   */
-  private boolean allDefinitionsEquivalent(
-      Collection<Node> definitions) {
-    List<Node> list = new ArrayList<>();
-    list.addAll(definitions);
-    Node node0 = list.get(0);
-    for (int i = 1; i < list.size(); i++) {
-      if (!compiler.areNodesEqualForInlining(list.get(i), node0)) {
+  /** Given a set of method definitions, verify they are the same. */
+  private boolean allDefinitionsEquivalent(Collection<Node> definitions) {
+    Node first = null;
+    for (Node n : definitions) {
+      if (first == null) {
+        first = n;
+      } else if (!compiler.areNodesEqualForInlining(first, n)) {
         return false;
-      }
+      } // else continue
     }
     return true;
   }
@@ -233,7 +236,7 @@ class InlineSimpleMethods extends MethodCompilerPass {
     Node getProp = returnedValue.cloneTree();
     replaceThis(getProp, call.getFirstChild().removeFirstChild());
     parent.replaceChild(call, getProp);
-    compiler.reportCodeChange();
+    compiler.reportChangeToEnclosingScope(getProp);
   }
 
   /**
@@ -245,22 +248,25 @@ class InlineSimpleMethods extends MethodCompilerPass {
       Node returnedValue) {
     Node retValue = returnedValue.cloneTree();
     parent.replaceChild(call, retValue);
-    compiler.reportCodeChange();
+    compiler.reportChangeToEnclosingScope(retValue);
   }
 
   /**
    * Remove the provided object and its method call.
    */
-  private void inlineEmptyMethod(Node parent, Node call) {
+  private void inlineEmptyMethod(NodeTraversal t, Node parent, Node call) {
     // If the return value of the method call is read,
     // replace it with "void 0". Otherwise, remove the call entirely.
+
     if (NodeUtil.isExprCall(parent)) {
       parent.replaceWith(IR.empty());
+      NodeUtil.markFunctionsDeleted(parent, compiler);
     } else {
       Node srcLocation = call;
       parent.replaceChild(call, NodeUtil.newUndefinedNode(srcLocation));
+      NodeUtil.markFunctionsDeleted(call, compiler);
     }
-    compiler.reportCodeChange();
+    t.reportCodeChange();
   }
 
   /**

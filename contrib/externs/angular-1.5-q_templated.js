@@ -132,6 +132,13 @@ angular.$q.Deferred.prototype.promise;
 angular.$q.prototype.all = function(promises) {};
 
 /**
+ * @param {!Array<!angular.$q.Promise>|!Object<string,!angular.$q.Promise>}
+ *     promises
+ * @return {!angular.$q.Promise}
+ */
+angular.$q.prototype.race = function(promises) {};
+
+/**
  * @return {!angular.$q.Deferred}
  */
 angular.$q.prototype.defer = function() {};
@@ -141,6 +148,15 @@ angular.$q.prototype.defer = function() {};
  * @return {!angular.$q.Promise}
  */
 angular.$q.prototype.reject = function(opt_reason) {};
+
+/**
+ * This definition was added to fix "non-existent property" warnings in
+ * Closure Compiler. By defining as unknown, we declare that the property
+ * exists, but do not require correct usage from existing code.
+ *
+ * @type {?}
+ */
+angular.$q.prototype.resolve;
 
 /**
  * @param {RESULT} value

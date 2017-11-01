@@ -16,14 +16,22 @@
 
 package com.google.javascript.jscomp.newtypes;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Ints;
-import com.google.javascript.jscomp.newtypes.ObjectsBuilder.ResolveConflictsBy;
+import com.google.javascript.jscomp.newtypes.RawNominalType.PropAccess;
 import com.google.javascript.rhino.Node;
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +39,10 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
+ * {@link JSType}s include a possibly-empty set of ObjectType instances,
+ * representing the non-primitive components of a union type. An ObjectType
+ * instance includes information about the object: nominal type, function
+ * signature, and extra properties.
  *
  * @author blickly@google.com (Ben Lickly)
  * @author dimvar@google.com (Dimitris Vardoulakis)
@@ -47,29 +59,37 @@ final class ObjectType implements TypeWithProperties {
 
   private final JSTypes commonTypes;
 
+  /** Creates a new "bottom" object. Should only be called in JSTypes. */
   static ObjectType createBottomObject(JSTypes commonTypes) {
-    return new ObjectType(commonTypes, commonTypes.getObjectType(),
-        Preconditions.checkNotNull(commonTypes.BOTTOM_PROPERTY_MAP),
-        null, null, false, ObjectKind.UNRESTRICTED);
+    return new ObjectType(
+        commonTypes,
+        commonTypes.getObjectType(),
+        checkNotNull(commonTypes.BOTTOM_PROPERTY_MAP),
+        null,
+        null,
+        false,
+        ObjectKind.UNRESTRICTED);
   }
 
   private ObjectType(JSTypes commonTypes, NominalType nominalType,
       PersistentMap<String, Property> props, FunctionType fn, Namespace ns,
       boolean isLoose, ObjectKind objectKind) {
-    Preconditions.checkNotNull(commonTypes);
-    Preconditions.checkNotNull(nominalType);
+    checkNotNull(commonTypes);
+    checkNotNull(nominalType);
     Preconditions.checkArgument(
         fn == null || fn.isQmarkFunction() || fn.isLoose() == isLoose,
         "isLoose: %s, fn: %s", isLoose, fn);
-    Preconditions.checkArgument(FunctionType.isInhabitable(fn));
+    checkArgument(FunctionType.isInhabitable(fn));
     if (ns != null) {
       String name = nominalType.getName();
       Preconditions.checkArgument(name.equals(JSTypes.OBJLIT_CLASS_NAME)
           || name.equals("Function") || name.equals("Window"),
           "Can't create namespace with nominal type %s", name);
     }
-    Preconditions.checkArgument(!nominalType.isClassy() || !isLoose,
-        "Cannot create loose objectType with nominal type %s", nominalType);
+    if (isLoose) {
+      Preconditions.checkArgument(nominalType.isBuiltinObject() || nominalType.isFunction(),
+          "Cannot create loose objectType with nominal type %s", nominalType);
+    }
     Preconditions.checkArgument(fn == null || nominalType.isFunction(),
         "Cannot create objectType of nominal type %s with function (%s)",
         nominalType, fn);
@@ -105,7 +125,7 @@ final class ObjectType implements TypeWithProperties {
   static ObjectType makeObjectType(JSTypes commonTypes, NominalType nominalType,
       PersistentMap<String, Property> props, FunctionType fn, Namespace ns,
       boolean isLoose, ObjectKind ok) {
-    Preconditions.checkNotNull(nominalType);
+    checkNotNull(nominalType);
     if (props == null) {
       props = PersistentMap.create();
     } else if (containsBottomProp(props) || !FunctionType.isInhabitable(fn)) {
@@ -145,11 +165,18 @@ final class ObjectType implements TypeWithProperties {
     return this.commonTypes;
   }
 
+  @SuppressWarnings("ReferenceEquality")
   boolean isInhabitable() {
     return this != this.commonTypes.getBottomObject();
   }
 
-  static boolean containsBottomProp(PersistentMap<String, Property> props) {
+  /**
+   * Returns true if the property map contains bottom. To guarantee
+   * that no non-bottom objects have any bottom-typed properties,
+   * the caller should typically short-circuit a return of the bottom
+   * object if this occurs.
+   */
+  private static boolean containsBottomProp(PersistentMap<String, Property> props) {
     for (Property p : props.values()) {
       if (p.getType().isBottom()) {
         return true;
@@ -175,11 +202,30 @@ final class ObjectType implements TypeWithProperties {
   }
 
   boolean isInterfaceInstance() {
-    return this.nominalType != null && this.nominalType.isInterface();
+    return this.nominalType.isInterface();
   }
 
   boolean isNamespace() {
     return this.ns != null;
+  }
+
+  boolean isPrototypeObject() {
+    return getOwnerFunction() != null;
+  }
+
+  /**
+   * If this a prototype object (e.g. Foo.prototype), returns the
+   * associated constructor (e.g. Foo). Otherwise returns null.
+   */
+  FunctionType getOwnerFunction() {
+    JSType t = getProp(new QualifiedName("constructor"));
+    if (t != null && t.isFunctionType()) {
+      FunctionType maybeCtor = t.getFunTypeIfSingletonObj();
+      if (maybeCtor.isSomeConstructorOrInterface()) {
+        return maybeCtor;
+      }
+    }
+    return null;
   }
 
   private boolean hasNonPrototypeProperties() {
@@ -191,14 +237,10 @@ final class ObjectType implements TypeWithProperties {
     return this.ns != null;
   }
 
-  static ImmutableSet<ObjectType> withLooseObjects(Set<ObjectType> objs) {
-    ImmutableSet.Builder<ObjectType> newObjs = ImmutableSet.builder();
-    for (ObjectType obj : objs) {
-      newObjs.add(obj.withLoose());
-    }
-    return newObjs.build();
-  }
-
+  /**
+   * Returns true if the properties of obj are a subset of the
+   * properties of someBuiltinObj.
+   */
   private static boolean hasOnlyBuiltinProps(ObjectType obj, ObjectType someBuiltinObj) {
     for (String pname : obj.props.keySet()) {
       if (!someBuiltinObj.mayHaveProp(new QualifiedName(pname))) {
@@ -208,12 +250,13 @@ final class ObjectType implements TypeWithProperties {
     return true;
   }
 
-  // Crude heuristic to decide whether a loose object is actually a scalar type
-  // and methods have been called on it.
-  // Does not apply to too-common properties such as toString (and for this
-  // reason it doesn't apply to booleans).
-  // Only uses property names; change it to use types if precision isn't
-  // satisfactory.
+  /**
+   * Applies a crude heuristic to decide whether a loose object is actually a
+   * scalar type (specifically number or string) based on methods that have been
+   * called on it. Does not apply to too-common properties such as toString (and
+   * for this reason it doesn't apply to booleans). Only uses property names,
+   * though it could be changed to use types if precision isn't satisfactory.
+   */
   static JSType mayTurnLooseObjectToScalar(JSType t, JSTypes commonTypes) {
     ObjectType obj = t.getObjTypeIfSingletonObj();
     if (obj == null || !obj.isLoose() || obj.props.isEmpty() || obj.fn != null
@@ -231,28 +274,30 @@ final class ObjectType implements TypeWithProperties {
     return t;
   }
 
-  // Trade-offs about property behavior on loose object types:
-  // We never mark properties as optional on loose objects. The reason is that
-  // we cannot know for sure when a property is optional or not.
-  // Eg, when we see an assignment to a loose obj
-  //   obj.p1 = 123;
-  // we cannot know if obj already has p1, or if this is a property creation.
-  // If the assignment is inside an IF branch, we should not say after the IF
-  // that p1 is optional. But as a consequence, this means that any property we
-  // see on a loose object might be optional. That's why we don't warn about
-  // possibly-inexistent properties on loose objects.
-  // Last, say we infer a loose object type with a property p1 for a formal
-  // parameter of a function f. If we pass a non-loose object to f that does not
-  // have a p1, we warn. This may create spurious warnings, if p1 is optional,
-  // but mostly it catches real bugs.
-
-  private ObjectType withLoose() {
+  /**
+   * Returns a "loose" version of this object type.
+   *
+   * Trade-offs about property behavior on loose object types:
+   * (1) We never mark properties as optional on loose objects. The reason is
+   *     that we cannot know for sure when a property is optional or not
+   *     (e.g, when we see an assignment to a loose object `obj.p1 = 123`,
+   *     we cannot know if obj already has p1, or if this is a property creation).
+   * (2) If the assignment is inside an IF branch, we should not say after the IF
+   *     that p1 is optional. But as a consequence, this means that any property we
+   *     see on a loose object might be optional. That's why we don't warn about
+   *     possibly-inexistent properties on loose objects.
+   * (3) Last, say we infer a loose object type with a property p1 for a formal
+   *     parameter of a function f. If we pass a non-loose object to f that does not
+   *     have a p1, we warn. This may create spurious warnings, if p1 is optional,
+   *     but mostly it catches real bugs.
+   */
+  ObjectType withLoose() {
     if (isTopObject()) {
       return this.commonTypes.getLooseTopObjectType();
     }
     if (isLoose()
         // Don't loosen nominal types
-        || this.nominalType != null && this.nominalType.isClassy()
+        || (!this.nominalType.isBuiltinObject() && !this.nominalType.isFunction())
         // Don't loosen namespaces
         || this.ns != null) {
       return this;
@@ -270,17 +315,22 @@ final class ObjectType implements TypeWithProperties {
         this.commonTypes, this.nominalType, newProps, fn, null, true, this.objectKind);
   }
 
+  /**
+   * Returns a version of this object with the given function signature.
+   * This only makes sense if (1) this is a namespace, and (2) the function
+   * is not loose (with the exception of the question-mark function).
+   */
   ObjectType withFunction(FunctionType ft, NominalType fnNominal) {
-    Preconditions.checkState(this.isNamespace());
-    Preconditions.checkState(!ft.isLoose() || ft.isQmarkFunction());
+    checkState(this.isNamespace());
+    checkState(!ft.isLoose() || ft.isQmarkFunction());
     ObjectType obj = makeObjectType(
         this.commonTypes, fnNominal, this.props, ft, this.ns, false, this.objectKind);
     this.ns.updateNamespaceType(JSType.fromObjectType(obj));
     return obj;
   }
 
-  static ImmutableSet<ObjectType> withoutProperty(
-      Set<ObjectType> objs, QualifiedName qname) {
+  /** Returns a transformed set of object types without the given property. */
+  static ImmutableSet<ObjectType> withoutProperty(Set<ObjectType> objs, QualifiedName qname) {
     ImmutableSet.Builder<ObjectType> newObjs = ImmutableSet.builder();
     for (ObjectType obj : objs) {
       newObjs.add(obj.withProperty(qname, null));
@@ -288,11 +338,15 @@ final class ObjectType implements TypeWithProperties {
     return newObjs.build();
   }
 
-  // When type is null, this method removes the property.
-  // If the property is already declared, but isDeclared is false, be careful
-  // to not un-declare it.
-  // If the property is already constant, but isConstant is false, be careful
-  // to not un-const it.
+  /**
+   * Helper method to return a new object with the property added, updated,
+   * or removed. If the type is null, the property is removed. Declared
+   * and constant are "one-way" switches: a declared property will not be
+   * made un-declared, nor a const property made non-constant. If a
+   * property is already inferred with the correct type, it will not be
+   * explicitly added.
+   */
+  @SuppressWarnings("ReferenceEquality")
   private ObjectType withPropertyHelper(QualifiedName qname, JSType type,
       boolean isDeclared, boolean isConstant) {
     // TODO(dimvar): We do some short-circuiting based on the declared type,
@@ -301,6 +355,7 @@ final class ObjectType implements TypeWithProperties {
     if (qname.isIdentifier()) {
       String pname = qname.getLeftmostName();
       JSType declType = getDeclaredProp(qname);
+      JSType inferred = hasProp(qname) ? getProp(qname) : null;
       if (type == null) {
         type = declType;
       }
@@ -317,9 +372,9 @@ final class ObjectType implements TypeWithProperties {
         }
       }
 
-      if (type == null && declType == null) {
+      if (type == null) {
         newProps = newProps.without(pname);
-      } else if (!type.equals(declType)) {
+      } else if (!type.equals(declType) && !type.equals(inferred)) {
         if (isDeclared && declType == null) {
           declType = type;
         }
@@ -362,30 +417,28 @@ final class ObjectType implements TypeWithProperties {
         this.fn, this.ns, this.isLoose, this.objectKind);
   }
 
-  // When type is null, this method removes the property.
+  /**
+   * Returns a new object type with the given property added or
+   * (if type is null) removed.
+   */
   ObjectType withProperty(QualifiedName qname, JSType type) {
     return withPropertyHelper(qname, type, false, false);
   }
 
-  static ImmutableSet<ObjectType> withProperty(
-      Set<ObjectType> objs, QualifiedName qname, JSType type) {
-    ImmutableSet.Builder<ObjectType> newObjs = ImmutableSet.builder();
-    for (ObjectType obj : objs) {
-      newObjs.add(obj.withProperty(qname, type));
-    }
-    return newObjs.build();
+  /**
+   * Returns a new object type with the given declared property added.
+   * Passing null for the type will mark an inferred property as
+   * declared, rather than removing it.
+   */
+  ObjectType withDeclaredProperty(QualifiedName qname, JSType type, boolean isConstant) {
+    return withPropertyHelper(qname, type, true, isConstant);
   }
 
-  static ImmutableSet<ObjectType> withDeclaredProperty(Set<ObjectType> objs,
-      QualifiedName qname, JSType type, boolean isConstant) {
-    ImmutableSet.Builder<ObjectType> newObjs = ImmutableSet.builder();
-    for (ObjectType obj : objs) {
-      newObjs.add(obj.withPropertyHelper(qname, type, true, isConstant));
-    }
-    return newObjs.build();
-  }
-
-  private ObjectType withPropertyRequired(String pname) {
+  /**
+   * Returns a new object type with the named property marked as required.
+   * If the property is not present, it will be typed as unknown.
+   */
+  ObjectType withPropertyRequired(String pname) {
     Property oldProp = this.props.get(pname);
     Property newProp = oldProp == null
         ? Property.make(this.commonTypes.UNKNOWN, null)
@@ -394,29 +447,29 @@ final class ObjectType implements TypeWithProperties {
         this.fn, this.ns, this.isLoose, this.objectKind);
   }
 
-  static ImmutableSet<ObjectType> withPropertyRequired(
-      Set<ObjectType> objs, String pname) {
-    ImmutableSet.Builder<ObjectType> newObjs = ImmutableSet.builder();
-    for (ObjectType obj : objs) {
-      newObjs.add(obj.withPropertyRequired(pname));
-    }
-    return newObjs.build();
-  }
-
+  /**
+   * Meets the given property maps. The returned map will be a union of
+   * the input maps (since the set of properties is contravariant). When
+   * a property is present in both, the result will be either the meet
+   * of the two types, or if specializeProps1 is given, it will be the
+   * type from props1 specialized by the type from props2. The
+   * resultNominalType should be the nominal type that belongs with the
+   * returned property map (i.e. of the met or specialized type).
+   */
   private static PersistentMap<String, Property> meetPropsHelper(
       JSTypes commonTypes,
       boolean specializeProps1, NominalType resultNominalType,
       PersistentMap<String, Property> props1,
       PersistentMap<String, Property> props2) {
-    Preconditions.checkNotNull(resultNominalType);
+    checkNotNull(resultNominalType);
     PersistentMap<String, Property> newProps = props1;
     for (Map.Entry<String, Property> propsEntry : props1.entrySet()) {
       String pname = propsEntry.getKey();
-      Property otherProp = resultNominalType.getProp(pname);
+      Property otherProp = resultNominalType.getProp(pname, PropAccess.INCLUDE_STRAY_PROPS);
       if (otherProp != null) {
         newProps = addOrRemoveProp(
             specializeProps1, newProps, pname, otherProp, propsEntry.getValue());
-        if (newProps == commonTypes.BOTTOM_PROPERTY_MAP) {
+        if (commonTypes.isBottomPropertyMap(newProps)) {
           return commonTypes.BOTTOM_PROPERTY_MAP;
         }
       }
@@ -436,10 +489,10 @@ final class ObjectType implements TypeWithProperties {
             prop1.specialize(prop2) :
             Property.meet(prop1, prop2);
       }
-      Property otherProp = resultNominalType.getProp(pname);
+      Property otherProp = resultNominalType.getProp(pname, PropAccess.INCLUDE_STRAY_PROPS);
       if (otherProp != null) {
         newProps = addOrRemoveProp(specializeProps1, newProps, pname, otherProp, newProp);
-        if (newProps == commonTypes.BOTTOM_PROPERTY_MAP) {
+        if (commonTypes.isBottomPropertyMap(newProps)) {
           return commonTypes.BOTTOM_PROPERTY_MAP;
         }
       } else {
@@ -452,6 +505,12 @@ final class ObjectType implements TypeWithProperties {
     return newProps;
   }
 
+  /**
+   * Utility method used by meetPropsHelper. Adds the property if the result
+   * type is a known proper subtype of the nominal type's property, otherwise
+   * removes (since there is nothing new beyond what's already stored in the
+   * nominal type). Returns bottom map if the result type would be bottom.
+   */
   private static PersistentMap<String, Property> addOrRemoveProp(
       boolean specializeProps1, PersistentMap<String, Property> props,
       String pname, Property nomProp, Property objProp) {
@@ -471,19 +530,27 @@ final class ObjectType implements TypeWithProperties {
     return props.without(pname);
   }
 
+  /**
+   * Looks up the property in the property map, falling back on the given nominal type
+   * if it's not in the map.
+   * Called only when joining two ObjectTypes; that's why it does not deal with namespaces.
+   * @see #join
+   */
   private static Property getProp(Map<String, Property> props, NominalType nom, String pname) {
     if (props.containsKey(pname)) {
       return props.get(pname);
     } else if (nom != null) {
-      return nom.getProp(pname);
+      return nom.getProp(pname, PropAccess.INCLUDE_STRAY_PROPS);
     }
     return null;
   }
 
-  // This method needs the nominal types because otherwise a property may become
-  // optional by mistake after the join.
-  // joinPropsLoosely doesn't need that, because we don't create optional props
-  // on loose types.
+  /**
+   * Joins two property maps. The nominal types are required because otherwise
+   * a property may become optional by mistake after the join. This is not
+   * necessary for {@link #joinPropsLoosely}, because we don't create optional
+   * props on loose types.
+   */
   private static PersistentMap<String, Property> joinProps(
       Map<String, Property> props1, Map<String, Property> props2,
       NominalType nom1, NominalType nom2) {
@@ -504,17 +571,20 @@ final class ObjectType implements TypeWithProperties {
     return newProps;
   }
 
+  /**
+   * Loosely joins two property maps. Properties are marked as required because there
+   * is no concept of optional properties on loose types. @see #withLoose.
+   */
   private static PersistentMap<String, Property> joinPropsLoosely(
-      JSTypes commonTypes,
       Map<String, Property> props1, Map<String, Property> props2) {
+    // Note: If ever newProps == BOTTOM_PROPERTY_MAP, it could be returned early,
+    // but as long as it only ever comes from with(), that is impossible. We may
+    // want to bail out early if either props1 or props2 is bottom.
     PersistentMap<String, Property> newProps = PersistentMap.create();
     for (Map.Entry<String, Property> propsEntry : props1.entrySet()) {
       String pname = propsEntry.getKey();
       if (!props2.containsKey(pname)) {
         newProps = newProps.with(pname, propsEntry.getValue().withRequired());
-      }
-      if (newProps == commonTypes.BOTTOM_PROPERTY_MAP) {
-        return commonTypes.BOTTOM_PROPERTY_MAP;
       }
     }
     for (Map.Entry<String, Property> propsEntry : props2.entrySet()) {
@@ -526,26 +596,34 @@ final class ObjectType implements TypeWithProperties {
       } else {
         newProps = newProps.with(pname, prop2.withRequired());
       }
-      if (newProps == commonTypes.BOTTOM_PROPERTY_MAP) {
-        return commonTypes.BOTTOM_PROPERTY_MAP;
-      }
     }
     return newProps;
   }
 
+  /**
+   * Returns true if the union objs1 is a subtype of the union objs2.
+   * This means that every member of objs1 has at least one supertype
+   * in objs2. If keepLoosenessOfThis is false, the looseness of
+   * members of objs1 will be disregarded.
+   */
   static boolean isUnionSubtype(boolean keepLoosenessOfThis,
       Set<ObjectType> objs1, Set<ObjectType> objs2, SubtypeCache subSuperMap) {
-    return isUnionSubtypeHelper(
-        keepLoosenessOfThis, objs1, objs2, subSuperMap, null);
+    return isUnionSubtypeHelper(keepLoosenessOfThis, objs1, objs2, subSuperMap, null);
   }
 
+  /**
+   * Fills boxedInfo (a single-element "output" array) with the reason
+   * why objs1 is not a subtype of objs2, for the purpose of building
+   * informative error messages.
+   * @throws IllegalArgumentException if objs1 actually is a subtype of objs2.
+   */
   static void whyNotUnionSubtypes(boolean keepLoosenessOfThis,
       Set<ObjectType> objs1, Set<ObjectType> objs2, SubtypeCache subSuperMap,
       MismatchInfo[] boxedInfo) {
-    Preconditions.checkArgument(boxedInfo.length == 1);
+    checkArgument(boxedInfo.length == 1);
     boolean areSubtypes = isUnionSubtypeHelper(
         keepLoosenessOfThis, objs1, objs2, subSuperMap, boxedInfo);
-    Preconditions.checkState(!areSubtypes);
+    checkArgument(!areSubtypes);
   }
 
   private static boolean isUnionSubtypeHelper(boolean keepLoosenessOfThis,
@@ -570,23 +648,28 @@ final class ObjectType implements TypeWithProperties {
     return true;
   }
 
+  /** Returns true if this is a subtype of obj2. */
   boolean isSubtypeOf(ObjectType obj2, SubtypeCache subSuperMap) {
     return isSubtypeOfHelper(true, obj2, subSuperMap, null);
   }
 
-  static void whyNotSubtypeOf(
-      ObjectType obj1, ObjectType obj2, MismatchInfo[] boxedInfo) {
-    Preconditions.checkArgument(boxedInfo.length == 1);
-    boolean areSubtypes =
-        obj1.isSubtypeOfHelper(true, obj2, SubtypeCache.create(), boxedInfo);
-    Preconditions.checkState(!areSubtypes);
+  /**
+   * Fills boxedInfo (a single-element "output" array) with the reason
+   * why obj1 is not a subtype of obj2, for the purpose of building
+   * informative error messages.
+   * @throws IllegalArgumentException if obj1 actually is a subtype of obj2.
+   */
+  static void whyNotSubtypeOf(ObjectType obj1, ObjectType obj2, MismatchInfo[] boxedInfo) {
+    checkArgument(boxedInfo.length == 1);
+    boolean areSubtypes = obj1.isSubtypeOfHelper(true, obj2, SubtypeCache.create(), boxedInfo);
+    Preconditions.checkState(!areSubtypes, "Type %s shouldn't be a subtype of %s", obj1, obj2);
   }
 
   /**
    * Required properties are acceptable where an optional is required,
    * but not vice versa.
    * Optional properties create cycles in the type lattice, eg,
-   * { } \le { p: num= }  and also   { p: num= } \le { }.
+   *    { } ≤ { p: num= }   and also   { p: num= } ≤ { }.
    */
   private boolean isSubtypeOfHelper(boolean keepLoosenessOfThis,
       ObjectType other, SubtypeCache subSuperMap, MismatchInfo[] boxedInfo) {
@@ -609,16 +692,14 @@ final class ObjectType implements TypeWithProperties {
       if (!thisNt.isNominalSubtypeOf(otherNt)) {
         checkOnlyLocalProps = false;
       }
-      if (otherNt.isIObject()) {
-        // IObject is a weird structural type; we check that the generics
-        // match when checking two IObjects for subtyping.
-        if (thisNt.inheritsFromIObjectReflexive()
-            && !thisNt.isNominalSubtypeOf(otherNt)) {
-          return false;
-        }
-        if (thisNt.isBuiltinObject() || thisNt.isLiteralObject()) {
-          return compareRecordTypeToIObject(otherNt, subSuperMap);
-        }
+      // IObject and IArrayLike are treated specially;
+      // unlike other structural types, we check that the generics match.
+      if (thisNt.inheritsFromIObjectReflexive() && otherNt.inheritsFromIObjectReflexive()
+          && !thisNt.isIObjectSubtypeOf(otherNt)) {
+        return false;
+      }
+      if ((thisNt.isBuiltinObject() || thisNt.isLiteralObject()) && otherNt.isIObject()) {
+        return compareRecordTypeToIObject(otherNt, subSuperMap);
       }
     } else if (!thisNt.isNominalSubtypeOf(otherNt)) {
       return false;
@@ -630,7 +711,7 @@ final class ObjectType implements TypeWithProperties {
     if (checkOnlyLocalProps) {
       otherPropNames = other.props.keySet();
     } else {
-      otherPropNames = otherNt.getAllPropsOfInterface();
+      otherPropNames = otherNt.getPropertyNames();
       if (otherPropNames == null) {
         // Can't check structural interfaces for subtyping during GlobalTypeInfo
         return false;
@@ -653,39 +734,54 @@ final class ObjectType implements TypeWithProperties {
     return areFunsSubtypes;
   }
 
-  // NOTE(dimvar): it's not ideal that the unquoted properties of the
-  // object literal are checked as part of the IObject type. We want
-  // a property to either always be accessed with dot or with brackets,
-  // and checking the unquoted properties against IObject gives the
-  // impression that we support both kinds of accesses for the same
-  // property. The alternatives are (none is very satisfactory):
-  // 1) Don't check any object-literal properties against IObject
-  // 2) Check all object-literal properties against IObject (what we're currently doing)
-  // 3) Check only the quoted object-literal properties against IObject.
-  //    This is not great because NTI also checks quoted properties individually
-  //    if the name is known.
-  // 4) Remember in the property map whether a property name was declared as
-  //    quoted or not. This will likely involve a lot of extra plumbing.
-  private boolean compareRecordTypeToIObject(
-      NominalType otherNt, SubtypeCache subSuperMap) {
-     JSType keyType = otherNt.getIndexType();
-     JSType valueType = otherNt.getIndexedType();
-     for (Map.Entry<String, Property> entry : this.props.entrySet()) {
-       String pname = entry.getKey();
-       JSType ptype = entry.getValue().getType();
-       if (keyType.isNumber() && Ints.tryParse(pname) == null) {
-         return false;
-       }
-       if (!keyType.isNumber() && !keyType.isString()) {
-         return false;
-       }
-       if (!ptype.isSubtypeOf(valueType, subSuperMap)) {
-         return false;
-       }
-     }
-     return true;
-   }
+  /**
+   * Special case of isSubtypeOf for testing a builtin or literal object as a
+   * subtype of IObject⟨KEY, VALUE⟩. Specifically, checks that all properties
+   * have the correct key and value type.
+   *
+   * NOTE(dimvar): it's not ideal that the unquoted properties of the
+   * object literal are checked as part of the IObject type. We want
+   * a property to either always be accessed with dot or with brackets,
+   * and checking the unquoted properties against IObject gives the
+   * impression that we support both kinds of accesses for the same
+   * property. The alternatives are (none is very satisfactory):
+   * (1) Don't check any object-literal properties against IObject
+   * (2) Check all object-literal properties against IObject (what we're currently doing)
+   * (3) Check only the quoted object-literal properties against IObject.
+   *     This is not great because NTI also checks quoted properties individually
+   *     if the name is known.
+   * (4) Remember in the property map whether a property name was declared as
+   *     quoted or not. This will likely involve a lot of extra plumbing.
+   *
+   * NOTE(sdh): if the index of the IObject is a string enum, we can do extra checking in this
+   * method; we can check that the record type's properties match the enum keys. Useful or overkill?
+   */
+  private boolean compareRecordTypeToIObject(NominalType otherNt, SubtypeCache subSuperMap) {
+    JSType keyType = otherNt.getIndexType();
+    if (!keyType.isNumber() && !keyType.isString() && !keyType.isUnknown()) {
+      return this.props.isEmpty();
+    }
+    JSType valueType = otherNt.getIndexedType();
+    for (Map.Entry<String, Property> entry : this.props.entrySet()) {
+      String pname = entry.getKey();
+      JSType ptype = entry.getValue().getType();
+      if (keyType.isNumber() && Ints.tryParse(pname) == null) {
+        return false;
+      }
+      // Bracket accesses on the IObject (or on an Array) can generally return undefined
+      // and we don't warn about that; so ignore undefined for the object literal as well.
+      if (!ptype.removeType(this.commonTypes.UNDEFINED).isSubtypeOf(valueType, subSuperMap)) {
+        return false;
+      }
+    }
+    return true;
+  }
 
+  /**
+   * Iterates over the specified properties of the other object and tests that
+   * all corresponding properties in this object are subtypes of other's
+   * properties. Fills in boxedInfo if non-null.
+   */
   private boolean arePropertiesSubtypes(ObjectType other,
       Set<String> otherPropNames, SubtypeCache subSuperMap,
       MismatchInfo[] boxedInfo) {
@@ -712,6 +808,10 @@ final class ObjectType implements TypeWithProperties {
     return true;
   }
 
+  /**
+   * Returns true if prop1 (which may be null, representing an absent property)
+   * is a subtype of prop2. Fills in boxedInfo if non-null.
+   */
   private static boolean isPropertySubtype(String pname, Property prop1,
       Property prop2, SubtypeCache subSuperMap, MismatchInfo[] boxedInfo) {
     return boxedInfo != null
@@ -738,7 +838,7 @@ final class ObjectType implements TypeWithProperties {
   // Like isPropertySubtypeHelper, but also provides mismatch information
   private static boolean getPropMismatchInfo(String pname, Property prop1,
       Property prop2, SubtypeCache subSuperMap, MismatchInfo[] boxedInfo) {
-    Preconditions.checkNotNull(pname);
+    checkNotNull(pname);
     if (prop2.isOptional()) {
       if (prop1 != null
           && !prop1.getType().isSubtypeOf(prop2.getType(), subSuperMap)) {
@@ -762,10 +862,17 @@ final class ObjectType implements TypeWithProperties {
     return true;
   }
 
-  // We never infer properties as optional on loose objects,
-  // and we don't warn about possibly inexistent properties.
+  /**
+   * Returns true if this is a "loose subtype" of other. This only makes
+   * sense if either this or other is a loose object.  This takes into
+   * account whether this object is a struct, and if all the common
+   * properties are in a correct subtype relationship.
+   *
+   * Note that we never infer properties as optional on loose objects,
+   * but also don't warn about possibly-inexistent properties.
+   */
   boolean isLooseSubtypeOf(ObjectType other, SubtypeCache subSuperMap) {
-    Preconditions.checkState(isLoose || other.isLoose);
+    checkState(isLoose || other.isLoose);
     if (other.isTopObject()) {
       return true;
     }
@@ -804,21 +911,31 @@ final class ObjectType implements TypeWithProperties {
     return fn.isLooseSubtypeOf(other.fn);
   }
 
+  /**
+   * Specializes this object with the {@code other} (related) object type.
+   * TODO(sdh): explain a bit more concretely how this is different from meet.
+   */
   ObjectType specialize(ObjectType other) {
-    Preconditions.checkState(
-        areRelatedNominalTypes(this.nominalType, other.nominalType));
+    checkState(areRelatedNominalTypes(this.nominalType, other.nominalType));
     if (isTopObject() && other.objectKind.isUnrestricted()) {
       return other;
     }
     if (this.ns != null) {
       return specializeNamespace(other);
     }
-    NominalType resultNomType = NominalType.pickSubclass(this.nominalType, other.nominalType);
+    NominalType resultNomType;
+    // Don't turn an inline-record type to a @record, because doing this hides implicit type flows
+    // needed for property disambiguation. In all other cases, use the result of pickSubclass.
+    if (this.nominalType.isBuiltinObject() && other.nominalType.isStructuralInterface()) {
+      resultNomType = this.nominalType;
+    } else {
+      resultNomType = NominalType.pickSubclass(this.nominalType, other.nominalType);
+    }
     if (resultNomType.isClassy()) {
-      Preconditions.checkState(this.fn == null && other.fn == null);
+      checkState(this.fn == null && other.fn == null);
       PersistentMap<String, Property> newProps =
           meetPropsHelper(this.commonTypes, true, resultNomType, this.props, other.props);
-      if (newProps == this.commonTypes.BOTTOM_PROPERTY_MAP) {
+      if (this.commonTypes.isBottomPropertyMap(newProps)) {
         return this.commonTypes.getBottomObject();
       }
       return new ObjectType(
@@ -830,9 +947,12 @@ final class ObjectType implements TypeWithProperties {
       thisFn = other.fn;
       isLoose = other.fn.isLoose();
     }
+    if (isLoose && resultNomType.isLiteralObject()) {
+      resultNomType = this.commonTypes.getObjectType();
+    }
     PersistentMap<String, Property> newProps =
         meetPropsHelper(this.commonTypes, true, resultNomType, this.props, other.props);
-    if (newProps == this.commonTypes.BOTTOM_PROPERTY_MAP) {
+    if (this.commonTypes.isBottomPropertyMap(newProps)) {
       return this.commonTypes.getBottomObject();
     }
     FunctionType newFn = thisFn == null ? null : thisFn.specialize(other.fn);
@@ -843,8 +963,12 @@ final class ObjectType implements TypeWithProperties {
         this.commonTypes, resultNomType, newProps, newFn, this.ns, isLoose, this.objectKind);
   }
 
-  // If obj represents a type of the form {p1: p2: {... {p_n: A}}}
-  // then return the path p1,p2,...,p_n. Otherwise, return null.
+  /**
+   * Determines if the given object type is of the form {@code
+   *   {p1: {p2: { ... {p_n: A}}}}
+   * }. If so, returns the full qualified name "p1.p2.....p_n".
+   * Otherwise, returns null.
+   */
   private static QualifiedName getPropertyPath(ObjectType obj) {
     if (obj.props.size() != 1) {
       return null;
@@ -863,14 +987,22 @@ final class ObjectType implements TypeWithProperties {
     return QualifiedName.join(leftmostPname, restPath);
   }
 
-  // Specializing namespace types is very expensive; not just the operation
-  // itself, but also the fact that you create a large type that you flow around
-  // later and many other expensive type operations happen on it.
-  // Therefore, we only specialize namespace types in a very specific case: to
-  // narrow down a mutable namespace field that has a union type, eg,
-  // if (goog.bar.baz !== null) { ... }
+  /**
+   * Handle the specific case of specializing a namespace (note that other
+   * is not necessarily a namespace). Because specializing namespaces is
+   * very expensive (not just the operation itself, but also the fact that
+   * you create a large type that you flow around later and many other
+   * expensive type operations happen on it), we only specialize namespace
+   * types in a very specific case: to narrow down a mutable namespace field
+   * that has a union type, e.g., {@code
+   *   if (goog.bar.baz !== null) { ... }
+   * }. In this case, other's nominal type is Object, and other has a single
+   * "property path". In all other cases, we just return this namespace
+   * object unchanged.
+   */
+  @SuppressWarnings("ReferenceEquality")
   ObjectType specializeNamespace(ObjectType other) {
-    Preconditions.checkNotNull(this.ns);
+    checkNotNull(this.ns);
     if (this == other
         || other.ns != null
         || !other.nominalType.equals(this.commonTypes.getObjectType())) {
@@ -895,43 +1027,81 @@ final class ObjectType implements TypeWithProperties {
     return this;
   }
 
+  @SuppressWarnings("ReferenceEquality")
   private boolean isTopObject() {
     // Reference equality because we want to make sure that we only ever create
     // one top object type.
     return this == this.commonTypes.getTopObjectType();
   }
 
+  @SuppressWarnings("ReferenceEquality")
   private boolean isBottomObject() {
     // Reference equality because we want to make sure that we only ever create
     // one bottom object type.
     return this == this.commonTypes.getBottomObject();
   }
 
+  /**
+   * If this is an enum object (i.e. the namespace itself, not the individual
+   * elements), then returns the associated EnumType; otherwise returns null.
+   */
+  EnumType getEnumType() {
+    if (!this.nominalType.isLiteralObject()) {
+      return null;
+    }
+    for (Property p : this.props.values()) {
+      JSType t = p.getType();
+      if (t.isEnumElement()) {
+        EnumType e = Iterables.getOnlyElement(t.getEnums());
+        return this.equals(e.toJSType().getObjTypeIfSingletonObj()) ? e : null;
+      }
+    }
+    return null;
+  }
+
+  boolean isEnumObject() {
+    return this.getEnumType() != null;
+  }
+
+  /**
+   * Computes the intersection type between two object types. Generally
+   * this involves picking the subclass between the (related) nominal
+   * types, a property map with properties from both object types (with
+   * meets when properties overlap), and meeting any functions. If the
+   * result is loose (either because both arguments are loose, or because
+   * it is a loose function) then common properties are joined, instead.
+   * Namespaces are not handled: a common namespace is preserved, but
+   * otherwise will be dropped from the result.
+   */
   static ObjectType meet(ObjectType obj1, ObjectType obj2) {
-    Preconditions.checkState(areRelatedNominalTypes(obj1.nominalType, obj2.nominalType));
+    NominalType nt1 = obj1.nominalType;
+    NominalType nt2 = obj2.nominalType;
+    Preconditions.checkState(areRelatedNominalTypes(nt1, nt2),
+        "Unrelated nominal types %s and %s", nt1, nt2);
     if (obj1.isTopObject() || obj2.isBottomObject()) {
       return obj2;
     } else if (obj2.isTopObject() || obj1.isBottomObject()) {
       return obj1;
     }
     JSTypes commonTypes = obj1.commonTypes;
-    NominalType resultNomType = NominalType.pickSubclass(obj1.nominalType, obj2.nominalType);
+    NominalType resultNomType = NominalType.pickSubclass(nt1, nt2);
     FunctionType fn = FunctionType.meet(obj1.fn, obj2.fn);
     if (!FunctionType.isInhabitable(fn)) {
       return commonTypes.getBottomObject();
     }
-    boolean isLoose = obj1.isLoose && obj2.isLoose || fn != null && fn.isLoose();
+    boolean isLoose = (obj1.isLoose && obj2.isLoose) || (fn != null && fn.isLoose());
     if (resultNomType.isFunction() && fn == null) {
       fn = obj1.fn == null ? obj2.fn : obj1.fn;
       isLoose = fn.isLoose();
     }
     PersistentMap<String, Property> props;
     if (isLoose) {
-      props = joinPropsLoosely(commonTypes, obj1.props, obj2.props);
+      // Do a simple union of the maps
+      props = joinPropsLoosely(obj1.props, obj2.props);
     } else {
       props = meetPropsHelper(commonTypes, false, resultNomType, obj1.props, obj2.props);
     }
-    if (props == commonTypes.BOTTOM_PROPERTY_MAP) {
+    if (commonTypes.isBottomPropertyMap(props)) {
       return commonTypes.getBottomObject();
     }
     ObjectKind ok = ObjectKind.meet(obj1.objectKind, obj2.objectKind);
@@ -939,6 +1109,13 @@ final class ObjectType implements TypeWithProperties {
     return new ObjectType(commonTypes, resultNomType, props, fn, resultNs, isLoose, ok);
   }
 
+  /**
+   * Computes the union type between two object types. Generally this
+   * involves picking the superclass between the (related) nominal types,
+   * the union of the property maps (joining on overlaps), and joining
+   * any functions. Namespaces are not handled: a common namespace is
+   * preserved, but otherwise will be dropped from the result.
+   */
   static ObjectType join(ObjectType obj1, ObjectType obj2) {
     if (obj1.isTopObject() || obj2.isTopObject()) {
       return obj1.commonTypes.getTopObjectType();
@@ -946,20 +1123,26 @@ final class ObjectType implements TypeWithProperties {
     if (obj1.equals(obj2)) {
       return obj1;
     }
+    if (obj1.isPrototypeObject() && obj2.isPrototypeObject()) {
+      // When Bar and Baz extend Foo, joining Bar.prototype and Baz.prototype returns Foo.
+      return join(
+          obj1.getNominalType().getInstanceAsObjectType(),
+          obj2.getNominalType().getInstanceAsObjectType());
+    }
     NominalType nt1 = obj1.nominalType;
     NominalType nt2 = obj2.nominalType;
-    Preconditions.checkState(nt1.isRawSubtypeOf(nt2) || nt2.isRawSubtypeOf(nt1));
+    checkState(nt1.isRawSubtypeOf(nt2) || nt2.isRawSubtypeOf(nt1));
     JSTypes commonTypes = obj1.commonTypes;
     boolean isLoose = obj1.isLoose || obj2.isLoose;
     FunctionType fn = FunctionType.join(obj1.fn, obj2.fn);
     PersistentMap<String, Property> props;
     if (isLoose) {
       fn = fn == null ? null : fn.withLoose();
-      props = joinPropsLoosely(commonTypes, obj1.props, obj2.props);
+      props = joinPropsLoosely(obj1.props, obj2.props);
     } else {
       props = joinProps(obj1.props, obj2.props, nt1, nt2);
     }
-    NominalType nominal = NominalType.pickSuperclass(nt1, nt2);
+    NominalType nominal = NominalType.join(nt1, nt2);
     if (nominal.isBuiltinObject() && fn != null) {
       if (isLoose) {
         nominal = obj1.commonTypes.getFunctionType();
@@ -974,6 +1157,36 @@ final class ObjectType implements TypeWithProperties {
         ObjectKind.join(obj1.objectKind, obj2.objectKind));
   }
 
+  private static boolean canMergeObjectsInJoin(ObjectType obj1, ObjectType obj2) {
+    if (obj1.isTopObject() || obj2.isTopObject()) {
+      return true;
+    }
+    NominalType nt1 = obj1.nominalType;
+    NominalType nt2 = obj2.nominalType;
+    // In a union, there is at most one object whose nominal type is Object (or literal object).
+    if ((nt1.isBuiltinObject() || nt1.isLiteralObject())
+        && (nt2.isBuiltinObject() || nt2.isLiteralObject())) {
+      return true;
+    }
+    // Merge related classy objects, but don't merge a classy object with a built-in object.
+    // The reason for the latter is that some joins happen during typedef resolution, when we
+    // have not registered all properties on nominal types yet.
+    if (nt1.isBuiltinObject()) {
+      return obj1.isLoose && obj2.isSubtypeOf(obj1, SubtypeCache.create());
+    }
+    if (nt2.isBuiltinObject()) {
+      return obj2.isLoose && obj1.isSubtypeOf(obj2, SubtypeCache.create());
+    }
+    return areRelatedNominalTypes(nt1, nt2) || NominalType.equalRawTypes(nt1, nt2);
+  }
+
+  /**
+   * Joins two sets of object types.
+   * First, we put the types from both sets in a collection.
+   * Then, we iterate over the collection and normalize it, so that no two elements in the
+   * collection are in the subtype relationship. Joining the elements of objs1 and objs2 pairwise
+   * does not ensure that the result is normalized.
+   */
   static ImmutableSet<ObjectType> joinSets(
       ImmutableSet<ObjectType> objs1, ImmutableSet<ObjectType> objs2) {
     if (objs1.isEmpty()) {
@@ -981,60 +1194,51 @@ final class ObjectType implements TypeWithProperties {
     } else if (objs2.isEmpty()) {
       return objs1;
     }
-    ObjectType[] objs1Arr = objs1.toArray(new ObjectType[0]);
-    ObjectType[] keptFrom1 = Arrays.copyOf(objs1Arr, objs1Arr.length);
-    ObjectsBuilder newObjs = new ObjectsBuilder(ResolveConflictsBy.JOIN);
-    for (ObjectType obj2 : objs2) {
-      boolean addedObj2 = false;
-      for (int i = 0; i < objs1Arr.length; i++) {
-        ObjectType obj1 = objs1Arr[i];
-        NominalType nt1 = obj1.nominalType;
-        NominalType nt2 = obj2.nominalType;
-        if (areRelatedNominalTypes(nt1, nt2)) {
-          if ((nt2.isBuiltinObject() && nt1 != null
-              && !obj1.isSubtypeOf(obj2, SubtypeCache.create()))
-              || (nt1.isBuiltinObject() && nt2 != null
-              && !obj2.isSubtypeOf(obj1, SubtypeCache.create()))) {
-            // Don't merge other classes with record types
-            break;
-          }
-          keptFrom1[i] = null;
-          addedObj2 = true;
-          // obj1 and obj2 may be in a subtype relation.
+    List<ObjectType> objs = new ArrayList<>(objs1);
+    objs.addAll(objs2);
+    for (int i = 0; i < objs.size() - 1; i++) {
+      ObjectType obj1 = objs.get(i);
+      for (int j = i + 1; j < objs.size(); j++) {
+        ObjectType obj2 = objs.get(j);
+        if (canMergeObjectsInJoin(obj1, obj2)) {
+          // obj1 and obj2 may be in the subtype relation.
           // Even then, we want to join them because we don't want to forget
-          // any extra properties in the subtype object.
+          // any extra properties present in the subtype object.
           // TODO(dimvar): currently, a class and a @record that is a
           // supertype can be in the same union. We must normalize like we do
           // for other types, to maintain the invariant that the members of
           // a union are not subtypes of each other.
-          newObjs.add(join(obj1, obj2));
-          break;
+          objs.set(i, null);
+          objs.set(j, join(obj1, obj2));
         }
       }
-      if (!addedObj2) {
-        newObjs.add(obj2);
+    }
+    ImmutableSet.Builder<ObjectType> builder = ImmutableSet.builder();
+    for (ObjectType obj : objs) {
+      if (obj != null) {
+        builder.add(obj);
       }
     }
-    for (ObjectType o : keptFrom1) {
-      if (o != null) {
-        newObjs.add(o);
-      }
-    }
-    return newObjs.build();
+    return builder.build();
   }
 
+  /** Returns true if either nominal type is a subtype of the other. */
   private static boolean areRelatedNominalTypes(NominalType c1, NominalType c2) {
     return c1.isNominalSubtypeOf(c2) || c2.isNominalSubtypeOf(c1);
   }
 
-  // TODO(dimvar): handle greatest lower bound of interface types.
-  // If we do that, we need to normalize the output, otherwise it could contain
-  // two object types that are in a subtype relation, eg, see
-  // NewTypeInferenceTest#testDifficultObjectSpecialization.
+  /**
+   * Utility method extracting common functionality between
+   * {@link #meetSets} and {@link #specializeSet}.
+   *
+   * TODO(dimvar): handle greatest lower bound of interface types.
+   * If we do that, we need to normalize the output, otherwise it could
+   * contain two object types that are in a subtype relation, e.g.,
+   * see NewTypeInferenceTest#testDifficultObjectSpecialization.
+   */
   static ImmutableSet<ObjectType> meetSetsHelper(
-      boolean specializeObjs1,
-      Set<ObjectType> objs1, Set<ObjectType> objs2) {
-    ObjectsBuilder newObjs = new ObjectsBuilder(ResolveConflictsBy.MEET);
+      boolean specializeObjs1, Set<ObjectType> objs1, Set<ObjectType> objs2) {
+    ObjectsBuilder newObjs = new ObjectsBuilder();
     for (ObjectType obj2 : objs2) {
       for (ObjectType obj1 : objs1) {
         if (areRelatedNominalTypes(obj1.nominalType, obj2.nominalType)) {
@@ -1060,13 +1264,24 @@ final class ObjectType implements TypeWithProperties {
     return newObjs.build();
   }
 
-  static ImmutableSet<ObjectType> meetSets(
-      Set<ObjectType> objs1, Set<ObjectType> objs2) {
+  /**
+   * Meets two sets of object types by distributing the meet over
+   * the union: (A|B)∧(C|D) = (A∧C)|(A∧D)|(B∧C)|(B∧D), though an
+   * individual meet will only show up in the result if the two
+   * types are related - that is, one is a subclass of the other,
+   * either nominally (for classes and interfaces) or structurally
+   * (for records). All other cases meet to bottom and are therefore
+   * excluded from the result.
+   */
+  static ImmutableSet<ObjectType> meetSets(Set<ObjectType> objs1, Set<ObjectType> objs2) {
     return meetSetsHelper(false, objs1, objs2);
   }
 
-  static ImmutableSet<ObjectType> specializeSet(
-      Set<ObjectType> objs1, Set<ObjectType> objs2) {
+  /**
+   * Similar to {@link #meetSets}, but related nominal types are
+   * specalized instead of met.
+   */
+  static ImmutableSet<ObjectType> specializeSet(Set<ObjectType> objs1, Set<ObjectType> objs2) {
     return meetSetsHelper(true, objs1, objs2);
   }
 
@@ -1084,7 +1299,7 @@ final class ObjectType implements TypeWithProperties {
     if (qname.isIdentifier()) {
       return p == null ? this.commonTypes.UNDEFINED : p.getType();
     } else {
-      Preconditions.checkState(p != null);
+      checkState(p != null);
       return p.getType().getProp(qname.getAllButLeftmost());
     }
   }
@@ -1100,6 +1315,12 @@ final class ObjectType implements TypeWithProperties {
     return p.getType().getDeclaredProp(qname.getAllButLeftmost());
   }
 
+  /**
+   * Returns the property corresponding to the left-most component of the
+   * qname. All other components of qname are ignored. First checks the
+   * property map, then the namespace, and finally the nominal type.
+   * Returns null if no property is found.
+   */
   private Property getLeftmostProp(QualifiedName qname) {
     String pname = qname.getLeftmostName();
     Property p = props.get(pname);
@@ -1112,20 +1333,17 @@ final class ObjectType implements TypeWithProperties {
         return p;
       }
     }
-    if (this.nominalType != null) {
-      return this.nominalType.getProp(pname);
-    }
-    if (this.commonTypes.getObjectType() != null) {
-      return this.commonTypes.getObjectType().getProp(pname);
-    }
-    return null;
+    return this.nominalType.getProp(pname, PropAccess.INCLUDE_STRAY_PROPS);
   }
 
-  // NOTE(aravindpg): This method is currently only used to obtain the defsite of an own prop, and
-  // deliberately does not return the more specialized version of a property if it is already
-  // present on the nominal type. This may be unsuitable from a typing point of view. Revisit if
-  // needed.
-  private Property getLeftmostOwnProp(QualifiedName qname) {
+  /**
+   * Similar to {@link #getLeftmostProp}, but does not return the specialized
+   * versions of any properties already present on the nominal type.
+   *
+   * TODO(aravindpg): This may be unsuitable from a typing point of view.
+   * Revisit if needed.
+   */
+  private Property getLeftmostNonInheritedProp(QualifiedName qname) {
     String pname = qname.getLeftmostName();
     Property p = props.get(pname);
     // Only return the extra/specialized prop p if we know that we don't have this property
@@ -1139,26 +1357,34 @@ final class ObjectType implements TypeWithProperties {
         return p;
       }
     }
-    return this.nominalType.getOwnProp(pname);
+    return this.nominalType.getNonInheritedProp(pname);
   }
 
+  /**
+   * Returns the node that defines the given property, or null if the
+   * property does not exist. May return definitions on supertypes.
+   */
   Node getPropertyDefSite(String propertyName) {
     return getPropertyDefSiteHelper(propertyName, false);
   }
 
-  Node getOwnPropertyDefSite(String propertyName) {
+  /**
+   * Returns the node that defines the given property on this exact object, or null if the
+   * property does not exist (or only exists on supertypes).
+   */
+  Node getNonInheritedPropertyDefSite(String propertyName) {
     return getPropertyDefSiteHelper(propertyName, true);
   }
 
-  Node getPropertyDefSiteHelper(String propertyName, boolean ownProp) {
+  private Node getPropertyDefSiteHelper(String propertyName, boolean nonInheritedProp) {
     QualifiedName qname = new QualifiedName(propertyName);
-    Property p = ownProp ? getLeftmostOwnProp(qname) : getLeftmostProp(qname);
+    Property p = nonInheritedProp ? getLeftmostNonInheritedProp(qname) : getLeftmostProp(qname);
     // Try getters and setters specially.
     if (p == null) {
-      p = getLeftmostProp(new QualifiedName(JSType.createGetterPropName(propertyName)));
+      p = getLeftmostProp(new QualifiedName(this.commonTypes.createGetterPropName(propertyName)));
     }
     if (p == null) {
-      p = getLeftmostProp(new QualifiedName(JSType.createSetterPropName(propertyName)));
+      p = getLeftmostProp(new QualifiedName(this.commonTypes.createSetterPropName(propertyName)));
     }
     return p == null ? null : p.getDefSite();
   }
@@ -1173,14 +1399,33 @@ final class ObjectType implements TypeWithProperties {
 
   @Override
   public boolean hasProp(QualifiedName qname) {
-    Preconditions.checkArgument(qname.isIdentifier());
+    checkArgument(qname.isIdentifier());
     Property p = getLeftmostProp(qname);
+    return p != null;
+  }
+
+  /**
+   * Similar to {@link #hasProp}, but disregards properties that are
+   * only defined on supertypes.
+   */
+  boolean hasNonInheritedProperty(QualifiedName qname) {
+    checkArgument(qname.isIdentifier());
+    Property p = getLeftmostNonInheritedProp(qname);
+    String pname = qname.getLeftmostName();
+    // Try getters and setters specially.
+    if (p == null) {
+      p = getLeftmostNonInheritedProp(
+          new QualifiedName(this.commonTypes.createGetterPropName(pname)));
+    }
+    if (p == null) {
+      p = getLeftmostProp(new QualifiedName(this.commonTypes.createSetterPropName(pname)));
+    }
     return p != null;
   }
 
   @Override
   public boolean hasConstantProp(QualifiedName qname) {
-    Preconditions.checkArgument(qname.isIdentifier());
+    checkArgument(qname.isIdentifier());
     Property p = getLeftmostProp(qname);
     return p != null && p.isConstant();
   }
@@ -1259,18 +1504,16 @@ final class ObjectType implements TypeWithProperties {
     NominalType thisNt = this.nominalType;
     NominalType otherNt = other.nominalType;
     if (!thisNt.isBuiltinObject() && !otherNt.isBuiltinObject()) {
-      if (thisNt.unifyWithSubtype(
-          otherNt, typeParameters, typeMultimap, subSuperMap)) {
+      if (thisNt.unifyWithSubtype(otherNt, typeParameters, typeMultimap, subSuperMap)) {
         return true;
-      }
-      if (thisNt.isClass()) {
-        return false;
       }
       if (thisNt.isStructuralInterface()) {
         if (thisNt.equals(subSuperMap.get(otherNt))) {
           return true;
         }
         subSuperMap = subSuperMap.with(otherNt, thisNt);
+      } else { // class or nominal interface
+        return false;
       }
     }
     if (!thisNt.isBuiltinObject() && !thisNt.isStructuralInterface()
@@ -1278,7 +1521,10 @@ final class ObjectType implements TypeWithProperties {
       return false;
     }
     Set<String> thisProps = !thisNt.isBuiltinObject() && thisNt.isStructuralInterface()
-        ? thisNt.getAllPropsOfInterface() : this.props.keySet();
+        ? thisNt.getPropertyNames() : this.props.keySet();
+    if (thisProps == null) {// Can happen during GTI when types aren't frozen yet.
+      return true;
+    }
     return unifyPropsWithSubtype(other, thisProps, typeParameters, typeMultimap, subSuperMap);
   }
 
@@ -1304,81 +1550,181 @@ final class ObjectType implements TypeWithProperties {
     return true;
   }
 
-  ObjectType substituteGenerics(Map<String, JSType> concreteTypes) {
-    if (isTopObject() || concreteTypes.isEmpty()) {
+  /**
+   * Takes a map M from type variables to concrete types. For each *free*
+   * type variable in this type, if the type variable is in the domain of
+   * M, then it gets deeply replaced with the corresponding concrete type
+   * in the returned ObjectType.
+   */
+  ObjectType substituteGenerics(Map<String, JSType> typeMap) {
+    if (isTopObject() || typeMap.isEmpty()) {
       return this;
     }
     PersistentMap<String, Property> newProps = PersistentMap.create();
     for (Map.Entry<String, Property> propsEntry : this.props.entrySet()) {
       String pname = propsEntry.getKey();
       Property newProp =
-          propsEntry.getValue().substituteGenerics(concreteTypes);
+          propsEntry.getValue().substituteGenerics(typeMap);
       newProps = newProps.with(pname, newProp);
     }
-    FunctionType newFn = fn == null ? null : fn.substituteGenerics(concreteTypes);
+    FunctionType newFn = fn == null ? null : fn.substituteGenerics(typeMap);
     return makeObjectType(
         this.commonTypes,
-        this.nominalType.instantiateGenerics(concreteTypes),
+        this.nominalType.substituteGenerics(typeMap),
         newProps,
         newFn,
         this.ns,
-        newFn != null && newFn.isQmarkFunction() || isLoose,
+        (newFn != null && newFn.isQmarkFunction()) || isLoose,
         this.objectKind);
   }
 
+  /**
+   * Looks for the given property name (which must be a non-qualified
+   * identifier) on any nominal subtypes. The built-in object type
+   * always returns true.
+   */
   boolean isPropDefinedOnSubtype(QualifiedName pname) {
-    Preconditions.checkArgument(pname.isIdentifier());
+    checkArgument(pname.isIdentifier());
     return this.nominalType.isBuiltinObject() || this.nominalType.isPropDefinedOnSubtype(pname);
+  }
+
+  /**
+   * Returns true if this object refers to the type of an ambiguous object
+   */
+  boolean isAmbiguousObject() {
+    // TODO(sdh): It's somewhat odd that we treat function namespaces differently
+    // from object namespaces. The reason is for consistency with OTI, which treats
+    // most object literals as anonymous objects, but not so for functions. We
+    // could remove the 'fn' check and simply return true for all namespaces, but
+    // we'll need to update a bunch of expectations in DisambiguatePropertiesTest
+    // (which will then differ from OTI).
+    if (isEnumObject() || isPrototypeObject() || (this.ns != null && this.fn != null)) {
+      return false;
+    }
+    // All constructors have "Function" as their nominalType, so look at instance
+    // types instead for these cases.
+    NominalType nt =
+        (fn != null && fn.isSomeConstructorOrInterface())
+        ? fn.getInstanceTypeOfCtor().getObjTypeIfSingletonObj().nominalType
+        : this.nominalType;
+    return nt.isFunction() || nt.isBuiltinObject() || nt.isLiteralObject();
+  }
+
+  Set<String> getPropertyNames() {
+    Set<String> props = new LinkedHashSet<>();
+    props.addAll(this.props.keySet());
+    props.addAll(this.nominalType.getPropertyNames());
+    return props;
+  }
+
+  Iterable<String> getNonInheritedPropertyNames() {
+    if (this.nominalType.isBuiltinObject() || this.nominalType.isLiteralObject()) {
+      return this.props.keySet();
+    }
+    return Iterables.concat(this.props.keySet(), this.nominalType.getAllNonInheritedProps());
+  }
+
+  ObjectType toAnonymousRecord() {
+    if (this.nominalType.isBuiltinObject() || this.nominalType.isLiteralObject()) {
+      return this;
+    }
+    Map<String, Property> propMap = new LinkedHashMap<>();
+    for (String pname : getNonInheritedPropertyNames()) {
+      JSType ptype = getProp(new QualifiedName(pname));
+      propMap.put(pname, Property.make(ptype, ptype));
+    }
+    return fromProperties(this.commonTypes, propMap);
+  }
+
+  Node getDefSite() {
+    if (this.ns != null) {
+      return this.ns.getDefSite();
+    }
+    if (this.fn != null && this.fn.isSomeConstructorOrInterface()) {
+      return this.fn.getInstanceTypeOfCtor().getSource();
+    }
+    if (this.nominalType != null) {
+      return this.nominalType.getDefSite();
+    }
+    return null;
   }
 
   @Override
   public String toString() {
-    return appendTo(new StringBuilder()).toString();
+    return appendTo(new StringBuilder(), ToStringContext.TO_STRING).toString();
   }
 
-  StringBuilder appendTo(StringBuilder builder) {
+  String toString(ToStringContext ctx) {
+    return appendTo(new StringBuilder(), ctx).toString();
+  }
+
+  StringBuilder appendTo(StringBuilder builder, ToStringContext ctx) {
+    // "Foo.prototype" is a valid type when appropriate.
+    if (isPrototypeObject()) {
+      return builder.append(getOwnerFunction().getThisType().getDisplayName()).append(".prototype");
+    }
+    // Annotations need simpler output that can be re-parsed.
+    if (ctx.forAnnotation()) {
+      if (fn != null) {
+        fn.appendTo(builder, ctx);
+      } else if (!props.isEmpty()) {
+        appendPropsTo(builder, ctx);
+      } else if (nominalType.isLiteralObject()) {
+        // Note: if nominalType.isLiteralObject (e.g. from a non-const namespace)
+        // then it will append as "Object{}", which is not a valid annotation.
+        builder.append("!Object");
+      } else {
+        nominalType.appendTo(builder, ctx);
+      }
+      return builder;
+    }
+    // If it's just a simple function or class with no stray fields, return that.
     if (!hasNonPrototypeProperties()) {
       if (fn != null) {
-        return fn.appendTo(builder);
-      } else if (this.nominalType != null) {
-        return this.nominalType.appendTo(builder);
+        return fn.appendTo(builder, ctx);
       }
+      return this.nominalType.appendTo(builder, ctx);
     }
-    if (!nominalType.getName().equals("Function")
-        && !nominalType.getName().equals("Object")
-        && !nominalType.getName().equals(JSTypes.OBJLIT_CLASS_NAME)) {
-      nominalType.appendTo(builder);
+    // More thorough stringification when annotation support is not needed.
+    if (!nominalType.isFunction()
+        && !nominalType.isBuiltinObject()
+        && !nominalType.isLiteralObject()) {
+      nominalType.appendTo(builder, ctx);
     } else if (isStruct()) {
       builder.append("struct");
     } else if (isDict()) {
       builder.append("dict");
     } else if (this.ns != null) {
-      builder.append(this.ns.toString());
+      builder.append(this.ns);
     }
     if (this.fn != null) {
       builder.append("<|");
-      fn.appendTo(builder);
+      fn.appendTo(builder, ctx);
       builder.append("|>");
     }
     if (ns == null || !props.isEmpty()) {
-      builder.append('{');
-      boolean firstIteration = true;
-      for (String pname : new TreeSet<>(props.keySet())) {
-        if (firstIteration) {
-          firstIteration = false;
-        } else {
-          builder.append(", ");
-        }
-        builder.append(pname);
-        builder.append(':');
-        props.get(pname).appendTo(builder);
-      }
-      builder.append('}');
+      appendPropsTo(builder, ctx);
     }
     if (isLoose) {
       builder.append(" (loose)");
     }
     return builder;
+  }
+
+  private void appendPropsTo(StringBuilder builder, ToStringContext ctx) {
+    builder.append('{');
+    boolean firstIteration = true;
+    for (String pname : new TreeSet<>(props.keySet())) {
+      if (firstIteration) {
+        firstIteration = false;
+      } else {
+        builder.append(", ");
+      }
+      builder.append(pname);
+      builder.append(": ");
+      props.get(pname).appendTo(builder, ctx);
+    }
+    builder.append('}');
   }
 
   @Override
@@ -1389,7 +1735,7 @@ final class ObjectType implements TypeWithProperties {
     if (this == o) {
       return true;
     }
-    Preconditions.checkArgument(o instanceof ObjectType);
+    checkArgument(o instanceof ObjectType);
     ObjectType other = (ObjectType) o;
     return Objects.equals(this.fn, other.fn)
         && Objects.equals(this.ns, other.ns)
@@ -1400,5 +1746,10 @@ final class ObjectType implements TypeWithProperties {
   @Override
   public int hashCode() {
     return Objects.hash(this.fn, this.ns, this.props, this.nominalType);
+  }
+
+  @Override
+  public Collection<JSType> getSubtypesWithProperty(QualifiedName qname) {
+    return this.nominalType.getSubtypesWithProperty(qname);
   }
 }

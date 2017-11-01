@@ -125,15 +125,16 @@ final class InlineAliases implements CompilerPass {
               // Shadow of alias. Don't rewrite
               return;
             }
-            if (NodeUtil.isVarOrSimpleAssignLhs(n, parent)) {
+            if (NodeUtil.isNameDeclOrSimpleAssignLhs(n, parent)) {
               // Alias definition. Don't rewrite
               return;
             }
 
-            Node newNode = NodeUtil.newQName(compiler, resolveAlias(n.getQualifiedName(), n))
-                .useSourceInfoFromForTree(n);
+            Node newNode =
+                NodeUtil.newQName(compiler, resolveAlias(n.getQualifiedName(), n))
+                    .useSourceInfoFromForTree(n);
             parent.replaceChild(n, newNode);
-            compiler.reportCodeChange();
+            t.reportCodeChange();
           }
           break;
         default:

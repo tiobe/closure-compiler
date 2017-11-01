@@ -16,14 +16,18 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
+import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.TypeIEnv;
 import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.ObjectType;
 import com.google.javascript.rhino.jstype.StaticTypedScope;
-
+import com.google.javascript.rhino.jstype.StaticTypedSlot;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -45,7 +49,7 @@ import java.util.Map;
  * The reason for this is that we want to shadow methods from the parent class, to avoid calling
  * them accidentally.
  */
-public class TypedScope extends Scope implements StaticTypedScope<JSType> {
+public class TypedScope extends Scope implements StaticTypedScope<JSType>, TypeIEnv<JSType> {
   private final Map<String, TypedVar> vars = new LinkedHashMap<>();
   private final TypedScope parent;
   /** Whether this is a bottom scope for the purposes of type inference. */
@@ -133,7 +137,7 @@ public class TypedScope extends Scope implements StaticTypedScope<JSType> {
       return ObjectType.cast(rootNode.getJSType());
     }
 
-    Preconditions.checkState(rootNode.isFunction());
+    checkState(rootNode.isFunction());
     JSType nodeType = rootNode.getJSType();
     if (nodeType != null && nodeType.isFunctionType()) {
       return nodeType.toMaybeFunctionType().getTypeOfThis();
@@ -141,6 +145,11 @@ public class TypedScope extends Scope implements StaticTypedScope<JSType> {
       // Executed when the current scope has not been typechecked.
       return null;
     }
+  }
+
+  @Override
+  public final TypeI getTypeIOfThis() {
+    return getTypeOfThis();
   }
 
   @Override
@@ -155,7 +164,7 @@ public class TypedScope extends Scope implements StaticTypedScope<JSType> {
 
   TypedVar declare(String name, Node nameNode,
       JSType type, CompilerInput input, boolean inferred) {
-    Preconditions.checkState(name != null && !name.isEmpty());
+    checkState(name != null && !name.isEmpty());
     TypedVar var = new TypedVar(inferred, name, nameNode, type, this, vars.size(), input);
     vars.put(name, var);
     return var;
@@ -164,8 +173,8 @@ public class TypedScope extends Scope implements StaticTypedScope<JSType> {
   @Override
   void undeclare(Var var) {
     TypedVar tvar = (TypedVar) var;
-    Preconditions.checkState(tvar.scope == this);
-    Preconditions.checkState(vars.get(tvar.name) == tvar);
+    checkState(tvar.scope == this);
+    checkState(vars.get(tvar.name) == tvar);
     vars.remove(tvar.name);
   }
 
@@ -196,6 +205,12 @@ public class TypedScope extends Scope implements StaticTypedScope<JSType> {
   @Override
   public Var getArgumentsVar() {
     throw new IllegalStateException("Method getArgumentsVar cannot be called on typed scopes.");
+  }
+
+  @Override
+  public boolean isDeclaredInFunctionBlockOrParameter(String name) {
+    throw new IllegalStateException(
+        "Method isDeclaredInFunctionBlockOrParameter cannot be called on typed scopes.");
   }
 
   @Override
@@ -276,5 +291,18 @@ public class TypedScope extends Scope implements StaticTypedScope<JSType> {
   public Scope getClosestHoistScope() {
     throw new IllegalStateException(
         "Method getClosestHoistScope cannot be called on typed scopes.");
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public JSType getNamespaceOrTypedefType(String typeName) {
+    StaticTypedSlot<JSType> slot = getSlot(typeName);
+    return slot == null ? null : slot.getType();
+  }
+
+  @Override
+  public JSDocInfo getJsdocOfTypeDeclaration(String typeName) {
+    StaticTypedSlot<JSType> slot = getSlot(typeName);
+    return slot == null ? null : slot.getJSDocInfo();
   }
 }

@@ -16,14 +16,14 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.javascript.jscomp.GlobalNamespace.AstChange;
 import com.google.javascript.jscomp.GlobalNamespace.Name;
 import com.google.javascript.jscomp.GlobalNamespace.Ref;
 import com.google.javascript.jscomp.GlobalNamespace.Ref.Type;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.Reference;
-import com.google.javascript.jscomp.ReferenceCollectingCallback.ReferenceCollection;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayDeque;
@@ -53,7 +53,7 @@ class AggressiveInlineAliases implements CompilerPass {
    * @param depth The chain depth.
    * @param newNodes Expression nodes that have been updated.
    */
-  private static void rewriteAliasProps(Name name, Node value, int depth, Set<AstChange> newNodes) {
+  private void rewriteAliasProps(Name name, Node value, int depth, Set<AstChange> newNodes) {
     if (name.props == null) {
       return;
     }
@@ -77,15 +77,17 @@ class AggressiveInlineAliases implements CompilerPass {
             if (gparent.isAssign()) {
               target = gparent.getFirstChild();
             } else {
-              Preconditions.checkState(NodeUtil.isObjectLitKey(gparent));
+              checkState(NodeUtil.isObjectLitKey(gparent));
               target = gparent;
             }
           } else {
             throw new IllegalStateException("unexpected: " + target);
           }
         }
-        Preconditions.checkState(target.isGetProp() || target.isName());
-        target.replaceWith(value.cloneTree());
+        checkState(target.isGetProp() || target.isName());
+        Node newValue = value.cloneTree();
+        target.replaceWith(newValue);
+        compiler.reportChangeToEnclosingScope(newValue);
         prop.removeRef(ref);
         // Rescan the expression root.
         newNodes.add(new AstChange(ref.module, ref.scope, ref.node));
@@ -94,18 +96,23 @@ class AggressiveInlineAliases implements CompilerPass {
   }
 
   private AbstractCompiler compiler;
+  private boolean codeChanged;
 
   AggressiveInlineAliases(AbstractCompiler compiler) {
     this.compiler = compiler;
+    this.codeChanged = true;
   }
 
   @Override
   public void process(Node externs, Node root) {
-    GlobalNamespace namespace = new GlobalNamespace(compiler, root);
-    inlineAliases(namespace);
+    while (this.codeChanged) {
+      this.codeChanged = false;
+      GlobalNamespace namespace = new GlobalNamespace(compiler, root);
+      inlineAliases(namespace);
+    }
   }
 
-  private JSModule getRefModule(ReferenceCollectingCallback.Reference ref) {
+  private JSModule getRefModule(Reference ref) {
     CompilerInput input = compiler.getInput(ref.getInputId());
     return input == null ? null : input.getModule();
   }
@@ -187,6 +194,7 @@ class AggressiveInlineAliases implements CompilerPass {
           new ReferenceCollectingCallback(
               compiler,
               ReferenceCollectingCallback.DO_NOTHING_BEHAVIOR,
+              new Es6SyntacticScopeCreator(compiler),
               Predicates.equalTo(aliasVar));
       collector.processScope(scope);
 
@@ -219,16 +227,18 @@ class AggressiveInlineAliases implements CompilerPass {
         // The alias is well-formed, so do the inlining now.
         int size = aliasRefs.references.size();
         for (int i = 1; i < size; i++) {
-          ReferenceCollectingCallback.Reference aliasRef = aliasRefs.references.get(i);
+          Reference aliasRef = aliasRefs.references.get(i);
 
           Node newNode = alias.node.cloneTree();
           aliasRef.getParent().replaceChild(aliasRef.getNode(), newNode);
+          compiler.reportChangeToEnclosingScope(newNode);
           newNodes.add(new AstChange(getRefModule(aliasRef), aliasRef.getScope(), newNode));
         }
 
         // just set the original alias to null.
         aliasParent.replaceChild(alias.node, IR.nullNode());
-        compiler.reportCodeChange();
+        codeChanged = true;
+        compiler.reportChangeToEnclosingScope(aliasParent);
 
         // Inlining the variable may have introduced new references
         // to descendants of {@code name}. So those need to be collected now.
@@ -284,6 +294,7 @@ class AggressiveInlineAliases implements CompilerPass {
               Node newNode = alias.node.cloneTree();
               Node node = ref.node;
               node.getParent().replaceChild(node, newNode);
+              compiler.reportChangeToEnclosingScope(newNode);
               newNodes.add(new AstChange(ref.module, ref.scope, newNode));
               name.removeRef(ref);
               break;
@@ -296,7 +307,8 @@ class AggressiveInlineAliases implements CompilerPass {
 
         // just set the original alias to null.
         aliasParent.replaceChild(alias.node, IR.nullNode());
-        compiler.reportCodeChange();
+        codeChanged = true;
+        compiler.reportChangeToEnclosingScope(aliasParent);
 
         // Inlining the variable may have introduced new references
         // to descendants of {@code name}. So those need to be collected now.

@@ -15,9 +15,9 @@
  */
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.javascript.jscomp.SourceExcerptProvider.SourceExcerpt.LINE;
 
-import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.debugging.sourcemap.proto.Mapping.OriginalMapping;
 import com.google.javascript.jscomp.SourceExcerptProvider.ExcerptFormatter;
@@ -30,9 +30,11 @@ import com.google.javascript.rhino.TokenUtil;
  *
  */
 public final class LightweightMessageFormatter extends AbstractMessageFormatter {
-  private SourceExcerpt excerpt;
+  private final SourceExcerpt excerpt;
   private static final ExcerptFormatter excerptFormatter =
       new LineNumberingFormatter();
+  private boolean includeLocation = true;
+  private boolean includeLevel = true;
 
   /**
    * A constructor for when the client doesn't care about source information.
@@ -49,12 +51,22 @@ public final class LightweightMessageFormatter extends AbstractMessageFormatter 
   public LightweightMessageFormatter(SourceExcerptProvider source,
       SourceExcerpt excerpt) {
     super(source);
-    Preconditions.checkNotNull(source);
+    checkNotNull(source);
     this.excerpt = excerpt;
   }
 
   public static LightweightMessageFormatter withoutSource() {
     return new LightweightMessageFormatter();
+  }
+
+  public LightweightMessageFormatter setIncludeLocation(boolean includeLocation) {
+    this.includeLocation = includeLocation;
+    return this;
+  }
+
+  public LightweightMessageFormatter setIncludeLevel(boolean includeLevel) {
+    this.includeLevel = includeLevel;
+    return this;
   }
 
   @Override

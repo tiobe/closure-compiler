@@ -16,6 +16,8 @@
 
 package com.google.javascript.jscomp.parsing;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.javascript.rhino.TypeDeclarationsIR.anyType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.arrayType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.booleanType;
@@ -28,7 +30,6 @@ import static com.google.javascript.rhino.TypeDeclarationsIR.undefinedType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.unionType;
 import static com.google.javascript.rhino.TypeDeclarationsIR.voidType;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -189,7 +190,7 @@ class IRFactory {
       "set the appropriate language_in option.";
 
   static final String INVALID_ES5_STRICT_OCTAL =
-      "Octal integer literals are not supported in Ecmascript 5 strict mode.";
+      "Octal integer literals are not supported in strict mode.";
 
   static final String INVALID_OCTAL_DIGIT =
       "Invalid octal digit in octal literal.";
@@ -221,11 +222,11 @@ class IRFactory {
 
   static final String UNEXPECTED_CONTINUE = "continue must be inside loop";
 
-  static final String UNEXPECTED_LABLED_CONTINUE =
+  static final String UNEXPECTED_LABELLED_CONTINUE =
       "continue can only use labeles of iteration statements";
 
   static final String UNEXPECTED_RETURN = "return must be inside function";
-
+  static final String UNEXPECTED_NEW_DOT_TARGET = "new.target must be inside a function";
   static final String UNDEFINED_LABEL = "undefined label \"%s\"";
 
   private final String sourceString;
@@ -252,6 +253,9 @@ class IRFactory {
           "implements", "interface", "let", "package", "private", "protected",
           "public", "static", "yield");
 
+  private static final Pattern COMMENT_PATTERN =
+      Pattern.compile("(/|(\n[ \t]*))\\*[ \t]*@[a-zA-Z]+[ \t\n{]");
+
   /**
    * If non-null, use this set of keywords instead of TokenStream.isKeyword().
    */
@@ -275,7 +279,7 @@ class IRFactory {
   private boolean currentFileIsExterns = false;
   private boolean hasJsDocTypeAnnotations = false;
 
-  private FeatureSet features = FeatureSet.ES3;
+  private FeatureSet features = FeatureSet.BARE_MINIMUM;
   private Node resultNode;
 
   private IRFactory(String sourceString,
@@ -288,6 +292,9 @@ class IRFactory {
     this.currentComment = skipNonJsDoc(nextCommentIter);
     this.newlines = new ArrayList<>();
     this.sourceFile = sourceFile;
+    // The template node properties are applied to all nodes in this transform.
+    this.templateNode = createTemplateNode();
+
     this.fileLevelJsDocBuilder =
         new JSDocInfoBuilder(config.parseJsDocDocumentation.shouldParseDescriptions());
 
@@ -306,8 +313,6 @@ class IRFactory {
     this.config = config;
     this.errorReporter = errorReporter;
     this.transformDispatcher = new TransformDispatcher();
-    // The template node properties are applied to all nodes in this transform.
-    this.templateNode = createTemplateNode();
 
     if (config.strictMode == StrictMode.STRICT) {
       reservedKeywords = ES5_STRICT_RESERVED_KEYWORDS;
@@ -421,13 +426,14 @@ class IRFactory {
         n = work.poll();
       }
     }
-    Preconditions.checkState(work.isEmpty());
+    checkState(work.isEmpty());
   }
 
   private void validate(Node n) {
     validateParameters(n);
     validateBreakContinue(n);
     validateReturn(n);
+    validateNewDotTarget(n);
     validateLabel(n);
   }
 
@@ -441,6 +447,18 @@ class IRFactory {
       }
       errorReporter.error(UNEXPECTED_RETURN,
           sourceName, n.getLineno(), n.getCharno());
+    }
+  }
+
+  private void validateNewDotTarget(Node n) {
+    if (n.getToken() == Token.NEW_TARGET) {
+      Node parent = n;
+      while ((parent = parent.getParent()) != null) {
+        if (parent.isFunction()) {
+          return;
+        }
+      }
+      errorReporter.error(UNEXPECTED_NEW_DOT_TARGET, sourceName, n.getLineno(), n.getCharno());
     }
   }
 
@@ -464,7 +482,7 @@ class IRFactory {
           if (n.isContinue() && !isContinueTarget(parent.getLastChild())) {
             // report invalid continue target
             errorReporter.error(
-                UNEXPECTED_LABLED_CONTINUE,
+                UNEXPECTED_LABELLED_CONTINUE,
                 sourceName,
                 n.getLineno(), n.getCharno());
           }
@@ -504,6 +522,7 @@ class IRFactory {
   private static boolean isBreakTarget(Node n) {
     switch (n.getToken()) {
       case FOR:
+      case FOR_IN:
       case FOR_OF:
       case WHILE:
       case DO:
@@ -517,6 +536,7 @@ class IRFactory {
   private static boolean isContinueTarget(Node n) {
     switch (n.getToken()) {
       case FOR:
+      case FOR_IN:
       case FOR_OF:
       case WHILE:
       case DO:
@@ -570,7 +590,7 @@ class IRFactory {
   JSDocInfo recordJsDoc(SourceRange location, JSDocInfo info) {
     if (info != null && info.hasTypeInformation()) {
       hasJsDocTypeAnnotations = true;
-      if (features.isTypeScript()) {
+      if (features.version().equals("ts")) {
         errorReporter.error("Can only have JSDoc or inline type annotations, not both",
             sourceName, lineno(location.start), charno(location.start));
       }
@@ -607,7 +627,7 @@ class IRFactory {
 
   Node transformBlock(ParseTree node) {
     Node irNode = transform(node);
-    if (!irNode.isBlock()) {
+    if (!irNode.isNormalBlock()) {
       if (irNode.isEmpty()) {
         irNode.setToken(Token.BLOCK);
       } else {
@@ -624,8 +644,7 @@ class IRFactory {
    * Check to see if the given block comment looks like it should be JSDoc.
    */
   private void handleBlockComment(Comment comment) {
-    Pattern p = Pattern.compile("(/|(\n[ \t]*))\\*[ \t]*@[a-zA-Z]+[ \t\n{]");
-    if (p.matcher(comment.value).find()) {
+    if (COMMENT_PATTERN.matcher(comment.value).find()) {
       errorReporter.warning(
           SUSPICIOUS_COMMENT_WARNING,
           sourceName,
@@ -898,7 +917,7 @@ class IRFactory {
                                charno + numOpeningChars),
           comment,
           position,
-          sourceFile,
+          templateNode,
           config,
           errorReporter);
     jsdocParser.setFileLevelJsDocBuilder(fileLevelJsDocBuilder);
@@ -929,7 +948,7 @@ class IRFactory {
               charno + numOpeningChars),
           comment,
           node.location.start.offset,
-          sourceFile,
+          templateNode,
           config,
           errorReporter);
     return parser.parseInlineTypeDoc();
@@ -970,7 +989,7 @@ class IRFactory {
         ret = processString(token.asLiteral());
         ret.putBooleanProp(Node.QUOTED_PROP, true);
       }
-      Preconditions.checkState(ret.isString());
+      checkState(ret.isString());
       return ret;
     }
 
@@ -1016,6 +1035,7 @@ class IRFactory {
     }
 
     Node processAssignmentRestElement(AssignmentRestElementTree tree) {
+      maybeWarnForFeature(tree, Feature.ARRAY_PATTERN_REST);
       return newNode(Token.REST, transformNodeWithInlineJsDoc(tree.assignmentTarget));
     }
 
@@ -1025,17 +1045,21 @@ class IRFactory {
         scriptNode.addChildToBack(transform(child));
       }
       parseDirectives(scriptNode);
-      if (isGoogModuleFile(scriptNode)) {
+      boolean isGoogModule = isGoogModuleFile(scriptNode);
+      if (isGoogModule || features.has(Feature.MODULES)) {
         Node moduleNode = newNode(Token.MODULE_BODY);
         setSourceInfo(moduleNode, rootNode);
         moduleNode.addChildrenToBack(scriptNode.removeChildren());
         scriptNode.addChildToBack(moduleNode);
+        if (isGoogModule) {
+          scriptNode.putBooleanProp(Node.GOOG_MODULE, true);
+        }
       }
       return scriptNode;
     }
 
     private boolean isGoogModuleFile(Node scriptNode) {
-      Preconditions.checkArgument(scriptNode.isScript());
+      checkArgument(scriptNode.isScript());
       if (!scriptNode.hasChildren()) {
         return false;
       }
@@ -1166,10 +1190,7 @@ class IRFactory {
             lineno(loopNode.initializer), charno(loopNode.initializer));
       }
       return newNode(
-          Token.FOR,
-          initializer,
-          transform(loopNode.collection),
-          transformBlock(loopNode.body));
+          Token.FOR_IN, initializer, transform(loopNode.collection), transformBlock(loopNode.body));
     }
 
     Node processForOf(ForOfStatementTree loopNode) {
@@ -1249,6 +1270,12 @@ class IRFactory {
         maybeWarnForFeature(functionTree, Feature.ASYNC_FUNCTIONS);
       }
 
+      // Add a feature so that transpilation process hoists block scoped functions through
+      // var redeclaration in ES3 and ES5
+      if (isDeclaration) {
+        features = features.with(Feature.BLOCK_SCOPED_FUNCTION_DECLARATION);
+      }
+
       IdentifierToken name = functionTree.name;
       Node newName;
       if (name != null) {
@@ -1282,10 +1309,10 @@ class IRFactory {
       maybeProcessType(node, functionTree.returnType);
 
       Node bodyNode = transform(functionTree.functionBody);
-      if (!isArrow && !isSignature && !bodyNode.isBlock()) {
+      if (!isArrow && !isSignature && !bodyNode.isNormalBlock()) {
         // When in "keep going" mode the parser tries to parse some constructs the
         // compiler doesn't support, repair it here.
-        Preconditions.checkState(config.keepGoing == Config.RunMode.KEEP_GOING);
+        checkState(config.keepGoing == Config.RunMode.KEEP_GOING);
         bodyNode = IR.block();
       }
       parseDirectives(bodyNode);
@@ -1298,12 +1325,12 @@ class IRFactory {
 
       Node result;
 
-      if (functionTree.kind == FunctionDeclarationTree.Kind.MEMBER) {
+      if (isMember) {
         setSourceInfo(node, functionTree);
         Node member = newStringNode(Token.MEMBER_FUNCTION_DEF, name.value);
         member.addChildToBack(node);
         member.setStaticMember(functionTree.isStatic);
-        maybeProcessAccessibilityModifier(member, functionTree.access);
+        maybeProcessAccessibilityModifier(functionTree, member, functionTree.access);
         node.setDeclaredTypeExpression(node.getDeclaredTypeExpression());
         result = member;
       } else {
@@ -1320,9 +1347,12 @@ class IRFactory {
           Node paramNode = transformNodeWithInlineJsDoc(param);
           // Children must be simple names, default parameters, rest
           // parameters, or destructuring patterns.
-          Preconditions.checkState(paramNode.isName() || paramNode.isRest()
-              || paramNode.isArrayPattern() || paramNode.isObjectPattern()
-              || paramNode.isDefaultValue());
+          checkState(
+              paramNode.isName()
+                  || paramNode.isRest()
+                  || paramNode.isArrayPattern()
+                  || paramNode.isObjectPattern()
+                  || paramNode.isDefaultValue());
           params.addChildToBack(paramNode);
         }
       }
@@ -1468,18 +1498,18 @@ class IRFactory {
     }
 
     Node processString(LiteralToken token) {
-      Preconditions.checkArgument(token.type == TokenType.STRING);
+      checkArgument(token.type == TokenType.STRING);
       Node node = newStringNode(Token.STRING, normalizeString(token, false));
       setSourceInfo(node, token);
       return node;
     }
 
     Node processTemplateLiteralToken(LiteralToken token) {
-      Preconditions.checkArgument(
+      checkArgument(
           token.type == TokenType.NO_SUBSTITUTION_TEMPLATE
-          || token.type == TokenType.TEMPLATE_HEAD
-          || token.type == TokenType.TEMPLATE_MIDDLE
-          || token.type == TokenType.TEMPLATE_TAIL);
+              || token.type == TokenType.TEMPLATE_HEAD
+              || token.type == TokenType.TEMPLATE_MIDDLE
+              || token.type == TokenType.TEMPLATE_TAIL);
       Node node = newStringNode(normalizeString(token, true));
       node.putProp(Node.RAW_STRING_VALUE, token.value);
       setSourceInfo(node, token);
@@ -1499,7 +1529,7 @@ class IRFactory {
 
     private void maybeWarnKeywordProperty(Node node) {
       if (TokenStream.isKeyword(node.getString())) {
-        features = features.require(Feature.KEYWORDS_AS_PROPERTIES);
+        features = features.with(Feature.KEYWORDS_AS_PROPERTIES);
         if (config.languageMode == LanguageMode.ECMASCRIPT3) {
           errorReporter.warning(INVALID_ES3_PROP_NAME, sourceName,
               node.getLineno(), node.getCharno());
@@ -1511,11 +1541,11 @@ class IRFactory {
       String identifier = token.value;
       boolean isIdentifier = false;
       if (TokenStream.isKeyword(identifier)) {
-        features = features.require(Feature.ES3_KEYWORDS_AS_IDENTIFIERS);
+        features = features.with(Feature.ES3_KEYWORDS_AS_IDENTIFIERS);
         isIdentifier = config.languageMode == LanguageMode.ECMASCRIPT3;
       }
       if (reservedKeywords != null && reservedKeywords.contains(identifier)) {
-        features = features.require(Feature.KEYWORDS_AS_PROPERTIES);
+        features = features.with(Feature.KEYWORDS_AS_PROPERTIES);
         isIdentifier = config.languageMode == LanguageMode.ECMASCRIPT3;
       }
       if (isIdentifier) {
@@ -1588,14 +1618,14 @@ class IRFactory {
 
     Node processComputedPropertyMemberVariable(ComputedPropertyMemberVariableTree tree) {
       maybeWarnForFeature(tree, Feature.COMPUTED_PROPERTIES);
-      maybeWarnTypeSyntax(tree, Feature.COMPUTED_PROPERTIES);
+      maybeWarnTypeSyntax(tree, Feature.MEMBER_VARIABLE_IN_CLASS);
 
       Node n = newNode(Token.COMPUTED_PROP, transform(tree.property));
       maybeProcessType(n, tree.declaredType);
       n.putBooleanProp(Node.COMPUTED_PROP_VARIABLE, true);
       n.putProp(Node.ACCESS_MODIFIER, tree.access);
       n.setStaticMember(tree.isStatic);
-      maybeProcessAccessibilityModifier(n, tree.access);
+      maybeProcessAccessibilityModifier(tree, n, tree.access);
       return n;
     }
 
@@ -1608,7 +1638,7 @@ class IRFactory {
       if (tree.method.asFunctionDeclaration().isStatic) {
         n.setStaticMember(true);
       }
-      maybeProcessAccessibilityModifier(n, tree.access);
+      maybeProcessAccessibilityModifier(tree, n, tree.access);
       return n;
     }
 
@@ -1643,9 +1673,9 @@ class IRFactory {
       Node key = processObjectLitKeyAsString(tree.propertyName);
       key.setToken(Token.GETTER_DEF);
       Node body = transform(tree.body);
-      Node dummyName = IR.name("");
+      Node dummyName = newStringNode(Token.NAME, "");
       setSourceInfo(dummyName, tree.body);
-      Node paramList = IR.paramList();
+      Node paramList = newNode(Token.PARAM_LIST);
       setSourceInfo(paramList, tree.body);
       Node value = newNode(Token.FUNCTION, dummyName, paramList, body);
       setSourceInfo(value, tree.body);
@@ -1659,10 +1689,9 @@ class IRFactory {
       Node key = processObjectLitKeyAsString(tree.propertyName);
       key.setToken(Token.SETTER_DEF);
       Node body = transform(tree.body);
-      Node dummyName = IR.name("");
+      Node dummyName = newStringNode(Token.NAME, "");
       setSourceInfo(dummyName, tree.propertyName);
-      Node paramList = IR.paramList(
-          safeProcessName(tree.parameter));
+      Node paramList = newNode(Token.PARAM_LIST, safeProcessName(tree.parameter));
       setSourceInfo(paramList, tree.parameter);
       maybeProcessType(paramList.getFirstChild(), tree.type);
       Node value = newNode(Token.FUNCTION, dummyName, paramList, body);
@@ -1825,7 +1854,7 @@ class IRFactory {
       ParseTree expr = caseNode.expression;
       Node node = newNode(Token.CASE, transform(expr));
       Node block = newNode(Token.BLOCK);
-      block.putBooleanProp(Node.SYNTHETIC_BLOCK_PROP, true);
+      block.setIsAddedBlock(true);
       setSourceInfo(block, caseNode);
       if (caseNode.statements != null) {
         for (ParseTree child : caseNode.statements) {
@@ -1839,7 +1868,7 @@ class IRFactory {
     Node processSwitchDefault(DefaultClauseTree caseNode) {
       Node node = newNode(Token.DEFAULT_CASE);
       Node block = newNode(Token.BLOCK);
-      block.putBooleanProp(Node.SYNTHETIC_BLOCK_PROP, true);
+      block.setIsAddedBlock(true);
       setSourceInfo(block, caseNode);
       if (caseNode.statements != null) {
         for (ParseTree child : caseNode.statements) {
@@ -1937,7 +1966,8 @@ class IRFactory {
     }
 
     private Node createUpdateNode(Token type, boolean postfix, Node operand) {
-      if (!operand.isValidAssignmentTarget()) {
+      Node assignTarget = operand.isCast() ? operand.getFirstChild() : operand;
+      if (!assignTarget.isValidAssignmentTarget()) {
         errorReporter.error(
             SimpleFormat.format("Invalid %s %s operand.",
                 (postfix ? "postfix" : "prefix"),
@@ -2033,7 +2063,7 @@ class IRFactory {
 
     /** Reports an illegal getter and returns true if the language mode is too low. */
     boolean maybeReportGetter(ParseTree node) {
-      features = features.require(Feature.GETTER);
+      features = features.with(Feature.GETTER);
       if (config.languageMode == LanguageMode.ECMASCRIPT3) {
         errorReporter.error(
             GETTER_ERROR_MESSAGE,
@@ -2046,7 +2076,7 @@ class IRFactory {
 
     /** Reports an illegal setter and returns true if the language mode is too low. */
     boolean maybeReportSetter(ParseTree node) {
-      features = features.require(Feature.SETTER);
+      features = features.with(Feature.SETTER);
       if (config.languageMode == LanguageMode.ECMASCRIPT3) {
         errorReporter.error(
             SETTER_ERROR_MESSAGE,
@@ -2108,8 +2138,8 @@ class IRFactory {
       Node body = newNode(Token.CLASS_MEMBERS);
       setSourceInfo(body, tree);
       for (ParseTree child : tree.elements) {
-        if (child.type == ParseTreeType.MEMBER_VARIABLE ||
-            child.type == ParseTreeType.COMPUTED_PROPERTY_MEMBER_VARIABLE) {
+        if (child.type == ParseTreeType.MEMBER_VARIABLE
+            || child.type == ParseTreeType.COMPUTED_PROPERTY_MEMBER_VARIABLE) {
           maybeWarnTypeSyntax(child, Feature.MEMBER_VARIABLE_IN_CLASS);
         }
         body.addChildToBack(transform(child));
@@ -2168,7 +2198,7 @@ class IRFactory {
       maybeProcessType(member, tree.declaredType);
       member.setStaticMember(tree.isStatic);
       member.putBooleanProp(Node.OPT_ES6_TYPED, tree.isOptional);
-      maybeProcessAccessibilityModifier(member, tree.access);
+      maybeProcessAccessibilityModifier(tree, member, tree.access);
       return member;
     }
 
@@ -2177,7 +2207,7 @@ class IRFactory {
       if (tree.expression != null) {
         yield.addChildToBack(transform(tree.expression));
       }
-      yield.setYieldFor(tree.isYieldFor);
+      yield.setYieldAll(tree.isYieldAll);
       return yield;
     }
 
@@ -2192,11 +2222,9 @@ class IRFactory {
       maybeWarnForFeature(tree, Feature.MODULES);
       Node decls = null;
       if (tree.isExportAll) {
-        Preconditions.checkState(
-            tree.declaration == null &&
-            tree.exportSpecifierList == null);
+        checkState(tree.declaration == null && tree.exportSpecifierList == null);
       } else if (tree.declaration != null) {
-        Preconditions.checkState(tree.exportSpecifierList == null);
+        checkState(tree.exportSpecifierList == null);
         decls = transform(tree.declaration);
       } else {
         decls = transformList(Token.EXPORT_SPECS, tree.exportSpecifierList);
@@ -2561,7 +2589,7 @@ class IRFactory {
     }
 
     void maybeWarnForFeature(ParseTree node, Feature feature) {
-      features = features.require(feature);
+      features = features.with(feature);
       if (!isSupportedForInputLanguageMode(feature)) {
 
         errorReporter.warning(
@@ -2574,7 +2602,7 @@ class IRFactory {
       }
     }
 
-    void maybeProcessAccessibilityModifier(Node n, TokenType type) {
+    void maybeProcessAccessibilityModifier(ParseTree parseTree, Node n, @Nullable TokenType type) {
       if (type != null) {
         Visibility access;
         switch (type) {
@@ -2590,6 +2618,7 @@ class IRFactory {
           default:
             throw new IllegalStateException("Unexpected access modifier type");
         }
+        maybeWarnTypeSyntax(parseTree, Feature.ACCESSIBILITY_MODIFIER);
         n.putProp(Node.ACCESS_MODIFIER, access);
       }
     }
@@ -2602,7 +2631,7 @@ class IRFactory {
             lineno(node),
             charno(node));
       }
-      features = features.require(feature);
+      features = features.with(feature);
       recordTypeSyntax(node.location);
     }
 
@@ -2845,10 +2874,68 @@ class IRFactory {
 
   String normalizeRegex(LiteralToken token) {
     String value = token.value;
-    int lastSlash = value.lastIndexOf('/');
-    return value.substring(1, lastSlash);
-  }
+    final int lastSlash = value.lastIndexOf('/');
+    int cur = value.indexOf('\\');
+    if (cur == -1) {
+      return value.substring(1, lastSlash);
+    }
 
+    StringBuilder result = new StringBuilder();
+    int start = 1;
+    while (cur != -1) {
+      result.append(value, start, cur);
+
+      cur++; // skip the escape char.
+      char c = value.charAt(cur);
+      switch (c) {
+        // Characters for which the backslash is semantically important.
+        case '^':
+        case '$':
+        case '\\':
+        case '/':
+        case '.':
+        case '*':
+        case '+':
+        case '?':
+        case '(':
+        case ')':
+        case '[':
+        case ']':
+        case '{':
+        case '}':
+        case '|':
+        case '-':
+        case 'b':
+        case 'B':
+        case 'c':
+        case 'd':
+        case 'D':
+        case 'f':
+        case 'n':
+        case 'r':
+        case 's':
+        case 'S':
+        case 't':
+        case 'u':
+        case 'v':
+        case 'w':
+        case 'W':
+        case 'x':
+        case '0': case '1': case '2': case '3': case '4':
+        case '5': case '6': case '7': case '8': case '9':
+          result.append('\\');
+          // fallthrough
+        default:
+          // For all other characters, the backslash has no effect, so just append the next char.
+          result.append(c);
+      }
+
+      start = cur + 1;
+      cur = value.indexOf('\\', start);
+    }
+    result.append(value, start, lastSlash);
+    return result.toString();
+  }
 
   String normalizeString(LiteralToken token, boolean templateLiteral) {
     String value = token.value;
@@ -2864,17 +2951,11 @@ class IRFactory {
     }
     StringBuilder result = new StringBuilder();
     while (cur != -1) {
-      if (cur - start > 0) {
-        result.append(value, start, cur);
-      }
+      result.append(value, start, cur);
+
       cur += 1; // skip the escape char.
       char c = value.charAt(cur);
       switch (c) {
-        case '\'':
-        case '"':
-        case '\\':
-          result.append(c);
-          break;
         case 'b':
           result.append('\b');
           break;
@@ -2894,7 +2975,7 @@ class IRFactory {
           result.append('\u000B');
           break;
         case '\n':
-          features = features.require(Feature.STRING_CONTINUATION);
+          features = features.with(Feature.STRING_CONTINUATION);
           if (isEs5OrBetterMode()) {
             errorReporter.warning(STRING_CONTINUATION_WARNING,
                 sourceName,
@@ -2906,10 +2987,15 @@ class IRFactory {
           }
           // line continuation, skip the line break
           break;
-        case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
+        case '0':
+          if (cur + 1 >= value.length()) {
+            break;
+          }
+          // fall through
+        case '1': case '2': case '3': case '4': case '5': case '6': case '7':
           char next1 = value.charAt(cur + 1);
 
-          if (inStrictContext()) {
+          if (inStrictContext() || templateLiteral) {
             if (c == '0' && !isOctalDigit(next1)) {
               // No warning: "\0" followed by a character which is not an octal digit
               // is allowed in strict mode.
@@ -2960,9 +3046,10 @@ class IRFactory {
           result.append(Character.toChars(Integer.parseInt(hexDigits, 0x10)));
           cur = escapeEnd - 1;
           break;
+        case '\'':
+        case '"':
+        case '\\':
         default:
-          // TODO(tbreisacher): Add a warning because the user probably
-          // intended to type an escape sequence.
           result.append(c);
           break;
       }
@@ -2976,7 +3063,7 @@ class IRFactory {
   }
 
   boolean isSupportedForInputLanguageMode(Feature feature) {
-    return config.languageMode.featureSet.contains(feature);
+    return config.languageMode.featureSet.has(feature);
   }
 
   boolean isEs5OrBetterMode() {
@@ -2993,9 +3080,8 @@ class IRFactory {
     String value = token.value;
     SourceRange location = token.location;
     int length = value.length();
-    Preconditions.checkState(length > 0);
-    Preconditions.checkState(value.charAt(0) != '-'
-        && value.charAt(0) != '+');
+    checkState(length > 0);
+    checkState(value.charAt(0) != '-' && value.charAt(0) != '+');
     if (value.charAt(0) == '.') {
       return Double.valueOf('0' + value);
     } else if (value.charAt(0) == '0' && length > 1) {
@@ -3006,7 +3092,7 @@ class IRFactory {
           return Double.valueOf(value);
         case 'b':
         case 'B': {
-          features = features.require(Feature.BINARY_LITERALS);
+          features = features.with(Feature.BINARY_LITERALS);
           if (!isSupportedForInputLanguageMode(Feature.BINARY_LITERALS)) {
             errorReporter.warning(BINARY_NUMBER_LITERAL_WARNING,
                 sourceName,
@@ -3021,7 +3107,7 @@ class IRFactory {
         }
         case 'o':
         case 'O': {
-          features = features.require(Feature.OCTAL_LITERALS);
+          features = features.with(Feature.OCTAL_LITERALS);
           if (!isSupportedForInputLanguageMode(Feature.OCTAL_LITERALS)) {
             errorReporter.warning(OCTAL_NUMBER_LITERAL_WARNING,
                 sourceName,
@@ -3045,28 +3131,31 @@ class IRFactory {
         }
         case '0': case '1': case '2': case '3':
         case '4': case '5': case '6': case '7':
-          if (!inStrictContext()) {
-            double v = 0;
-            int c = 0;
-            while (++c < length) {
-              char digit = value.charAt(c);
-              if (isOctalDigit(digit)) {
-                v = (v * 8) + octaldigit(digit);
+          double v = 0;
+          int c = 0;
+          while (++c < length) {
+            char digit = value.charAt(c);
+            if (isOctalDigit(digit)) {
+              v = (v * 8) + octaldigit(digit);
+            } else {
+              if (inStrictContext()) {
+                errorReporter.error(INVALID_ES5_STRICT_OCTAL, sourceName,
+                    lineno(location.start), charno(location.start));
               } else {
                 errorReporter.error(INVALID_OCTAL_DIGIT, sourceName,
                     lineno(location.start), charno(location.start));
-                return 0;
               }
+              return 0;
             }
-            errorReporter.warning(INVALID_ES5_STRICT_OCTAL, sourceName,
-                lineno(location.start), charno(location.start));
-            return v;
-          } else {
-            // TODO(tbreisacher): Make this an error instead of a warning.
-            errorReporter.warning(INVALID_ES5_STRICT_OCTAL, sourceName,
-                lineno(location.start), charno(location.start));
-            return Double.valueOf(value);
           }
+          if (inStrictContext()) {
+            errorReporter.error(INVALID_ES5_STRICT_OCTAL, sourceName,
+                lineno(location.start), charno(location.start));
+          } else {
+            errorReporter.warning(INVALID_ES5_STRICT_OCTAL, sourceName,
+                lineno(location.start), charno(location.start));
+          }
+          return v;
         case '8': case '9':
           errorReporter.error(INVALID_OCTAL_DIGIT, sourceName,
                     lineno(location.start), charno(location.start));
@@ -3116,8 +3205,8 @@ class IRFactory {
       case 'd': case 'D': return 13;
       case 'e': case 'E': return 14;
       case 'f': case 'F': return 15;
+      default: throw new IllegalStateException("unexpected: " + c);
     }
-    throw new IllegalStateException("unexpected: " + c);
   }
 
   static Token transformBooleanTokenType(TokenType token) {

@@ -15,25 +15,37 @@
  */
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.base.Strings;
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.NodeTraversal.Callback;
-import com.google.javascript.jscomp.PureFunctionIdentifier.Driver;
+import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.rhino.Node;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
+import javax.annotation.Nullable;
 
-/**
- * An optimization pass to prune J2CL clinits.
- */
+/** An optimization pass to prune J2CL clinits. */
 public class J2clClinitPrunerPass implements CompilerPass {
 
+  private final Map<String, Node> emptiedClinitMethods = new LinkedHashMap<>();
   private final AbstractCompiler compiler;
-  private boolean madeChange = false;
+  private final List<Node> changedScopeNodes;
 
-  J2clClinitPrunerPass(AbstractCompiler compiler) {
+  J2clClinitPrunerPass(AbstractCompiler compiler, List<Node> changedScopeNodes) {
     this.compiler = compiler;
+    this.changedScopeNodes = changedScopeNodes;
   }
 
   @Override
@@ -42,36 +54,135 @@ public class J2clClinitPrunerPass implements CompilerPass {
       return;
     }
 
-    NodeTraversal.traverseEs6(compiler, root, new RedundantClinitPruner());
-    NodeTraversal.traverseEs6(compiler, root, new LookAheadRedundantClinitPruner());
-    NodeTraversal.traverseEs6(compiler, root, new EmptyClinitPruner());
+    removeRedundantClinits(root, changedScopeNodes);
 
-    if (madeChange) {
-      compiler.reportCodeChange();
-      Driver findPureFunction = new Driver(compiler, null);
-      findPureFunction.process(externs, root);
+    pruneEmptyClinits(root, changedScopeNodes);
+
+    if (emptiedClinitMethods.isEmpty()) {
+      // Since no clinits are pruned, we don't need look for more opportunities.
+      return;
+    }
+
+    Multimap<String, Node> clinitReferences = collectClinitReferences(root);
+    do {
+      List<Node> newChangedScopes = cleanEmptyClinitReferences(clinitReferences);
+      pruneEmptyClinits(root, newChangedScopes);
+    } while (!emptiedClinitMethods.isEmpty());
+
+    // Update the function side-effect markers on the AST.
+    // Removing a clinit from a function may make it side-effect free.
+    new PureFunctionIdentifier.DriverInJ2cl(compiler, null).process(externs, root);
+  }
+
+  private void removeRedundantClinits(Node root, List<Node> changedScopeNodes) {
+    RedundantClinitPruner redundantClinitPruner = new RedundantClinitPruner();
+    NodeTraversal.traverseEs6ScopeRoots(
+        compiler,
+        root,
+        getNonNestedParentScopeNodes(changedScopeNodes),
+        redundantClinitPruner,
+        redundantClinitPruner, // FunctionCallback
+        true);
+
+    NodeTraversal.traverseEs6ScopeRoots(
+        compiler, root, changedScopeNodes, new LookAheadRedundantClinitPruner(), false);
+  }
+
+  private void pruneEmptyClinits(Node root, List<Node> changedScopes) {
+    // Clear emptiedClinitMethods before EmptyClinitPruner to populate only with new ones.
+    emptiedClinitMethods.clear();
+    NodeTraversal.traverseEs6ScopeRoots(
+        compiler, root, changedScopes, new EmptyClinitPruner(), false);
+
+    // Make sure replacements are to final destination instead of pointing intermediate ones.
+    for (Entry<String, Node> clinitReplacementEntry : emptiedClinitMethods.entrySet()) {
+      clinitReplacementEntry.setValue(resolveReplacement(clinitReplacementEntry.getValue()));
     }
   }
 
-  /**
-   * Removes redundant clinit calls inside method body if it is guaranteed to be called earlier.
-   */
-  private final class RedundantClinitPruner implements Callback {
+  private Node resolveReplacement(Node node) {
+    if (node == null) {
+      return null;
+    }
+    String clinitName = getClinitMethodName(node);
+    return emptiedClinitMethods.containsKey(clinitName)
+        ? resolveReplacement(emptiedClinitMethods.get(clinitName))
+        : node;
+  }
 
+  private Multimap<String, Node> collectClinitReferences(Node root) {
+    final Multimap<String, Node> clinitReferences = HashMultimap.create();
+    NodeTraversal.traverseEs6(
+        compiler,
+        root,
+        new AbstractPostOrderCallback() {
+          @Override
+          public void visit(NodeTraversal t, Node node, Node parent) {
+            String clinitName = getClinitMethodName(node);
+            if (clinitName != null) {
+              clinitReferences.put(clinitName, node);
+            }
+          }
+        });
+    return clinitReferences;
+  }
+
+  private List<Node> cleanEmptyClinitReferences(Multimap<String, Node> clinitReferences) {
+    final List<Node> newChangedScopes = new ArrayList<>();
+    // resolveReplacement step above should not require any particular iteration order of the
+    // emptiedClinitMethods but we are using LinkedHashMap to be extra safe.
+    for (Entry<String, Node> clinitReplacementEntry : emptiedClinitMethods.entrySet()) {
+      String clinitName = clinitReplacementEntry.getKey();
+      Node replacement = clinitReplacementEntry.getValue();
+
+      Collection<Node> references = clinitReferences.removeAll(clinitName);
+      for (Node reference : references) {
+        Node changedScope = NodeUtil.getEnclosingChangeScopeRoot(reference.getParent());
+        if (replacement == null) {
+          NodeUtil.deleteFunctionCall(reference, compiler);
+        } else {
+          replacement = replacement.cloneTree();
+          reference.replaceWith(replacement);
+          compiler.reportChangeToChangeScope(changedScope);
+          clinitReferences.put(getClinitMethodName(replacement), replacement);
+        }
+        newChangedScopes.add(changedScope);
+      }
+    }
+    return newChangedScopes;
+  }
+
+  private static List<Node> getNonNestedParentScopeNodes(List<Node> changedScopeNodes) {
+    return changedScopeNodes == null
+        ? null
+        : NodeUtil.removeNestedChangeScopeNodes(
+            NodeUtil.getParentChangeScopeNodes(changedScopeNodes));
+  }
+
+  /** Removes redundant clinit calls inside method body if it is guaranteed to be called earlier. */
+  private final class RedundantClinitPruner implements Callback, ChangeScopeRootCallback {
+
+    @Override
+    public void enterChangeScopeRoot(AbstractCompiler compiler, Node root) {
+      // Reset the clinit call tracking when starting over on a new scope.
+      clinitsCalledAtBranch = new HierarchicalSet<>(null);
+      stateStack.clear();
+    }
+
+    private final Deque<HierarchicalSet<String>> stateStack = new ArrayDeque<>();
     private HierarchicalSet<String> clinitsCalledAtBranch = new HierarchicalSet<>(null);
 
     @Override
     public boolean shouldTraverse(NodeTraversal t, Node node, Node parent) {
-      if (parent != null && NodeUtil.isFunctionDeclaration(node)) {
+      if (NodeUtil.isFunctionDeclaration(node)) {
         // Unlike function expressions, we don't know when the function in a function declaration
-        // will be executed so lets start a new traversal to avoid inheriting anything from the
-        // current branch.
-        NodeTraversal.traverseEs6(t.getCompiler(), node, new RedundantClinitPruner());
-        return false;
+        // will be executed so lets avoid inheriting anything from the current branch.
+        stateStack.addLast(clinitsCalledAtBranch);
+        clinitsCalledAtBranch = new HierarchicalSet<>(null);
       }
 
       if (isNewControlBranch(parent)) {
-        clinitsCalledAtBranch = new HierarchicalSet(clinitsCalledAtBranch);
+        clinitsCalledAtBranch = new HierarchicalSet<>(clinitsCalledAtBranch);
         if (isClinitMethod(parent)) {
           // Adds itself as any of your children can assume clinit is already called.
           clinitsCalledAtBranch.add(NodeUtil.getName(parent));
@@ -83,15 +194,21 @@ public class J2clClinitPrunerPass implements CompilerPass {
 
     @Override
     public void visit(NodeTraversal t, Node node, Node parent) {
-      tryRemovingClinit(t, node, parent);
+      tryRemovingClinit(node);
 
       if (isNewControlBranch(parent)) {
         clinitsCalledAtBranch = clinitsCalledAtBranch.parent;
       }
+
+      if (parent != null && NodeUtil.isFunctionDeclaration(node)) {
+        // Unlike function expressions, we don't know when the function in a function declaration
+        // will be executed so lets avoid inheriting anything from the current branch.
+        clinitsCalledAtBranch = stateStack.removeLast();
+      }
     }
 
-    private void tryRemovingClinit(NodeTraversal t, Node node, Node parent) {
-      String clinitName = node.isCall() ? getClinitMethodName(node.getFirstChild()) : null;
+    private void tryRemovingClinit(Node node) {
+      String clinitName = getClinitMethodName(node);
       if (clinitName == null) {
         return;
       }
@@ -101,10 +218,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
         return;
       }
 
-      // Replacing with '0' is a simple way of removing without introducing invalid AST.
-      parent.replaceChild(node, Node.newNumber(0).useSourceInfoIfMissingFrom(node));
-      t.getCompiler().reportCodeChange();
-      madeChange = true;
+      NodeUtil.deleteFunctionCall(node, compiler);
     }
 
     private boolean isNewControlBranch(Node n) {
@@ -132,8 +246,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
       }
 
       // Find clinit calls.
-      String clinitName =
-          node.getFirstChild().isCall() ? getClinitMethodName(node.getFirstFirstChild()) : null;
+      String clinitName = getClinitMethodName(node.getFirstChild());
       if (clinitName == null) {
         return;
       }
@@ -157,11 +270,11 @@ public class J2clClinitPrunerPass implements CompilerPass {
         return;
       }
 
-      // Check that the clinit is safe to prune.
+      // Check that the clinit call is safe to prune.
       Node staticFnNode = var.getInitialValue();
       if (callsClinit(staticFnNode, clinitName) && hasSafeArguments(t, callOrNewNode)) {
         parent.removeChild(node);
-        madeChange = true;
+        compiler.reportChangeToEnclosingScope(parent);
       }
     }
 
@@ -217,20 +330,17 @@ public class J2clClinitPrunerPass implements CompilerPass {
 
     /** Returns whether the specified function contains a call to the specified clinit. */
     private boolean callsClinit(Node fnNode, String clinitName) {
-      Preconditions.checkNotNull(clinitName);
+      checkNotNull(clinitName);
       // TODO(michaelthomas): Consider checking all children, but watch out for return statements
       // that could short-circuit the clinit.
       Node child = fnNode.getLastChild().getFirstChild();
       return child != null
           && child.isExprResult()
-          && child.getFirstChild().isCall()
-          && clinitName.equals(getClinitMethodName(child.getFirstFirstChild()));
+          && clinitName.equals(getClinitMethodName(child.getFirstChild()));
     }
   }
 
-  /**
-   * A traversal callback that removes the body of empty clinits.
-   */
+  /** A traversal callback that removes the body of empty clinits. */
   private final class EmptyClinitPruner extends AbstractPostOrderCallback {
 
     @Override
@@ -239,13 +349,11 @@ public class J2clClinitPrunerPass implements CompilerPass {
         return;
       }
 
-      trySubstituteEmptyFunction(node, t.getCompiler());
+      trySubstituteEmptyFunction(node);
     }
 
-    /**
-     * Clears the body of any functions are are equivalent to empty functions.
-     */
-    private void trySubstituteEmptyFunction(Node fnNode, AbstractCompiler compiler) {
+    /** Clears the body of any functions that are equivalent to empty functions. */
+    private void trySubstituteEmptyFunction(Node fnNode) {
       String fnQualifiedName = NodeUtil.getName(fnNode);
 
       // Ignore anonymous/constructor functions.
@@ -258,15 +366,30 @@ public class J2clClinitPrunerPass implements CompilerPass {
         return;
       }
 
-      // Ensure that the first expression in the body is setting itself to the empty function and
-      // there are no other expressions.
+      // Ensure that the first expression in the body is setting itself to the empty function
       Node firstExpr = body.getFirstChild();
-      if (!isAssignToEmptyFn(firstExpr, fnQualifiedName) || firstExpr.getNext() != null) {
+      if (!isAssignToEmptyFn(firstExpr, fnQualifiedName)) {
         return;
       }
 
-      body.removeChild(firstExpr);
-      madeChange = true;
+      Node secondExpr = firstExpr.getNext();
+      Node replaceReferencesWith;
+      if (secondExpr == null) {
+        // There are no expressions in clinit so it is noop; remove all references.
+        replaceReferencesWith = null;
+      } else if (secondExpr.getNext() == null
+          && secondExpr.isExprResult()
+          && getClinitMethodName(secondExpr.getFirstChild()) != null) {
+        // Only expression in clinit is a call to another clinit. We can safely replace all
+        // references with the other clinit.
+        replaceReferencesWith = secondExpr.getFirstChild();
+      } else {
+        // Clinit is not empty.
+        return;
+      }
+
+      emptiedClinitMethods.put(fnQualifiedName, replaceReferencesWith);
+      NodeUtil.deleteNode(firstExpr, compiler);
     }
 
     private boolean isAssignToEmptyFn(Node node, String enclosingFnName) {
@@ -284,9 +407,12 @@ public class J2clClinitPrunerPass implements CompilerPass {
     return node.isFunction() && isClinitMethodName(NodeUtil.getName(node));
   }
 
-  private static String getClinitMethodName(Node fnNode) {
-    String fnName = fnNode.getQualifiedName();
-    return isClinitMethodName(fnName) ? fnName : null;
+  private static String getClinitMethodName(Node node) {
+    if (node.isCall()) {
+      String fnName = node.getFirstChild().getQualifiedName();
+      return isClinitMethodName(fnName) ? fnName : null;
+    }
+    return null;
   }
 
   private static boolean isClinitMethodName(String fnName) {
@@ -300,9 +426,9 @@ public class J2clClinitPrunerPass implements CompilerPass {
    */
   private static class HierarchicalSet<T> {
     private Set<T> currentSet = new HashSet<>();
-    private HierarchicalSet<T> parent;
+    @Nullable private final HierarchicalSet<T> parent;
 
-    public HierarchicalSet(HierarchicalSet parent) {
+    public HierarchicalSet(@Nullable HierarchicalSet<T> parent) {
       this.parent = parent;
     }
 
@@ -311,7 +437,7 @@ public class J2clClinitPrunerPass implements CompilerPass {
     }
 
     /** Returns true either my parent or any of its parents contains the item. */
-    private boolean parentsContains(Object o) {
+    private boolean parentsContains(T o) {
       return parent != null && (parent.currentSet.contains(o) || parent.parentsContains(o));
     }
   }

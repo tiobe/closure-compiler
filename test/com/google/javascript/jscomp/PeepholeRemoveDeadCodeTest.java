@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
 
 /**
@@ -23,7 +24,7 @@ import com.google.javascript.rhino.Node;
  * of multiple peephole passes are in PeepholeIntegrationTest.
  */
 
-public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
+public final class PeepholeRemoveDeadCodeTest extends CompilerTestCase {
 
   private static final String MATH =
       "/** @const */ var Math = {};" +
@@ -35,21 +36,24 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
   }
 
   @Override
-  public CompilerPass getProcessor(final Compiler compiler) {
+  protected CompilerPass getProcessor(final Compiler compiler) {
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node root) {
-        DefinitionUseSiteFinder definitionFinder =
-            new DefinitionUseSiteFinder(compiler);
+        DefinitionUseSiteFinder definitionFinder = new DefinitionUseSiteFinder(compiler);
         definitionFinder.process(externs, root);
-        new PureFunctionIdentifier(compiler, definitionFinder)
-            .process(externs, root);
+        new PureFunctionIdentifier(compiler, definitionFinder).process(externs, root);
         PeepholeOptimizationsPass peepholePass =
-            new PeepholeOptimizationsPass(
-                compiler, new PeepholeRemoveDeadCode());
+            new PeepholeOptimizationsPass(compiler, getName(), new PeepholeRemoveDeadCode());
         peepholePass.process(externs, root);
       }
     };
+  }
+
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
   }
 
   @Override
@@ -66,6 +70,14 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     test(js, expected);
   }
 
+  public void testRemoveNoOpLabelledStatement() {
+    fold("a: break a;", "");
+    fold("a: { break a; }", "");
+
+    foldSame("a: { break a; console.log('unreachable'); }");
+    foldSame("a: { break a; var x = 1; } x = 2;");
+  }
+
   public void testFoldBlock() {
     fold("{{foo()}}", "foo()");
     fold("{foo();{}}", "foo()");
@@ -76,11 +88,11 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
 
     fold("{'hi'}", "");
     fold("{x==3}", "");
+    fold("{`hello ${foo}`}", "");
     fold("{ (function(){x++}) }", "");
-    fold("function f(){return;}", "function f(){return;}");
+    foldSame("function f(){return;}");
     fold("function f(){return 3;}", "function f(){return 3}");
-    fold("function f(){if(x)return; x=3; return; }",
-         "function f(){if(x)return; x=3; return; }");
+    foldSame("function f(){if(x)return; x=3; return; }");
     fold("{x=3;;;y=2;;;}", "x=3;y=2");
 
     // Cases to test for empty block.
@@ -88,6 +100,22 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     fold("while(x()){x()}", "while(x())x()");
     fold("for(x=0;x<100;x++){x}", "for(x=0;x<100;x++);");
     fold("for(x in y){x}", "for(x in y);");
+    fold("for (x of y) {x}", "for(x of y);");
+    foldSame("for (let x = 1; x <10; x++ ) {}");
+    foldSame("for (var x = 1; x <10; x++ ) {}");
+
+    // Block with declarations
+    foldSame("{let x}");
+    foldSame("function f() {let x}");
+    foldSame("{const x = 1}");
+    foldSame("{x = 2; y = 4; let z;}");
+    fold("{'hi'; let x;}", "{let x}");
+    fold("{x = 4; {let y}}", "x = 4; {let y}");
+    foldSame("{function f() {} } {function f() {}}");
+    foldSame("{class C {}} {class C {}}");
+    foldSame("{label: let x}");
+    fold("{label: var x}", "label: var x");
+    foldSame("{label: var x; let y;}");
   }
 
   /** Try to remove spurious blocks with multiple children */
@@ -95,12 +123,15 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     fold("function f() { if (false) {} }", "function f(){}");
     fold("function f() { { if (false) {} if (true) {} {} } }",
          "function f(){}");
-    testEs6("{var x; var y; var z; function f() { { var a; { var b; } } } }",
-         "var x;var y;var z;function f(){var a;var b}");
+    fold("{var x; var y; var z; function f() { { var a; { var b; } } } }",
+         "{var x;var y;var z;function f(){var a;var b} }");
+    fold("{var x; var y; var z; { { var a; { var b; } } } }",
+        "var x;var y;var z; var a;var b");
   }
 
   public void testIf() {
     fold("if (1){ x=1; } else { x = 2;}", "x=1");
+    fold("if (1) {} else { function foo(){} }", "");
     fold("if (false){ x = 1; } else { x = 2; }", "x=2");
     fold("if (undefined){ x = 1; } else { x = 2; }", "x=2");
     fold("if (null){ x = 1; } else { x = 2; }", "x=2");
@@ -175,6 +206,13 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     // More var lifting tests in PeepholeIntegrationTests
   }
 
+  public void testLetConstLifting(){
+    fold("if(true) {const x = 1}", "{const x = 1}");
+    fold("if(false) {const x = 1}", "");
+    fold("if(true) {let x}", "{let x}");
+    fold("if(false) {let x}", "");
+  }
+
   public void testFoldUselessWhile() {
     fold("while(false) { foo() }", "");
 
@@ -198,6 +236,8 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     fold("for(;true;) foo() ", "for(;;) foo() ");
     foldSame("for(;;) foo()");
     fold("for(;false;) { var a = 0; }", "var a");
+    fold("for(;false;) { const a = 0; }", "");
+    fold("for(;false;) { let a = 0; }", "");
 
     // Make sure it plays nice with minimizing
     fold("for(;false;) { foo(); continue }", "");
@@ -207,7 +247,7 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     fold("do { foo() } while(false);", "foo()");
     fold("do { foo() } while(void 0);", "foo()");
     fold("do { foo() } while(undefined);", "foo()");
-    fold("do { foo() } while(true);", "do { foo() } while(true);");
+    foldSame("do { foo() } while(true);");
     fold("do { var a = 0; } while(false);", "var a=0");
 
     fold("do { var a = 0; } while(!{a:foo()});", "var a=0;foo()");
@@ -222,7 +262,7 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
   }
 
   public void testMinimizeWhileConstantCondition() {
-    fold("while(true) foo()", "while(true) foo()");
+    foldSame("while(true) foo()");
     fold("while(0) foo()", "");
     fold("while(0.0) foo()", "");
     fold("while(NaN) foo()", "");
@@ -238,8 +278,11 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     fold("(1 + 2 + ''), foo()", "foo()");
   }
 
+  public void testRemoveUselessOps1() {
+    foldSame("(function () { f(); })();");
+  }
 
-  public void testRemoveUselessOps() {
+  public void testRemoveUselessOps2() {
     // There are four place where expression results are discarded:
     //  - a top-level expression EXPR_RESULT
     //  - the LHS of a COMMA
@@ -262,6 +305,7 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     // Uncalled function expressions are removed
     fold("(function () {});", "");
     fold("(function f() {});", "");
+    fold("(function* f() {})", "");
     // ... including any code they contain.
     fold("(function () {foo();});", "");
 
@@ -363,22 +407,39 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
         "  break;\n" +
         "}",
         "");
-    foldSame("switch ('fallThru') {\n" +
-        "case 'fallThru':\n" +
-        "  if (foo(123) > 0) {\n" +
-        "    foobar(1);\n" +
-        "    break;\n" +
-        "  }\n" +
-        "  foobar(2);\n" +
-        "case 'bar':\n" +
-        "  bar();\n" +
-        "}");
-    foldSame("switch ('fallThru') {\n" +
-        "case 'fallThru':\n" +
-        "  foo();\n" +
-        "case 'bar':\n" +
-        "  bar();\n" +
-        "}");
+    fold(
+        LINE_JOINER.join(
+            "switch ('fallThru') {",
+            "case 'fallThru':",
+            "  if (foo(123) > 0) {",
+            "    foobar(1);",
+            "    break;",
+            "  }",
+            "  foobar(2);",
+            "case 'bar':",
+            "  bar();",
+            "}"),
+        LINE_JOINER.join(
+            "switch ('fallThru') {",
+            "case 'fallThru':",
+            "  if (foo(123) > 0) {",
+            "    foobar(1);",
+            "    break;",
+            "  }",
+            "  foobar(2);",
+            "  bar();",
+            "}"));
+    fold(
+        LINE_JOINER.join(
+            "switch ('fallThru') {",
+            "case 'fallThru':",
+            "  foo();",
+            "case 'bar':",
+            "  bar();",
+            "}"),
+        LINE_JOINER.join(
+            "foo();",
+            "bar();"));
     fold(
         LINE_JOINER.join(
             "switch ('hasDefaultCase') {",
@@ -452,11 +513,36 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
         "case '\\u000B':\n" +
         "  foo();\n" +
         "}");
-    foldSame("switch ('empty') {\n" +
-        "case 'empty':\n" +
-        "case 'foo':\n" +
-        "  foo();\n" +
-        "}");
+    fold(
+        LINE_JOINER.join(
+            "switch ('empty') {",
+            "case 'empty':",
+            "case 'foo':",
+            "  foo();",
+            "}"),
+        "foo()");
+
+    fold(
+        LINE_JOINER.join(
+            "let x;",
+            "switch (use(x)) {",
+            "  default: {let x;}",
+            "}"),
+        LINE_JOINER.join(
+            "let x;",
+            "use(x);",
+            "{let x}"));
+
+    fold(
+        LINE_JOINER.join(
+            "let x;",
+            "switch (use(x)) {",
+            "  default: let x;",
+            "}"),
+        LINE_JOINER.join(
+            "let x;",
+            "use(x);",
+            "{let x}"));
   }
 
   public void testOptimizeSwitchBug11536863() {
@@ -479,6 +565,25 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
         "    break outer;\n" +
         "}",
         "outer: {f(); break outer;}");
+  }
+
+  public void testOptimizeSwitch3() {
+    fold(
+        LINE_JOINER.join(
+            "switch (1) {",
+            "  case 1:",
+            "  case 2:",
+            "  case 3: {",
+            "    break;",
+            "  }",
+            "  case 4:",
+            "  case 5:",
+            "  case 6:",
+            "  default:",
+            "    fail('Should not get here');",
+            "    break;",
+            "}"),
+            "");
   }
 
   public void testOptimizeSwitchWithLabellessBreak() {
@@ -522,6 +627,18 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
             "  case 21: throw 'x';",
             "  default : console.log('good');",
             "}"));
+
+    test(
+        LINE_JOINER.join(
+            "let x = 1;",
+            "switch('x') {",
+            "  case 'x': let x = 2; break;",
+            "}"
+        ),
+        LINE_JOINER.join(
+            "let x = 1;",
+            "{let x = 2}"
+        ));
   }
 
   public void testOptimizeSwitchWithLabelledBreak() {
@@ -534,7 +651,7 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
             "    case 'y': throw f;",
             "  }",
             "}"),
-        "function f() { label: { break label; } }");
+        "function f() { }");
 
     test(
         LINE_JOINER.join(
@@ -545,7 +662,7 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
             "    default: throw f;",
             "  }",
             "}"),
-        "function f() { label: { break label; } }");
+        "function f() { }");
   }
 
   public void testOptimizeSwitchWithReturn() {
@@ -559,19 +676,22 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
             "}"),
         "function f() { return 1; }");
 
-    // TODO(moz): This is to show that the current optimization might break if the input has block
-    // scoped declarations. We will need to fix the logic for removing blocks to account for this.
-    testEs6(
+    test(
         LINE_JOINER.join(
             "function f() {",
             "  let x = 1;",
             "  switch('x') {",
-            "    case 'x': { let x = 2; return 3; }",
+            "    case 'x': { let x = 2; } return 3;",
             "    case 'y': return 4;",
             "  }",
             "}"),
-        "function f() { let x = 1; let x = 2; return 3; }");
+        LINE_JOINER.join(
+            "function f() {",
+            "  let x = 1;",
+            "  { let x = 2; } return 3; ",
+            "}"));
   }
+
 
   public void testOptimizeSwitchWithThrow() {
     test(
@@ -852,6 +972,16 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
     testSame("a() ? b() : c()");
   }
 
+  public void testHook9() {
+    fold("true ? a() : (function f() {})()", "a()");
+    fold("false ? a() : (function f() {alert(x)})()", "(function f() {alert(x)})()");
+  }
+
+  public void testHook10() {
+    fold("((function () {}), true) ? a() : b()", "a()");
+    fold("((function () {alert(x)})(), true) ? a() : b()", "(function(){alert(x)})(),a()");
+  }
+
   public void testShortCircuit1() {
     testSame("1 && a()");
   }
@@ -928,7 +1058,7 @@ public final class PeepholeRemoveDeadCodeTest extends Es6CompilerTestCase {
   }
 
   public void testRemoveFromLabel1() {
-    test("LBL: void 0", "LBL: {}");
+    test("LBL: void 0", "");
   }
 
   public void testRemoveFromLabel2() {

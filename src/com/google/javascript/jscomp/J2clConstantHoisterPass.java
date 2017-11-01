@@ -28,7 +28,7 @@ import java.util.Set;
 
 /**
  * An optimization pass for J2CL-generated code to hoist some constant assignments out clinit method
- * to declaration phase so they could be used by other optimization passes for static evaliation.
+ * to declaration phase so they could be used by other optimization passes for static evaluation.
  */
 public class J2clConstantHoisterPass implements CompilerPass {
 
@@ -46,17 +46,24 @@ public class J2clConstantHoisterPass implements CompilerPass {
 
     final Multimap<String, Node> fieldAssignments = ArrayListMultimap.create();
     final Set<Node> hoistableFunctions = new HashSet<>();
-    NodeTraversal.traverseEs6(compiler, root, new AbstractPostOrderCallback() {
-      @Override
-      public void visit(NodeTraversal t, Node node, Node parent) {
-        if (parent != null && NodeUtil.isLValue(node)) {
-          fieldAssignments.put(node.getQualifiedName(), parent);
-        }
-        if (isHoistableFunction(t, node)) {
-          hoistableFunctions.add(node);
-        }
-      }
-    });
+    NodeTraversal.traverseEs6(
+        compiler,
+        root,
+        new AbstractPostOrderCallback() {
+          @Override
+          public void visit(NodeTraversal t, Node node, Node parent) {
+            // TODO(stalcup): don't gather assignments ourselves, switch to a persistent
+            // DefinitionUseSiteFinder instead.
+            if (parent != null && NodeUtil.isLValue(node)) {
+              fieldAssignments.put(node.getQualifiedName(), parent);
+            }
+
+            // TODO(stalcup): convert to a persistent index of hoistable functions.
+            if (isHoistableFunction(t, node)) {
+              hoistableFunctions.add(node);
+            }
+          }
+        });
 
     for (Collection<Node> assignments : fieldAssignments.asMap().values()) {
       maybeHoistClassField(assignments, hoistableFunctions);
@@ -110,7 +117,6 @@ public class J2clConstantHoisterPass implements CompilerPass {
     // a bug and GWT never assumed this state is observable in its optimization, yet nobody
     // complained. So it is safe to upgrade it to a constant.
     hoistConstantLikeField(firstAssignment, secondAssignment);
-    compiler.reportCodeChange();
   }
 
   private void hoistConstantLikeField(Node clinitAssignment, Node declarationAssignment) {
@@ -118,15 +124,20 @@ public class J2clConstantHoisterPass implements CompilerPass {
     Node declarationInClass = declarationAssignment.getFirstChild();
     Node declarationAssignedValue = declarationInClass.getFirstChild();
 
+    Node clinitChangeScope = NodeUtil.getEnclosingChangeScopeRoot(clinitAssignment);
     // Remove the clinit initialization
     NodeUtil.removeChild(clinitAssignment.getParent(), clinitAssignment);
 
+
     // Replace the assignment in declaration with the value from clinit
     clinitAssignedValue.detach();
-    declarationInClass.replaceChild(declarationAssignedValue, clinitAssignedValue);
+    compiler.reportChangeToChangeScope(clinitChangeScope);
+    if (!declarationAssignedValue.isEquivalentTo(clinitAssignedValue)) {
+      declarationInClass.replaceChild(declarationAssignedValue, clinitAssignedValue);
+      compiler.reportChangeToEnclosingScope(declarationAssignment);
+    }
     declarationInClass.putBooleanProp(Node.IS_CONSTANT_VAR, true);
 
-    // Sanity check
     checkState(NodeUtil.isLiteralValue(declarationAssignedValue, false /* includeFunctions */));
   }
 
@@ -139,8 +150,8 @@ public class J2clConstantHoisterPass implements CompilerPass {
 
   private static boolean isClinitFieldAssignment(Node node) {
     return node.getParent().isExprResult()
-        && node.getParent().getParent().isBlock()
-        && isClinitMethod(node.getParent().getParent().getParent());
+        && node.getGrandparent().isNormalBlock()
+        && isClinitMethod(node.getGrandparent().getParent());
   }
 
   // TODO(goktug): Create a utility to share this logic and start using getQualifiedOriginalName.

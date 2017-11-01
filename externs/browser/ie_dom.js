@@ -354,11 +354,13 @@ Window.prototype.offscreenBuffering;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms534389(VS.85).aspx
+ * @type {number|undefined}
  */
 Window.prototype.screenLeft;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms534389(VS.85).aspx
+ * @type {number|undefined}
  */
 Window.prototype.screenTop;
 
@@ -709,6 +711,7 @@ TextRange.prototype.moveToPoint;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms536654(VS.85).aspx
+ * @return {?Element}
  */
 TextRange.prototype.parentElement;
 
@@ -842,6 +845,7 @@ Document.prototype.fileSize;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms534331(VS.85).aspx
+ * @type {?Window}
  */
 Document.prototype.parentWindow;
 
@@ -964,6 +968,7 @@ Document.prototype.namespaces;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms537487(VS.85).aspx
+ * @type {!HTMLCollection<!HTMLScriptElement>}
  */
 Document.prototype.scripts;
 
@@ -1020,6 +1025,7 @@ Element.prototype.createTextRange;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms535231(VS.85).aspx
+ * @type {?CSSStyleDeclaration}
  */
 Element.prototype.currentStyle;
 

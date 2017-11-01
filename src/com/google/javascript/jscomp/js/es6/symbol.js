@@ -29,26 +29,30 @@ $jscomp.initSymbol = function() {
   // Only need to do this once. All future calls are no-ops.
   $jscomp.initSymbol = function() {};
 
-  if (!$jscomp.global.Symbol) {
-    $jscomp.global.Symbol = $jscomp.Symbol;
+  if (!$jscomp.global['Symbol']) {
+    $jscomp.global['Symbol'] = $jscomp.Symbol;
   }
 };
-
-
-/** @private {number} */
-$jscomp.symbolCounter_ = 0;
 
 
 /**
  * Produces "symbols" (actually just unique strings).
  * @param {string=} opt_description
  * @return {symbol}
- * @suppress {reportUnknownTypes}
  */
-$jscomp.Symbol = function(opt_description) {
-  return /** @type {symbol} */ (
-      $jscomp.SYMBOL_PREFIX + (opt_description || '') + ($jscomp.symbolCounter_++));
-};
+$jscomp.Symbol = /** @type {function(): !Function} */ (function() {
+  var counter = 0;
+  /**
+   * @param {string=} opt_description
+   * @return {symbol}
+   * @suppress {reportUnknownTypes}
+   */
+  function Symbol(opt_description) {
+    return /** @type {symbol} */ (
+        $jscomp.SYMBOL_PREFIX + (opt_description || '') + (counter++));
+  }
+  return Symbol;
+})();
 
 
 /**
@@ -58,10 +62,10 @@ $jscomp.Symbol = function(opt_description) {
  */
 $jscomp.initSymbolIterator = function() {
   $jscomp.initSymbol();
-  var symbolIterator = $jscomp.global.Symbol.iterator;
+  var symbolIterator = $jscomp.global['Symbol'].iterator;
   if (!symbolIterator) {
-    symbolIterator = $jscomp.global.Symbol.iterator =
-        $jscomp.global.Symbol('iterator');
+    symbolIterator = $jscomp.global['Symbol'].iterator =
+        $jscomp.global['Symbol']('iterator');
   }
 
   if (typeof Array.prototype[symbolIterator] != 'function') {
@@ -124,6 +128,6 @@ $jscomp.iteratorPrototype = function(next) {
    * @this {IteratorIterable}
    * @return {!IteratorIterable}
    */
-  iterator[$jscomp.global.Symbol.iterator] = function() { return this; };
+  iterator[$jscomp.global['Symbol'].iterator] = function() { return this; };
   return /** @type {!IteratorIterable} */ (iterator);
 };

@@ -22,7 +22,6 @@ import com.google.javascript.jscomp.graph.DiGraph.DiGraphNode;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
-
 import java.util.List;
 
 /**
@@ -101,6 +100,7 @@ class InstrumentFunctions implements CompilerPass {
       Node initCodeRoot = compiler.parseSyntheticCode(
           "template:init", initCodeSource);
       if (initCodeRoot != null && initCodeRoot.getFirstChild() != null) {
+        NodeUtil.markNewScopesChanged(initCodeRoot, compiler);
         initCode = initCodeRoot.removeChildren();
       } else {
         return;  // parse failure
@@ -120,13 +120,13 @@ class InstrumentFunctions implements CompilerPass {
 
       Node addingRoot = compiler.getNodeForCodeInsertion(null);
       addingRoot.addChildToFront(expr.useSourceInfoIfMissingFromForTree(addingRoot));
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(addingRoot);
     }
 
     if (initCode != null) {
       Node addingRoot = compiler.getNodeForCodeInsertion(null);
       addingRoot.addChildrenToFront(initCode);
-      compiler.reportCodeChange();
+      compiler.reportChangeToEnclosingScope(addingRoot);
     }
   }
 
@@ -145,10 +145,10 @@ class InstrumentFunctions implements CompilerPass {
 
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      if (NodeUtil.isVarDeclaration(n) && removable.contains(n.getString())) {
+      if (NodeUtil.isNameDeclaration(parent) && n.isName() && removable.contains(n.getString())) {
         parent.removeChild(n);
         if (!parent.hasChildren()) {
-          parent.getParent().removeChild(parent);
+          parent.detach();
         }
       }
     }
@@ -208,7 +208,7 @@ class InstrumentFunctions implements CompilerPass {
         Node call = newReportFunctionExitNode(function, null);
         Node expr = IR.exprResult(call).useSourceInfoIfMissingFromForTree(function);
         body.addChildToBack(expr);
-        compiler.reportCodeChange();
+        compiler.reportChangeToEnclosingScope(body);
       }
     }
 
@@ -226,7 +226,7 @@ class InstrumentFunctions implements CompilerPass {
       Node returnRhs = n.removeFirstChild();
       Node call = newReportFunctionExitNode(n, returnRhs);
       n.addChildToFront(call);
-      compiler.reportCodeChange();
+      t.reportCodeChange();
     }
 
     private Node newReportFunctionExitNode(Node infoNode, Node returnRhs) {
@@ -288,7 +288,7 @@ class InstrumentFunctions implements CompilerPass {
         Node expr = IR.exprResult(call);
         expr.useSourceInfoFromForTree(n);
         body.addChildToFront(expr);
-        compiler.reportCodeChange();
+        t.reportCodeChange();
       }
 
       if (!reportFunctionExitName.isEmpty()) {
@@ -321,7 +321,7 @@ class InstrumentFunctions implements CompilerPass {
           }
           addingRoot.addChildBefore(expr, beforeChild);
         }
-        compiler.reportCodeChange();
+        compiler.reportChangeToEnclosingScope(addingRoot);
       }
     }
   }

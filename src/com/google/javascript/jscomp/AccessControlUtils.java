@@ -60,7 +60,7 @@ public final class AccessControlUtils {
     Visibility defaultVisibilityForFile =
         fileVisibilityMap.get(var.getSourceFile());
     TypeI type = name.getTypeI();
-    boolean createdFromGoogProvide = (type != null && type.isInstanceofObject());
+    boolean createdFromGoogProvide = (type != null && type.isLiteralObject());
     // Ignore @fileoverview visibility when computing the effective visibility
     // for names created by goog.provide.
     //
@@ -168,7 +168,7 @@ public final class AccessControlUtils {
 
   /**
    * Returns the effective visibility of the given overridden property.
-   * An overridden propertiy inherits the visibility of the property it
+   * An overridden property inherits the visibility of the property it
    * overrides.
    */
   private static Visibility getEffectiveVisibilityForOverriddenProperty(
@@ -205,7 +205,7 @@ public final class AccessControlUtils {
       raw = objectType.getOwnPropertyJSDocInfo(propertyName).getVisibility();
     }
     TypeI type = getprop.getTypeI();
-    boolean createdFromGoogProvide = (type != null && type.isInstanceofObject());
+    boolean createdFromGoogProvide = (type != null && type.isLiteralObject());
     // Ignore @fileoverview visibility when computing the effective visibility
     // for properties created by goog.provide.
     //

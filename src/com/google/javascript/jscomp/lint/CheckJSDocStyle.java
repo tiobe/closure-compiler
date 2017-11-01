@@ -15,7 +15,9 @@
  */
 package com.google.javascript.jscomp.lint;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -32,10 +34,8 @@ import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
-
 import java.util.List;
 import java.util.Set;
-
 import javax.annotation.Nullable;
 
 /**
@@ -186,7 +186,7 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
     if (n.isMemberFunctionDef() || n.isGetterDef() || n.isSetterDef()) {
       name = n.getString();
     } else {
-      Preconditions.checkState(n.isAssign());
+      checkState(n.isAssign());
       Node lhs = n.getFirstChild();
       if (!lhs.isGetProp()) {
         return;
@@ -268,13 +268,16 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
    * in the global scope, or a method on a class which is declared in the global scope.
    */
   private boolean isFunctionThatShouldHaveJsDoc(NodeTraversal t, Node function) {
-    if (!t.inGlobalHoistScope()) {
+    if (!(t.inGlobalHoistScope() || t.inModuleScope())) {
       return false;
     }
     if (NodeUtil.isFunctionDeclaration(function)) {
       return true;
     }
     if (NodeUtil.isNameDeclaration(function.getGrandparent()) || function.getParent().isAssign()) {
+      return true;
+    }
+    if (function.getParent().isExport()) {
       return true;
     }
 
@@ -287,6 +290,11 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
       } else if (memberNode.isGetterDef() || memberNode.isSetterDef()) {
         return true;
       }
+    }
+
+    if (function.getGrandparent().isObjectLit()
+        && NodeUtil.isCallTo(function.getGrandparent().getParent(), "Polymer")) {
+      return true;
     }
 
     return false;
@@ -351,7 +359,7 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
         return;
       } else {
         JSTypeExpression paramType = jsDoc.getType();
-        Preconditions.checkNotNull(paramType, "Inline JSDoc info should always have a type");
+        checkNotNull(paramType, "Inline JSDoc info should always have a type");
         checkParam(t, param, null, paramType);
       }
     }
@@ -374,7 +382,7 @@ public final class CheckJSDocStyle extends AbstractPostOrderCallback implements 
     } else if (param.isName()) {
       nameOptional = param.getString().startsWith("opt_");
     } else {
-      Preconditions.checkState(param.isDestructuringPattern() || param.isRest(), param);
+      checkState(param.isDestructuringPattern() || param.isRest(), param);
       nameOptional = false;
     }
 

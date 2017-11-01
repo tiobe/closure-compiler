@@ -16,6 +16,10 @@
 
 package com.google.javascript.refactoring;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+
+import com.google.common.base.Ascii;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSetMultimap;
@@ -23,6 +27,8 @@ import com.google.common.collect.SetMultimap;
 import com.google.javascript.jscomp.AbstractCompiler;
 import com.google.javascript.jscomp.CodePrinter;
 import com.google.javascript.jscomp.CompilerOptions;
+import com.google.javascript.jscomp.NodeTraversal;
+import com.google.javascript.jscomp.NodeTraversal.AbstractPreOrderCallback;
 import com.google.javascript.jscomp.NodeUtil;
 import com.google.javascript.jscomp.parsing.JsDocInfoParser;
 import com.google.javascript.rhino.IR;
@@ -36,7 +42,6 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
-
 
 /**
  * Object representing the fixes to apply to the source code to create the
@@ -96,6 +101,40 @@ public final class SuggestedFix {
     return sb.toString();
   }
 
+  // TODO(bangert): Find a non-conflicting name.
+  static String getShortNameForRequire(String namespace) {
+    int lastDot = namespace.lastIndexOf('.');
+    if (lastDot == -1) {
+      return namespace;
+    }
+
+    // A few special cases so that we don't end up with code like
+    // "const string = goog.require('goog.string');" which would shadow the built-in string type.
+    String rightmostName = namespace.substring(lastDot + 1);
+    switch (Ascii.toUpperCase(rightmostName)) {
+      case "ARRAY":
+      case "MAP":
+      case "MATH":
+      case "OBJECT":
+      case "PROMISE":
+      case "SET":
+      case "STRING":
+        int secondToLastDot = namespace.lastIndexOf('.', lastDot - 1);
+        String secondToLastName = namespace.substring(secondToLastDot + 1, lastDot);
+        boolean capitalize = Character.isUpperCase(rightmostName.charAt(0));
+        if (capitalize) {
+          secondToLastName = upperCaseFirstLetter(secondToLastName);
+        }
+        return secondToLastName + upperCaseFirstLetter(rightmostName);
+      default:
+        return rightmostName;
+    }
+  }
+
+  static String upperCaseFirstLetter(String w) {
+    return Character.toUpperCase(w.charAt(0)) + w.substring(1);
+  }
+
   /**
    * Builder class for {@link SuggestedFix} that contains helper functions to
    * manipulate JS nodes.
@@ -124,12 +163,11 @@ public final class SuggestedFix {
      * Inserts a new node as the first child of the provided node.
      */
     public Builder addChildToFront(Node parentNode, String content) {
-      Preconditions.checkState(parentNode.isBlock(),
-          "addChildToFront is only supported for BLOCK statements.");
+      checkState(
+          parentNode.isNormalBlock(), "addChildToFront is only supported for BLOCK statements.");
       int startPosition = parentNode.getSourceOffset() + 1;
       replacements.put(
-          parentNode.getSourceFileName(),
-          new CodeReplacement(startPosition, 0, "\n" + content));
+          parentNode.getSourceFileName(), CodeReplacement.create(startPosition, 0, "\n" + content));
       return this;
     }
 
@@ -138,9 +176,7 @@ public final class SuggestedFix {
      */
     public Builder insertAfter(Node node, String text) {
       int position = node.getSourceOffset() + node.getLength();
-      replacements.put(
-          node.getSourceFileName(),
-          new CodeReplacement(position, 0, text));
+      replacements.put(node.getSourceFileName(), CodeReplacement.create(position, 0, text));
       return this;
     }
 
@@ -168,14 +204,15 @@ public final class SuggestedFix {
     private Builder insertBefore(Node nodeToInsertBefore, String content, String sortKey) {
       int startPosition = nodeToInsertBefore.getSourceOffset();
       JSDocInfo jsDoc = NodeUtil.getBestJSDocInfo(nodeToInsertBefore);
-      if (jsDoc != null) {
+      // ClosureRewriteModule adds jsDOC everywhere.
+      if (jsDoc != null && jsDoc.getOriginalCommentString() != null) {
         startPosition = jsDoc.getOriginalCommentPosition();
       }
       Preconditions.checkNotNull(nodeToInsertBefore.getSourceFileName(),
           "No source file name for node: %s", nodeToInsertBefore);
       replacements.put(
           nodeToInsertBefore.getSourceFileName(),
-          new CodeReplacement(startPosition, 0, content, sortKey));
+          CodeReplacement.create(startPosition, 0, content, sortKey));
       return this;
     }
 
@@ -194,6 +231,13 @@ public final class SuggestedFix {
       return delete(n, false);
     }
 
+    /** Deletes a node without touching any surrounding whitespace. */
+    public Builder deleteWithoutRemovingWhitespace(Node n) {
+      replacements.put(
+          n.getSourceFileName(), CodeReplacement.create(n.getSourceOffset(), n.getLength(), ""));
+      return this;
+    }
+
     /**
      * Deletes a node and its contents from the source file.
      */
@@ -210,14 +254,13 @@ public final class SuggestedFix {
         length += (startPosition - jsDoc.getOriginalCommentPosition());
         startPosition = jsDoc.getOriginalCommentPosition();
       }
-      // Variable declarations require special handling since the NAME node doesn't contain enough
-      // information if the variable is declared in a multi-variable declaration. The NAME node
-      // in a VAR declaration doesn't include its child in its length if there is an inline
-      // assignment, and the code needs to know how to delete the commas. See SuggestedFixTest for
-      // more information.
+      // Variable declarations and string keys require special handling since the node doesn't
+      // contain enough if it has a child. The NAME node in a var/let/const declaration doesn't
+      // include its child in its length, and the code needs to know how to delete the commas.
+      // The same is true for string keys in object literals and object destructuring patterns.
       // TODO(mknichel): Move this logic and the start position logic to a helper function
       // so that it can be reused in other methods.
-      if (n.isName() && n.getParent().isVar()) {
+      if ((n.isName() && NodeUtil.isNameDeclaration(n.getParent())) || n.isStringKey()) {
         if (n.getNext() != null) {
           length = n.getNext().getSourceOffset() - startPosition;
         } else if (n.hasChildren()) {
@@ -243,7 +286,7 @@ public final class SuggestedFix {
       Node parent = n.getParent();
       if (deleteWhitespaceBefore
           && parent != null
-          && (parent.isScript() || parent.isBlock())) {
+          && (parent.isScript() || parent.isNormalBlock())) {
         Node previousSibling = n.getPrevious();
         if (previousSibling != null) {
           int previousSiblingEndPosition =
@@ -252,7 +295,7 @@ public final class SuggestedFix {
           startPosition = previousSiblingEndPosition;
         }
       }
-      replacements.put(n.getSourceFileName(), new CodeReplacement(startPosition, length, ""));
+      replacements.put(n.getSourceFileName(), CodeReplacement.create(startPosition, length, ""));
       return this;
     }
 
@@ -294,7 +337,7 @@ public final class SuggestedFix {
       } else if (n.isStringKey()) {
         nodeToRename = n;
       } else if (n.isString()) {
-        Preconditions.checkState(n.getParent().isGetProp(), n);
+        checkState(n.getParent().isGetProp(), n);
         nodeToRename = n;
       } else {
         // TODO(mknichel): Implement the rest of this function.
@@ -303,7 +346,7 @@ public final class SuggestedFix {
       }
       replacements.put(
           nodeToRename.getSourceFileName(),
-          new CodeReplacement(nodeToRename.getSourceOffset(), nodeToRename.getLength(), name));
+          CodeReplacement.create(nodeToRename.getSourceOffset(), nodeToRename.getLength(), name));
       return this;
     }
 
@@ -311,7 +354,7 @@ public final class SuggestedFix {
      * Replaces a range of nodes with the given content.
      */
     public Builder replaceRange(Node first, Node last, String newContent) {
-      Preconditions.checkState(first.getParent() == last.getParent());
+      checkState(first.getParent() == last.getParent());
 
       int start;
       JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(first);
@@ -323,7 +366,8 @@ public final class SuggestedFix {
 
       int end = last.getSourceOffset() + last.getLength();
       int length = end - start;
-      replacements.put(first.getSourceFileName(), new CodeReplacement(start, length, newContent));
+      replacements.put(
+          first.getSourceFileName(), CodeReplacement.create(start, length, newContent));
       return this;
     }
 
@@ -347,13 +391,17 @@ public final class SuggestedFix {
       // Most replacements don't need the semicolon in the new generated code - however, some
       // statements that are blocks or expressions will need the semicolon.
       boolean needsSemicolon =
-          parent != null && (parent.isExprResult() || parent.isBlock() || parent.isScript());
+          parent != null
+              && (parent.isExprResult()
+                  || parent.isNormalBlock()
+                  || parent.isScript()
+                  || parent.isModuleBody());
       if (newCode.endsWith(";") && !needsSemicolon) {
         newCode = newCode.substring(0, newCode.length() - 1);
       }
       replacements.put(
           original.getSourceFileName(),
-          new CodeReplacement(original.getSourceOffset(), original.getLength(), newCode));
+          CodeReplacement.create(original.getSourceOffset(), original.getLength(), newCode));
       return this;
     }
 
@@ -364,7 +412,7 @@ public final class SuggestedFix {
       // TODO(mknichel): Figure out the best way to output the typecast.
       replacements.put(
           n.getSourceFileName(),
-          new CodeReplacement(
+          CodeReplacement.create(
               n.getSourceOffset(),
               n.getLength(),
               "/** @type {" + type + "} */ (" + generateCode(compiler, n) + ")"));
@@ -375,20 +423,17 @@ public final class SuggestedFix {
      * Removes a cast from the given node.
      */
     public Builder removeCast(Node n, AbstractCompiler compiler) {
-      Preconditions.checkArgument(n.isCast());
+      checkArgument(n.isCast());
       JSDocInfo jsDoc = n.getJSDocInfo();
       replacements.put(
           n.getSourceFileName(),
-          new CodeReplacement(
+          CodeReplacement.create(
               jsDoc.getOriginalCommentPosition(),
               n.getFirstChild().getSourceOffset() - jsDoc.getOriginalCommentPosition(),
               ""));
       replacements.put(
           n.getSourceFileName(),
-          new CodeReplacement(
-              n.getSourceOffset() + n.getLength() - 1,
-              1 /* length */,
-              ""));
+          CodeReplacement.create(n.getSourceOffset() + n.getLength() - 1, 1 /* length */, ""));
       return this;
     }
 
@@ -403,7 +448,8 @@ public final class SuggestedFix {
         startPosition = jsDoc.getOriginalCommentPosition();
         length = n.getSourceOffset() - jsDoc.getOriginalCommentPosition();
       }
-      replacements.put(n.getSourceFileName(), new CodeReplacement(startPosition, length, newJsDoc));
+      replacements.put(
+          n.getSourceFileName(), CodeReplacement.create(startPosition, length, newJsDoc));
       return this;
     }
 
@@ -411,8 +457,6 @@ public final class SuggestedFix {
      * Changes the JS Doc Type of the given node.
      */
     public Builder changeJsDocType(Node n, AbstractCompiler compiler, String type) {
-      JSDocInfo info = NodeUtil.getBestJSDocInfo(n);
-      Preconditions.checkNotNull(info, "Node %s does not have JS Doc associated with it.", n);
       Node typeNode = JsDocInfoParser.parseTypeString(type);
       Preconditions.checkNotNull(typeNode, "Invalid type: %s", type);
       JSTypeExpression typeExpr = new JSTypeExpression(typeNode, "jsflume");
@@ -421,31 +465,46 @@ public final class SuggestedFix {
         throw new RuntimeException("JS Compiler does not recognize type: " + type);
       }
 
-      String originalComment = info.getOriginalCommentString();
-      int originalPosition = info.getOriginalCommentPosition();
+      // TODO(mknichel): Use the JSDocInfoParser to find the end of the type declaration. This
+      // would also handle multiple lines, and record types (which contain '{')
 
-      // TODO(mknichel): Support multiline @type annotations.
-      Pattern typeDocPattern = Pattern.compile(
-          "@(type|private|protected|public|const|return) *\\{?[^\\s}]+\\}?");
-      Matcher m = typeDocPattern.matcher(originalComment);
-      while (m.find()) {
-        replacements.put(
-            n.getSourceFileName(),
-            new CodeReplacement(
-                originalPosition + m.start(),
-                m.end() - m.start(),
-                "@" + m.group(1) + " {" + type + "}"));
-      }
+      // Only "@type" allows type names without "{}"
+      replaceTypePattern(n, type, Pattern.compile(
+          "@(type) *\\{?[^@\\s}]+\\}?"));
+
+      // Text following other annotations may be a comment, not a type.
+      replaceTypePattern(n, type, Pattern.compile(
+          "@(export|package|private|protected|public|const|return) *\\{[^}]+\\}"));
 
       return this;
+    }
+
+    // The pattern supplied here should have one matching group, the annotation with
+    // associated the type expression, the entire pattern should match the annotation and
+    // the type expression to be replaced.
+    private void replaceTypePattern(Node n, String type, Pattern pattern) {
+      JSDocInfo info = NodeUtil.getBestJSDocInfo(n);
+      Preconditions.checkNotNull(info, "Node %s does not have JS Doc associated with it.", n);
+      String originalComment = info.getOriginalCommentString();
+      int originalPosition = info.getOriginalCommentPosition();
+      if (originalComment != null) {
+        Matcher m = pattern.matcher(originalComment);
+        while (m.find()) {
+          replacements.put(
+              n.getSourceFileName(),
+              CodeReplacement.create(
+                  originalPosition + m.start(),
+                  m.end() - m.start(),
+                  "@" + m.group(1) + " {" + type + "}"));
+        }
+      }
     }
 
     /**
      * Inserts arguments into an existing function call.
      */
     public Builder insertArguments(Node n, int position, String... args) {
-      Preconditions.checkArgument(
-          n.isCall(), "insertArguments is only applicable to function call nodes.");
+      checkArgument(n.isCall(), "insertArguments is only applicable to function call nodes.");
       int startPosition;
       Node argument = n.getSecondChild();
       int i = 0;
@@ -454,7 +513,7 @@ public final class SuggestedFix {
         i++;
       }
       if (argument == null) {
-        Preconditions.checkArgument(
+        checkArgument(
             position == i, "The specified position must be less than the number of arguments.");
         startPosition = n.getSourceOffset() + n.getLength() - 1;
       } else {
@@ -473,7 +532,7 @@ public final class SuggestedFix {
       } else if (i > 0) {
         newContent = ", " + newContent;
       }
-      replacements.put(n.getSourceFileName(), new CodeReplacement(startPosition, 0, newContent));
+      replacements.put(n.getSourceFileName(), CodeReplacement.create(startPosition, 0, newContent));
 
       return this;
     }
@@ -484,15 +543,15 @@ public final class SuggestedFix {
      *     considers the comment to belong to the next argument.
      */
     public Builder deleteArgument(Node n, int position) {
-      Preconditions.checkArgument(
-          n.isCall(), "deleteArgument is only applicable to function call nodes.");
+      checkArgument(n.isCall(), "deleteArgument is only applicable to function call nodes.");
 
       // A CALL node's first child is the name of the function being called, and subsequent children
       // are the arguments being passed to that function.
       int numArguments = n.getChildCount() - 1;
-      Preconditions.checkState(numArguments > 0,
-          "deleteArgument() cannot be used on a function call with no arguments");
-      Preconditions.checkArgument(position >= 0 && position < numArguments,
+      checkState(
+          numArguments > 0, "deleteArgument() cannot be used on a function call with no arguments");
+      checkArgument(
+          position >= 0 && position < numArguments,
           "The specified position must be less than the number of arguments.");
       Node argument = n.getSecondChild();
 
@@ -540,15 +599,20 @@ public final class SuggestedFix {
 
       // Remove the argument by replacing it with an empty string.
       int lengthOfArgumentToRemove = endOfArgumentToRemove - startOfArgumentToRemove;
-      replacements.put(n.getSourceFileName(),
-          new CodeReplacement(startOfArgumentToRemove, lengthOfArgumentToRemove, ""));
+      replacements.put(
+          n.getSourceFileName(),
+          CodeReplacement.create(startOfArgumentToRemove, lengthOfArgumentToRemove, ""));
       return this;
     }
 
     public Builder addLhsToGoogRequire(Match m, String namespace) {
       Node existingNode = findGoogRequireNode(m.getNode(), m.getMetadata(), namespace);
-      String shortName = namespace.substring(namespace.lastIndexOf('.') + 1);
-      insertBefore(existingNode, "const " + shortName + " = ");
+      checkState(existingNode.isExprResult(), existingNode);
+      checkState(existingNode.getFirstChild().isCall(), existingNode.getFirstChild());
+
+      String shortName = getShortNameForRequire(namespace);
+      Node newNode = IR.constNode(IR.name(shortName), existingNode.getFirstChild().cloneTree());
+      replace(existingNode, newNode, m.getMetadata().getCompiler());
       return this;
     }
 
@@ -577,10 +641,9 @@ public final class SuggestedFix {
           IR.getprop(IR.name("goog"), IR.string("require")),
           IR.string(namespace));
 
-      // The name that will be used on the LHS, if the require is added using the shorthand form.
-      String shortName = namespace.substring(namespace.lastIndexOf('.') + 1);
-
-      if (script.isModuleBody()) {
+      String shortName = getShortNameForRequire(namespace);
+      boolean useConstRequire = usesConstGoogRequires(metadata, script);
+      if (useConstRequire) {
         googRequireNode = IR.constNode(IR.name(shortName), googRequireNode);
       } else {
         googRequireNode = IR.exprResult(googRequireNode);
@@ -591,6 +654,9 @@ public final class SuggestedFix {
       Node nodeToInsertBefore = null;
       Node child = script.getFirstChild();
       while (child != null) {
+        if (Matchers.googModule().matches(child, metadata)) {
+          lastModuleOrProvideNode = child;
+        }
         if (NodeUtil.isExprCall(child)) {
           // TODO(mknichel): Replace this logic with a function argument
           // Matcher when it exists.
@@ -608,7 +674,13 @@ public final class SuggestedFix {
         } else if (NodeUtil.isNameDeclaration(child)
             && child.getFirstFirstChild() != null
             && Matchers.googRequire().matches(child.getFirstFirstChild(), metadata)) {
-          if (shortName.compareTo(child.getFirstChild().getString()) < 0) {
+          lastGoogRequireNode = child.getFirstFirstChild();
+          String requireName = child.getFirstChild().getString();
+          String originalName = child.getFirstChild().getOriginalName();
+          if (originalName != null) {
+            requireName = originalName;
+          }
+          if (shortName.compareTo(requireName) < 0) {
             nodeToInsertBefore = child;
             break;
           }
@@ -623,18 +695,23 @@ public final class SuggestedFix {
               lastGoogRequireNode != null ? lastGoogRequireNode : lastModuleOrProvideNode;
           int startPosition =
               nodeToInsertAfter.getSourceOffset() + nodeToInsertAfter.getLength() + 2;
-          replacements.put(nodeToInsertAfter.getSourceFileName(), new CodeReplacement(
-              startPosition,
-              0,
-              generateCode(m.getMetadata().getCompiler(), googRequireNode)));
+          replacements.put(
+              nodeToInsertAfter.getSourceFileName(),
+              CodeReplacement.create(
+                  startPosition,
+                  0,
+                  generateCode(m.getMetadata().getCompiler(), googRequireNode),
+                  namespace));
           return this;
         } else {
           // The file has no goog.provide or goog.require nodes.
           if (script.getFirstChild() != null) {
             nodeToInsertBefore = script.getFirstChild();
           } else {
-            replacements.put(script.getSourceFileName(), new CodeReplacement(
-                0, 0, generateCode(m.getMetadata().getCompiler(), googRequireNode)));
+            replacements.put(
+                script.getSourceFileName(),
+                CodeReplacement.create(
+                    0, 0, generateCode(m.getMetadata().getCompiler(), googRequireNode), namespace));
             return this;
           }
         }
@@ -642,6 +719,39 @@ public final class SuggestedFix {
 
       return insertBefore(
           nodeToInsertBefore, googRequireNode, m.getMetadata().getCompiler(), namespace);
+    }
+
+    /**
+     * If the namespace has a short name, return it. Otherwise return the full name.
+     *
+     * <p>Assumes {@link addGoogRequire} was already called.
+     */
+    public String getRequireName(Match m, String namespace) {
+      Node existingNode = findGoogRequireNode(m.getNode(), m.getMetadata(), namespace);
+      if (existingNode != null && (existingNode.isConst() || existingNode.isVar())) {
+        Node lhsAssign = existingNode.getFirstChild();
+        String originalName = lhsAssign.getOriginalName();
+        if (originalName != null) {
+          return originalName; // The import was renamed inside a module.
+        }
+        return lhsAssign.getQualifiedName();
+      }
+      Node script = NodeUtil.getEnclosingScript(m.getNode());
+
+      if (script != null && usesConstGoogRequires(m.getMetadata(), script)) {
+        return getShortNameForRequire(namespace);
+      }
+      return namespace;
+    }
+
+    /** True if the file uses {@code const foo = goog.require('namespace.foo');} */
+    private boolean usesConstGoogRequires(final NodeMetadata metadata, Node script) {
+      if (script.isModuleBody()) {
+        return true;
+      }
+      HasConstRequireOrModuleCallback callback = new HasConstRequireOrModuleCallback(metadata);
+      NodeTraversal.traverseEs6(metadata.getCompiler(), script, callback);
+      return callback.getUsesConstRequires();
     }
 
     /**
@@ -656,7 +766,7 @@ public final class SuggestedFix {
       return this;
     }
 
-    private Node findGoogRequireNode(Node n, NodeMetadata metadata, String namespace) {
+    private static Node findGoogRequireNode(Node n, NodeMetadata metadata, String namespace) {
       Node script = NodeUtil.getEnclosingScript(n);
       if (script.getFirstChild().isModuleBody()) {
         script = script.getFirstChild();
@@ -681,13 +791,12 @@ public final class SuggestedFix {
     public String generateCode(AbstractCompiler compiler, Node node) {
       // TODO(mknichel): Fix all the formatting problems with this code.
       // How does this play with goog.scope?
-      if (node.isBlock()) {
+      if (node.isNormalBlock()) {
         // Avoid printing the {}'s
         node.setToken(Token.SCRIPT);
       }
       CompilerOptions compilerOptions = new CompilerOptions();
       compilerOptions.setPreferSingleQuotes(true);
-      compilerOptions.setLineLengthThreshold(80);
       compilerOptions.setUseOriginalNamesInOutput(true);
       // We're refactoring existing code, so no need to escape values inside strings.
       compilerOptions.setTrustedStrings(true);
@@ -768,6 +877,36 @@ public final class SuggestedFix {
 
     public boolean isInClosurizedFile() {
       return isInClosurizedFile;
+    }
+  }
+
+  /** Traverse an AST and find {@code goog.module} or {@code const X = goog.require('...');}. */
+  private static class HasConstRequireOrModuleCallback extends AbstractPreOrderCallback {
+    private boolean usesConstRequires;
+    final NodeMetadata metadata;
+
+    public HasConstRequireOrModuleCallback(NodeMetadata metadata) {
+      this.usesConstRequires = false;
+      this.metadata = metadata;
+    }
+
+    boolean getUsesConstRequires() {
+      return usesConstRequires;
+    }
+
+    @Override
+    public boolean shouldTraverse(NodeTraversal nodeTraversal, Node n, Node parent) {
+      if (Matchers.googModule().matches(n, metadata) || isConstRequire(n, metadata)) {
+        usesConstRequires = true;
+        return false;
+      }
+      return true;
+    }
+
+    private static boolean isConstRequire(Node node, NodeMetadata metadata) {
+      return node.isConst()
+          && node.getFirstFirstChild() != null
+          && Matchers.googRequire().matches(node.getFirstFirstChild(), metadata);
     }
   }
 }

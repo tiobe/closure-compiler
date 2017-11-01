@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.Node;
 
 /**
@@ -48,6 +49,11 @@ public abstract class PassFactory {
     return name;
   }
 
+  @Override
+  public String toString() {
+    return name;
+  }
+
   /**
    * @return Whether the pass produced by this factory can only be run once.
    */
@@ -59,6 +65,16 @@ public abstract class PassFactory {
    * Creates a new compiler pass to be run.
    */
   protected abstract CompilerPass create(AbstractCompiler compiler);
+
+  /**
+   * The set of features that this pass understands. Passes that can handle any code (no-op passes,
+   * extremely simple passes that are unlikely to be broken by new features, etc.) should return
+   * FeatureSet.latest().
+   */
+  protected FeatureSet featureSet() {
+    // Most passes only understand ES5 so use that as the default.
+    return FeatureSet.ES5;
+  }
 
   /**
    * Any factory whose CompilerPass has a corresponding hot-swap version should
@@ -86,16 +102,22 @@ public abstract class PassFactory {
           public void process(Node externs, Node root) {}
         };
       }
+
+      @Override
+      protected FeatureSet featureSet() {
+        return FeatureSet.latest();
+      }
     };
   }
 
   /**
    * A pass-factory that is good for {@code HotSwapCompilerPass} passes.
+   * Every hotswap pass is expected to be a one-time pass.
    */
   public abstract static class HotSwapPassFactory extends PassFactory {
 
-    HotSwapPassFactory(String name, boolean isOneTimePass) {
-      super(name, isOneTimePass);
+    HotSwapPassFactory(String name) {
+      super(name, true);
     }
 
     @Override

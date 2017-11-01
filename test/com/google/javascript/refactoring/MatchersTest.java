@@ -25,7 +25,6 @@ import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.testing.BlackHoleErrorManager;
 import com.google.javascript.rhino.Node;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -210,6 +209,17 @@ public class MatchersTest {
   }
 
   @Test
+  public void testGoogModule() {
+    String input = "goog.module('testcase');";
+    Compiler compiler = getCompiler(input);
+    Node root = compileToScriptRoot(compiler);
+    Node fnCall = root.getFirstFirstChild();
+    NodeMetadata metadata = new NodeMetadata(compiler);
+    assertTrue(Matchers.googModule().matches(fnCall, metadata));
+    assertTrue(Matchers.googModuleOrProvide().matches(fnCall, metadata));
+  }
+
+  @Test
   public void testEnum() {
     String input = "/** @enum {string} */ var foo = {BAR: 'baz'};";
     Node root = compileToScriptRoot(getCompiler(input));
@@ -272,12 +282,52 @@ public class MatchersTest {
   }
 
   @Test
-  public void testJsDocType() {
+  public void testJsDocType1() {
     String input = "/** @type {number} */ var foo = 1;";
     Compiler compiler = getCompiler(input);
     Node root = compileToScriptRoot(compiler);
     Node node = root.getFirstFirstChild();
     assertTrue(Matchers.jsDocType("number").matches(node, new NodeMetadata(compiler)));
+    assertFalse(Matchers.jsDocType("string").matches(node, new NodeMetadata(compiler)));
+  }
+
+  @Test
+  public void testJsDocType2() {
+    String input = "/** @type {number} */ let foo = 1;";
+    Compiler compiler = getCompiler(input);
+    Node root = compileToScriptRoot(compiler);
+    Node node = root.getFirstFirstChild();
+    assertTrue(Matchers.jsDocType("number").matches(node, new NodeMetadata(compiler)));
+    assertFalse(Matchers.jsDocType("string").matches(node, new NodeMetadata(compiler)));
+  }
+
+  @Test
+  public void testJsDocType3() {
+    String input = "/** @type {number} */ const foo = 1;";
+    Compiler compiler = getCompiler(input);
+    Node root = compileToScriptRoot(compiler);
+    Node node = root.getFirstFirstChild();
+    assertTrue(Matchers.jsDocType("number").matches(node, new NodeMetadata(compiler)));
+    assertFalse(Matchers.jsDocType("string").matches(node, new NodeMetadata(compiler)));
+  }
+
+  @Test
+  public void testJsDocTypeNoMatch1() {
+    String input = "/** @const */ var foo = 1;";
+    Compiler compiler = getCompiler(input);
+    Node root = compileToScriptRoot(compiler);
+    Node node = root.getFirstFirstChild();
+    assertFalse(Matchers.jsDocType("number").matches(node, new NodeMetadata(compiler)));
+    assertFalse(Matchers.jsDocType("string").matches(node, new NodeMetadata(compiler)));
+  }
+
+  @Test
+  public void testJsDocTypeNoMatch2() {
+    String input = "const foo = 1;";
+    Compiler compiler = getCompiler(input);
+    Node root = compileToScriptRoot(compiler);
+    Node node = root.getFirstFirstChild();
+    assertFalse(Matchers.jsDocType("number").matches(node, new NodeMetadata(compiler)));
     assertFalse(Matchers.jsDocType("string").matches(node, new NodeMetadata(compiler)));
   }
 
@@ -357,21 +407,19 @@ public class MatchersTest {
     assertFalse(Matchers.isPrivate().matches(node, new NodeMetadata(compiler)));
 }
 
-  /**
-   * Returns the root script node produced from the compiled JS input.
-   */
-  private Node compileToScriptRoot(Compiler compiler) {
+  /** Returns the root script node produced from the compiled JS input. */
+  private static Node compileToScriptRoot(Compiler compiler) {
     Node root = compiler.getRoot();
     // The last child of the compiler root is a Block node, and the first child
     // of that is the Script node.
     return root.getLastChild().getFirstChild();
   }
 
-  private Compiler getCompiler(String jsInput) {
+  private static Compiler getCompiler(String jsInput) {
     return getCompiler("", jsInput);
   }
 
-  private Compiler getCompiler(String externs, String jsInput) {
+  private static Compiler getCompiler(String externs, String jsInput) {
     Compiler compiler = new Compiler();
     BlackHoleErrorManager.silence(compiler);
     compiler.disableThreads();

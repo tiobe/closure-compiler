@@ -18,6 +18,7 @@ package com.google.javascript.jscomp;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Ordering;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
@@ -27,6 +28,7 @@ import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -52,6 +54,7 @@ public final class JSDocInfoPrinter {
     //   lends
     //   const
     //   final
+    //   desc
     //   dict|struct|unrestricted
     //   constructor|interface|record
     //   extends
@@ -63,8 +66,12 @@ public final class JSDocInfoPrinter {
     //   template
     //   override
     //   type|define|typedef|enum
+    //   implicitCast
     //   suppress
     //   deprecated
+    //   polymer
+    //   polymerBehavior
+    //   mixinFunction
     parts.add("/**");
 
     if (info.isExport()) {
@@ -88,6 +95,11 @@ public final class JSDocInfoPrinter {
 
     if (info.isFinal()) {
       parts.add("@final");
+    }
+
+    String description = info.getDescription();
+    if (description != null) {
+      parts.add("@desc " + description + '\n');
     }
 
     if (info.makesDicts()) {
@@ -160,6 +172,16 @@ public final class JSDocInfoPrinter {
       multiline = true;
     }
 
+    ImmutableMap<String, Node> typeTransformations = info.getTypeTransformations();
+    if (!typeTransformations.isEmpty()) {
+      multiline = true;
+      for (Map.Entry<String, Node> e : typeTransformations.entrySet()) {
+        String name = e.getKey();
+        String tranformationDefinition = new CodePrinter.Builder(e.getValue()).build();
+        parts.add("@template " + name + " := " +  tranformationDefinition  + " =:");
+      }
+    }
+
     if (info.isOverride()) {
       parts.add("@override");
     }
@@ -184,6 +206,10 @@ public final class JSDocInfoPrinter {
       parts.add(buildAnnotationWithType("enum", info.getEnumParameterType()));
     }
 
+    if (info.isImplicitCast()) {
+      parts.add("@implicitCast");
+    }
+
     Set<String> suppressions = info.getSuppressions();
     if (!suppressions.isEmpty()) {
       // Print suppressions in sorted order to avoid non-deterministic output.
@@ -196,6 +222,27 @@ public final class JSDocInfoPrinter {
     if (info.isDeprecated()) {
       parts.add("@deprecated " + info.getDeprecationReason());
       multiline = true;
+    }
+
+    if (info.isPolymer()) {
+      multiline = true;
+      parts.add("@polymer");
+    }
+    if (info.isPolymerBehavior()) {
+      multiline = true;
+      parts.add("@polymerBehavior");
+    }
+    if (info.isMixinFunction()) {
+      multiline = true;
+      parts.add("@mixinFunction");
+    }
+    if (info.isMixinClass()) {
+      multiline = true;
+      parts.add("@mixinClass");
+    }
+    if (info.isCustomElement()) {
+      multiline = true;
+      parts.add("@customElement");
     }
 
     parts.add("*/");
@@ -296,7 +343,7 @@ public final class JSDocInfoPrinter {
         }
       }
       sb.append("}");
-    } else if (typeNode.getToken() == Token.VOID) {
+    } else if (typeNode.isVoid()) {
       sb.append("void");
     } else {
       if (typeNode.hasChildren()) {

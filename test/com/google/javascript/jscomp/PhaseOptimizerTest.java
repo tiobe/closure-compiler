@@ -21,6 +21,7 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.TracerMode;
 import com.google.javascript.jscomp.PhaseOptimizer.Loop;
+import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
@@ -36,6 +37,7 @@ public final class PhaseOptimizerTest extends TestCase {
   private final List<String> passesRun = new ArrayList<>();
   private Node dummyExternsRoot;
   private Node dummyRoot;
+  Node dummyScript;
   private PhaseOptimizer optimizer;
   private Compiler compiler;
   private PerformanceTracker tracker;
@@ -43,14 +45,14 @@ public final class PhaseOptimizerTest extends TestCase {
   @Override
   public void setUp() {
     passesRun.clear();
-    dummyExternsRoot = new Node(Token.BLOCK);
-    dummyRoot = new Node(Token.BLOCK);
-    // Needed if we are validating the AST using AstValidator.
-    dummyRoot.setIsSyntheticBlock(true);
+    dummyExternsRoot = new Node(Token.ROOT);
+    dummyScript = IR.script();
+    dummyRoot = IR.root(dummyScript);
     compiler = new Compiler();
     compiler.initCompilerOptionsIfTesting();
     tracker = new PerformanceTracker(dummyExternsRoot, dummyRoot, TracerMode.TIMING_ONLY, null);
-    optimizer = new PhaseOptimizer(compiler, tracker, null);
+    optimizer = new PhaseOptimizer(compiler, tracker);
+    compiler.setPhaseOptimizer(optimizer);
   }
 
   public void testOneRun() {
@@ -74,13 +76,22 @@ public final class PhaseOptimizerTest extends TestCase {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", 3);
     addLoopedPass(loop, "y", 1);
-    // The pass iterations can be grouped as: [x y] [x y] [x] [x]
-    assertPasses("x", "y", "x", "y", "x", "x");
+    // The pass iterations can be grouped as: [x y] [x y] [x] [x] [y]
+    assertPasses("x", "y", "x", "y", "x", "x", "y");
+  }
+
+  public void testCapLoopIterations() {
+    CompilerOptions options = compiler.getOptions();
+    options.optimizationLoopMaxIterations = 1;
+    optimizer = new PhaseOptimizer(compiler, tracker);
+    Loop loop = optimizer.addFixedPointLoop();
+    addLoopedPass(loop, PassNames.PEEPHOLE_OPTIMIZATIONS, 2);
+    assertPasses(PassNames.PEEPHOLE_OPTIMIZATIONS);
   }
 
   public void testNotInfiniteLoop() {
     Loop loop = optimizer.addFixedPointLoop();
-    addLoopedPass(loop, "x", PhaseOptimizer.MAX_LOOPS - 1);
+    addLoopedPass(loop, "x", PhaseOptimizer.MAX_LOOPS - 2);
     optimizer.process(null, dummyRoot);
     assertEquals("There should be no errors.", 0, compiler.getErrorCount());
   }
@@ -103,7 +114,7 @@ public final class PhaseOptimizerTest extends TestCase {
     addLoopedPass(loop, "x", 3);
     addLoopedPass(loop, "y", 1);
     addOneTimePass("z");
-    assertPasses("a", "x", "y", "x", "y", "x", "x", "z");
+    assertPasses("a", "x", "y", "x", "y", "x", "x", "y", "z");
   }
 
   public void testSchedulingOfAnyKindOfPasses2() {
@@ -117,7 +128,7 @@ public final class PhaseOptimizerTest extends TestCase {
             createPassFactory("f", 0, true)));
     // The pass iterations can be grouped as:
     // [a] [b c d] [b c d] [c] [b d] [e] [f]
-    assertPasses("a", "b", "c", "d", "b", "c", "d", "c", "e", "f");
+    assertPasses("a", "b", "c", "d", "b", "c", "d", "c", "b", "d", "e", "f");
   }
 
   public void testSchedulingOfAnyKindOfPasses3() {
@@ -170,7 +181,7 @@ public final class PhaseOptimizerTest extends TestCase {
       }
     };
     compiler.initCompilerOptionsIfTesting();
-    optimizer = new PhaseOptimizer(compiler, null,
+    optimizer = new PhaseOptimizer(compiler, null).withProgress(
         new PhaseOptimizer.ProgressRange(0, 100));
     addOneTimePass("x1");
     addOneTimePass("x2");
@@ -215,13 +226,14 @@ public final class PhaseOptimizerTest extends TestCase {
   }
 
   private CompilerPass createPass(final String name, int numChanges) {
+    final PhaseOptimizerTest self = this;
     final int[] numChangesClosure = new int[] {numChanges};
     return new CompilerPass() {
       @Override public void process(Node externs, Node root) {
         passesRun.add(name);
         if (numChangesClosure[0] > 0) {
-          compiler.reportCodeChange();
           numChangesClosure[0] = numChangesClosure[0] - 1;
+          compiler.reportChangeToEnclosingScope(self.dummyScript);
         }
       }
     };

@@ -16,12 +16,13 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.jscomp.ControlFlowGraph.Branch;
 import com.google.javascript.jscomp.graph.DiGraph.DiGraphEdge;
 import com.google.javascript.jscomp.graph.LatticeElement;
 import com.google.javascript.rhino.Node;
-
 import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
@@ -81,19 +82,19 @@ class LiveVariablesAnalysis extends
     }
 
     private LiveVariableLattice(LiveVariableLattice other) {
-      Preconditions.checkNotNull(other);
+      checkNotNull(other);
       this.liveSet = (BitSet) other.liveSet.clone();
     }
 
     @Override
     public boolean equals(Object other) {
-      Preconditions.checkNotNull(other);
+      checkNotNull(other);
       return (other instanceof LiveVariableLattice) &&
           this.liveSet.equals(((LiveVariableLattice) other).liveSet);
     }
 
     public boolean isLive(Var v) {
-      Preconditions.checkNotNull(v);
+      checkNotNull(v);
       return liveSet.get(v.index);
     }
 
@@ -116,12 +117,15 @@ class LiveVariablesAnalysis extends
   private final Scope jsScope;
   private final Set<Var> escaped;
 
-  LiveVariablesAnalysis(ControlFlowGraph<Node> cfg, Scope jsScope,
-      AbstractCompiler compiler) {
+  LiveVariablesAnalysis(
+      ControlFlowGraph<Node> cfg,
+      Scope jsScope,
+      AbstractCompiler compiler,
+      ScopeCreator scopeCreator) {
     super(cfg, new LiveVariableJoinOp());
     this.jsScope = jsScope;
     this.escaped = new HashSet<>();
-    computeEscaped(jsScope, escaped, compiler);
+    computeEscaped(jsScope, escaped, compiler, scopeCreator);
   }
 
   public Set<? extends Var> getEscapedLocals() {
@@ -185,6 +189,7 @@ class LiveVariablesAnalysis extends
     switch (n.getToken()) {
       case SCRIPT:
       case BLOCK:
+      case ROOT:
       case FUNCTION:
         return;
 
@@ -196,27 +201,27 @@ class LiveVariablesAnalysis extends
         return;
 
       case FOR:
-        if (!NodeUtil.isForIn(n)) {
-          computeGenKill(NodeUtil.getConditionExpression(n), gen, kill,
-              conditional);
-        } else {
-          // for(x in y) {...}
-          Node lhs = n.getFirstChild();
-          if (lhs.isVar()) {
-            // for(var x in y) {...}
-            lhs = lhs.getLastChild();
-          }
-
-          if (lhs.isName()) {
-            addToSetIfLocal(lhs, kill);
-            addToSetIfLocal(lhs, gen);
-          } else {
-            computeGenKill(lhs, gen, kill, conditional);
-          }
-
-          // rhs is executed only once so we don't go into it every loop.
-        }
+        computeGenKill(NodeUtil.getConditionExpression(n), gen, kill, conditional);
         return;
+
+      case FOR_IN: {
+        // for(x in y) {...}
+        Node lhs = n.getFirstChild();
+        if (lhs.isVar()) {
+          // for(var x in y) {...}
+          lhs = lhs.getLastChild();
+        }
+
+        if (lhs.isName()) {
+          addToSetIfLocal(lhs, kill);
+          addToSetIfLocal(lhs, gen);
+        } else {
+          computeGenKill(lhs, gen, kill, conditional);
+        }
+
+        // rhs is executed only once so we don't go into it every loop.
+        return;
+      }
 
       case VAR:
         for (Node c = n.getFirstChild(); c != null; c = c.getNext()) {
@@ -272,7 +277,7 @@ class LiveVariablesAnalysis extends
   }
 
   private void addToSetIfLocal(Node node, BitSet set) {
-    Preconditions.checkState(node.isName());
+    checkState(node.isName());
     String name = node.getString();
     if (!jsScope.isDeclared(name, false)) {
       return;

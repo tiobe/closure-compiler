@@ -23,12 +23,13 @@ package com.google.javascript.jscomp;
  */
 public final class OptimizeParametersTest extends CompilerTestCase {
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new OptimizeParameters(compiler);
   }
 
   @Override
-  public void setUp() {
+  protected void setUp() throws Exception {
+    super.setUp();
     enableNormalize();
   }
 
@@ -228,14 +229,16 @@ public final class OptimizeParametersTest extends CompilerTestCase {
     // Don't change the call to baz as it has been aliased.
 
     test(
-      "function foo(bar) {};" +
-      "baz = function(a) {};" +
-      "baz(1);" +
-      "foo(baz);",
-      "function foo() {var bar = baz};" +
-      "baz = function(a) {};" +
-      "baz(1);" +
-      "foo();");
+        LINE_JOINER.join(
+            "function foo(bar) {};",
+            "baz = function(a) {};",
+            "baz(1);",
+            "foo(baz);"),
+        LINE_JOINER.join(
+            "function foo() {var bar = baz};",
+            "baz = function(a) {};",
+            "baz(1);",
+            "foo();"));
   }
 
   public void testMethodsDefinedInArraysDontGetOptimized() {

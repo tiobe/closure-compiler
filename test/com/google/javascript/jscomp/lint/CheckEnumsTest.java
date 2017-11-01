@@ -23,16 +23,17 @@ import static com.google.javascript.jscomp.lint.CheckEnums.SHORTHAND_ASSIGNMENT_
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.CompilerPass;
+import com.google.javascript.jscomp.CompilerTestCase;
 import com.google.javascript.jscomp.DiagnosticGroups;
-import com.google.javascript.jscomp.Es6CompilerTestCase;
 
 /**
  * Test case for {@link CheckEnums}.
  */
-public final class CheckEnumsTest extends Es6CompilerTestCase {
+public final class CheckEnumsTest extends CompilerTestCase {
   @Override
-  public CompilerPass getProcessor(Compiler compiler) {
+  protected CompilerPass getProcessor(Compiler compiler) {
     return new CheckEnums(compiler);
   }
 
@@ -41,6 +42,12 @@ public final class CheckEnumsTest extends Es6CompilerTestCase {
     super.getOptions(options);
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
     return options;
+  }
+
+  @Override
+  protected void setUp() throws Exception {
+    super.setUp();
+    setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
   }
 
   public void testCheckEnums() throws Exception {
@@ -58,9 +65,9 @@ public final class CheckEnumsTest extends Es6CompilerTestCase {
     testWarning("/** @enum {string} */ var Enum = {A: 'foo', B: 'foo'};",
         DUPLICATE_ENUM_VALUE);
 
-    testWarningEs6("/** @enum {number} */ var Enum = {A};",
+    testWarning("/** @enum {number} */ var Enum = {A};",
         SHORTHAND_ASSIGNMENT_IN_ENUM);
-    testWarningEs6("/** @enum {string} */ var Enum = {['prop' + f()]: 'foo'};",
+    testWarning("/** @enum {string} */ var Enum = {['prop' + f()]: 'foo'};",
         COMPUTED_PROP_NAME_IN_ENUM);
 
     testWarning(
@@ -69,5 +76,27 @@ public final class CheckEnumsTest extends Es6CompilerTestCase {
     testWarning(
         "/** @enum {number} */ var E = { ABC: 1, abc: 2 };",
         ENUM_PROP_NOT_CONSTANT);
+  }
+
+  public void testCheckValidEnums_withES6Modules() throws Exception {
+    testSame("export /** @enum {number} */ var Enum = {A: 1, B: 2};");
+  }
+
+  public void testCheckInvalidEnums_withES6Modules01() throws Exception {
+    testWarning("export /** @enum {number} */ var Enum = {A: 1, B: 1};", DUPLICATE_ENUM_VALUE);
+  }
+
+  public void testCheckInvalidEnums_withES6Modules02() throws Exception {
+    testWarning("export /** @enum {number} */ var Enum = {A};", SHORTHAND_ASSIGNMENT_IN_ENUM);
+  }
+
+  public void testCheckInvalidEnums_withES6Modules03() throws Exception {
+    testWarning(
+        "export /** @enum {string} */ var Enum = {['prop' + f()]: 'foo'};",
+        COMPUTED_PROP_NAME_IN_ENUM);
+  }
+
+  public void testCheckInvalidEnums_withES6Modules04() throws Exception {
+    testWarning("export /** @enum {number} */ var E = { a: 1 };", ENUM_PROP_NOT_CONSTANT);
   }
 }

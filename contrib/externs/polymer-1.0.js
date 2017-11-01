@@ -160,6 +160,21 @@ PolymerElement.prototype.hostAttributes;
 PolymerElement.prototype.listeners;
 
 /**
+ * Force this element to distribute its children to its local dom.
+ * A user should call `distributeContent` if distribution has been
+ * invalidated due to changes to selectors on child elements that
+ * effect distribution that were not made via `Polymer.dom`.
+ * For example, if an element contains an insertion point with
+ * `<content select=".foo">` and a `foo` class is added to a child,
+ * then `distributeContent` must be called to update
+ * local dom distribution.
+ * @param {boolean} updateInsertionPoints Shady DOM does not detect
+ *   <content> insertion that is nested in a sub-tree being appended.
+ *   Set to true to distribute to newly added nested <content>'s.
+ */
+PolymerElement.prototype.distributeContent = function(updateInsertionPoints) {};
+
+/**
  * Return the element whose local dom within which this element is contained.
  * @type {?Element}
  */
@@ -168,7 +183,7 @@ PolymerElement.prototype.domHost;
 /**
  * Notifies the event binding system of a change to a property.
  * @param  {string} path  The path to set.
- * @param  {*}      value The value to send in the update notification.
+ * @param  {*=} value The value to send in the update notification.
  * @param {boolean=} fromAbove When true, specifies that the change came from
  *     above this element and thus upward notification is not necessary.
  * @return {boolean} True if notification actually took place, based on a dirty
@@ -474,7 +489,19 @@ PolymerElement.prototype.linkPaths = function(to, from) {}
  */
 PolymerElement.prototype.unlinkPaths = function(path) {}
 
-Polymer.Base;
+/**
+ * Copies own properties (including accessor descriptors) from a source
+ * object to a target object.
+ *
+ * @param {?Object} target Target object to copy properties to.
+ * @param {?Object} source Source object to copy properties from.
+ * @return {?Object} Target object that was passed as first argument or source
+ *     object if the target was null.
+ */
+PolymerElement.prototype.extend = function(target, source) {};
+
+/** @const */
+Polymer.Base = {};
 
 /**
  * Used by the promise-polyfill on its own.
@@ -484,6 +511,13 @@ Polymer.Base;
  * @return {number} A handle which can be used to cancel the job.
  */
 Polymer.Base.async = function(method, wait) {};
+
+/**
+ * @param {string} tag
+ * @param {!Object=} props
+ * @return {!Element}
+ */
+Polymer.Base.create = function(tag, props) {};
 
 /**
  * Copies own properties (including accessor descriptors) from a source
@@ -509,6 +543,15 @@ Polymer.Base.extend = function(target, source) {};
 Polymer.Base.getPropertyInfo = function(property) {};
 
 /**
+ * Dynamically imports an HTML document.
+ * @param {string} href
+ * @param {Function=} onload
+ * @param {Function=} onerror
+ * @param {boolean=} async
+ */
+Polymer.Base.importHref = function(href, onload, onerror, async) {};
+
+/**
  * Copies props from a source object to a target object.
  *
  * Note, this method uses a simple `for...in` strategy for enumerating
@@ -521,7 +564,59 @@ Polymer.Base.getPropertyInfo = function(property) {};
  */
 Polymer.Base.mixin = function(target, source) {};
 
-Polymer.Gestures;
+/**
+ * @param {string|!Array<string|number>} path
+ * @param {!Object=} root
+ * @return {*}
+ */
+Polymer.Base.get = function(path, root) {};
+
+/**
+ * @param {string} type
+ * @param {*=} detail
+ * @param {!Object=} options
+ * @return {!CustomEvent}
+ */
+Polymer.Base.fire = function(type, detail, options) {};
+
+/**
+ * For Polymer internal use only, except for
+ * github.com/Polymer/polymer/issues/4138
+ * @type {!function (!Node, ?string, *, ?Object)}
+ */
+Polymer.Base._computeFinalAnnotationValue;
+
+/**
+ * @param {...*} var_args
+ * For Polymer-internal use only.
+ */
+Polymer.Base._warn = function(var_args) {};
+
+/**
+ * @param {...*} var_args
+ * For Polymer-internal use only.
+ */
+Polymer.Base._error = function(var_args) {};
+
+/** @const */
+Polymer.Gestures = {};
+
+/**
+ * @param {!Node} node
+ * @param {string} evType
+ * @param {?Function} handler
+ * @return {boolean}
+ * @deprecated Use addListener.
+ */
+Polymer.Gestures.add = function(node, evType, handler) {};
+
+/**
+ * @param {!Node} node
+ * @param {string} evType
+ * @param {?Function} handler
+ * @return {boolean}
+ */
+Polymer.Gestures.addListener = function(node, evType, handler) {};
 
 /**
  * Gets the original target of the given event.
@@ -534,6 +629,21 @@ Polymer.Gestures;
  */
 Polymer.Gestures.findOriginalTarget = function(ev) {};
 
+/**
+ * @type {!Object}
+ */
+Polymer.Gestures.gestures = {};
+
+/**
+ * @type {!Object}
+ */
+Polymer.Gestures.gestures.tap = {};
+
+/**
+ * Reset the tap gesture's state manually
+ * @type {function()}
+ */
+Polymer.Gestures.gestures.tap.reset = function() {};
 
 /**
  * @param {number} handle
@@ -592,8 +702,9 @@ PolymerElement.prototype.translate3d = function(x, y, z, node) {};
  * @param {string} href
  * @param {Function=} onload
  * @param {Function=} onerror
+ * @param {boolean=} async
  */
-PolymerElement.prototype.importHref = function(href, onload, onerror) {};
+PolymerElement.prototype.importHref = function(href, onload, onerror, async) {};
 
 /**
  * Checks whether an element is in this element's light DOM tree.
@@ -644,6 +755,14 @@ PolymerElement.prototype.updateStyles = function(properties) {};
  * @type {!Object<string, string|undefined>}
  */
 PolymerElement.prototype.customStyle;
+
+/**
+ * Convenience method for creating an element and configuring it.
+ * @param {string} tagName HTML tag name
+ * @param {IObject<string, *>=} properties Object of properties to configure on the instance
+ * @return {!Element}
+ */
+PolymerElement.prototype.create = function(tagName, properties) {};
 
 /**
  * Returns the computed style value for the given property.
@@ -712,6 +831,12 @@ PolymerElement.prototype._pathEffector = function(path, value) {};
  */
 PolymerElement.prototype._propertySetter = function(path, value) {};
 
+/**
+ * Do not call this function.
+ *
+ * @param {string} path .
+ */
+PolymerElement.prototype._notifyChange = function(path) {};
 
 /**
  * A Polymer DOM API for manipulating DOM such that local DOM and light DOM
@@ -738,7 +863,7 @@ PolymerDomApi.prototype.replaceChild = function(oldNode, newNode) {};
 
 /**
  * @param {!Node} node
- * @param {!Node} beforeNode
+ * @param {?Node} beforeNode
  */
 PolymerDomApi.prototype.insertBefore = function(node, beforeNode) {};
 
@@ -900,7 +1025,8 @@ PolymerEventApi.prototype.path;
 PolymerEventApi.prototype.event;
 
 
-Polymer.Async;
+/** @const */
+Polymer.Async = {};
 
 /**
  * @param {function()} callback
@@ -959,7 +1085,8 @@ Polymer.dom.addDebouncer = function(debouncer) {};
 Polymer.isInstance = function(object) {};
 
 
-Polymer.CaseMap;
+/** @const */
+Polymer.CaseMap = {};
 
 /**
  * Convert a string from dash to camel-case.
@@ -1045,9 +1172,13 @@ Polymer.Collection.applySplices = function(userArray, splices) {};
 
 /**
  * Settings pulled from
- * https://github.com/Polymer/polymer/blob/master/src/lib/settings.html
+ * https://github.com/Polymer/polymer/blob/master/lib/utils/settings.html
+ * @const
  */
-Polymer.Settings;
+Polymer.Settings = {};
+
+/** @type {string} */
+Polymer.Settings.dom;
 
 /** @type {boolean} */
 Polymer.Settings.wantShadow;
@@ -1070,6 +1201,9 @@ Polymer.Settings.useNativeImports;
 /** @type {boolean} */
 Polymer.Settings.useNativeCustomElements;
 
+/** @type {boolean} */
+Polymer.Settings.useNativeCSSProperties;
+
 
 /**
  * @see https://github.com/Polymer/polymer/blob/master/src/lib/template/templatizer.html
@@ -1079,15 +1213,17 @@ Polymer.Templatizer = {
   ctor: function() {},
 
   /**
-   * @param {?Object} model
+   * @param {?Object=} model
    * @return {?Element}
    */
   stamp: function(model) {},
 
   /**
    * @param {?Element} template
+   * @param {boolean=} mutableData In Polymer 1.x, passing this argument is a
+   * no-op.
    */
-  templatize: function(template) {},
+  templatize: function(template, mutableData) {},
 
   /**
    * Returns the template "model" associated with a given element, which
@@ -1339,6 +1475,14 @@ Polymer.Iconset = function() {};
 Polymer.Iconset.prototype.applyIcon = function(
       element, icon, theme, scale) {};
 
+/**
+ * Remove an icon from the given element by undoing the changes effected
+ * by `applyIcon`.
+ *
+ * @param {Element} element The element from which the icon is removed.
+ */
+Polymer.Iconset.prototype.removeIcon = function(element) {};
+
 Polymer.ResolveUrl = {};
 
 /**
@@ -1362,7 +1506,8 @@ Polymer.ResolveUrl.resolveAttrs = function(element, ownerDocument) {}
  */
 Polymer.ResolveUrl.resolveUrl = function(url, baseURI) {}
 
-Polymer.RenderStatus;
+/** @const */
+Polymer.RenderStatus = {};
 
 /**
  * Makes callback when first render occurs or immediately if render has occured.
@@ -1382,7 +1527,7 @@ Polymer.RenderStatus.afterNextRender = function(element, fn, args) {}
 
 /**
  * Static analysis for Polymer.
- * @type {!Object}
+ * @const
  */
 var hydrolysis = {};
 
@@ -1408,9 +1553,9 @@ hydrolysis.Analyzer.analyze = function(href, opt_options) {};
 /**
  * Contains information useful for debugging. Should not be used in production
  * code and the API may change on short notice.
- * @type {!Object}
+ * @const
  */
-Polymer.telemetry;
+Polymer.telemetry = {};
 
 /**
  * Number of elements instantiated so far.
@@ -1425,7 +1570,8 @@ Polymer.telemetry.instanceCount;
  */
 Polymer.telemetry.registrations;
 
-Polymer.AppLayout;
+/** @const */
+Polymer.AppLayout = {};
 
 /** @constructor */
 Polymer.AppLayout.LocalDomWithBackground = function(){};
@@ -1457,3 +1603,105 @@ Polymer.AppLayout.ElementWithBackground.prototype = {
   /** @return {?Element} Element in local dom by id. */
   _getDOMRef: function(title){}
 }
+
+/** @const */
+Polymer.ArraySplice = {};
+
+/**
+ * Returns an array of splice records indicating the minimum edits required
+ * to transform the `previous` array into the `current` array.
+ *
+ * Splice records are ordered by index and contain the following fields:
+ * - `index`: index where edit started
+ * - `removed`: array of removed items from this index
+ * - `addedCount`: number of items added at this index
+ *
+ * This function is based on the Levenshtein "minimum edit distance"
+ * algorithm. Note that updates are treated as removal followed by addition.
+ *
+ * The worst-case time complexity of this algorithm is `O(l * p)`
+ *   l: The length of the current array
+ *   p: The length of the previous array
+ *
+ * However, the worst-case complexity is reduced by an `O(n)` optimization
+ * to detect any shared prefix & suffix between the two arrays and only
+ * perform the more expensive minimum edit distance calculation over the
+ * non-shared portions of the arrays.
+ *
+ * @param {!Array} current The "changed" array for which splices will be
+ * calculated.
+ * @param {!Array} previous The "unchanged" original array to compare
+ * `current` against to determine the splices.
+ * @return {!Array} Returns an array of splice record objects. Each of these
+ * contains: `index` the location where the splice occurred; `removed`
+ * the array of removed items from this location; `addedCount` the number
+ * of items added at this location.
+ */
+Polymer.ArraySplice.calculateSplices = function(current, previous) {};
+
+/**
+ * @constructor @extends {PolymerElement}
+ */
+Polymer.DomModule = function() {};
+
+/**
+ * Retrieves the dom specified by `selector` in the module specified by
+ * `id`. For example, this.import('foo', 'img');
+ * @param {string} id
+ * @param {string=} opt_selector
+ * @return {?HTMLElement} Returns the dom which matches `selector` in the module
+ * at the specified `id`.
+ */
+Polymer.DomModule.import = function(id, opt_selector) {};
+
+/** @const */
+Polymer.Path = {
+  /**
+   * @param {string=} base
+   * @param {string=} newBase
+   * @param {string=} path
+   * @return {string}
+   */
+  translate: function(base, newBase, path) {},
+
+  /**
+   * @param {string=} base
+   * @param {string=} wildcard
+   * @param {string=} path
+   * @return {boolean}
+   */
+  matches: function(base, wildcard, path) {}
+};
+
+/**
+ * For compatibility with both Polymer 1.0 and 2.0, code may check for certain
+ * objects and properties which don't exist in Polymer 1.0.
+ *
+ * We give those objects and properties the `undefined` type here, because
+ * the dependency tree will either contain these externs and Polymer 1.0 or
+ * it will contain Polymer 2.0 which defines the full types.
+ */
+
+/** @type {undefined} */
+var ShadyDOM;
+
+Polymer.flush;
+Polymer.enqueueDebouncer;
+Polymer.Async.animationFrame;
+Polymer.Async.idlePeriod;
+Polymer.Async.microTask;
+Polymer.Debouncer.debounce;
+
+Polymer.Templatizer.mutableData;
+Polymer.Templatizer.parentModel;
+Polymer.Templatizer.forwardHostProp;
+Polymer.Templatizer.notifyInstanceProp;
+Polymer.Templatizer._setPendingPropertyOrPath;
+Polymer.Templatizer._setPendingProperty;
+Polymer.Templatizer._instanceProps;
+
+/**
+ * @param {number} index
+ * @return {boolean}
+ */
+ArraySelectorElement.prototype.isIndexSelected = function(index) {};

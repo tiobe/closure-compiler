@@ -28,7 +28,7 @@ public final class StripCodeTest extends CompilerTestCase {
   private static final String EXTERNS = "";
 
   public StripCodeTest() {
-    super(EXTERNS, true);
+    super(EXTERNS);
   }
 
   /**
@@ -65,7 +65,8 @@ public final class StripCodeTest extends CompilerTestCase {
         stripNamePrefixes);
   }
 
-  @Override public CompilerPass getProcessor(Compiler compiler) {
+  @Override
+  protected CompilerPass getProcessor(Compiler compiler) {
     return createLoggerInstance(compiler);
   }
 
@@ -124,6 +125,10 @@ public final class StripCodeTest extends CompilerTestCase {
     test("a.b.c = function() {};" +
          "a.b.c.logger = goog.debug.Logger.getLogger('a.b.c');",
          "a.b.c=function(){}");
+  }
+
+  public void testDeletedScopesAreReported() {
+    test("var nodeLogger = function () {};", "");
   }
 
   public void testLoggerDefinedInObjectLiteral1() {
@@ -283,27 +288,14 @@ public final class StripCodeTest extends CompilerTestCase {
   }
 
   public void testClassDefiningCallWithStripType4() {
-    testError("goog.formatter=function(){};" +
-         "goog.formatter.inherits(goog.debug.Formatter)",
-         StripCode.STRIP_TYPE_INHERIT_ERROR);
+    testSame("goog.formatter=function(){}; goog.formatter.inherits(goog.debug.FormatterFoo)");
   }
 
   public void testClassDefiningCallWithStripType5() {
-    testSame("goog.formatter=function(){};" +
-             "goog.formatter.inherits(goog.debug.FormatterFoo)");
+    test("goog.inherits(goog.debug.TextFormatter, goog.debug.Formatter)", "");
   }
 
   public void testClassDefiningCallWithStripType6() {
-    testError("goog.formatter=function(){};" +
-         "goog.formatter.inherits(goog.debug.Formatter.Foo)",
-         StripCode.STRIP_TYPE_INHERIT_ERROR);
-  }
-
-  public void testClassDefiningCallWithStripType7() {
-    test("goog.inherits(goog.debug.TextFormatter,goog.debug.Formatter)", "");
-  }
-
-  public void testClassDefiningCallWithStripType8() {
     // listed types should be removed.
     test("goog.debug.DebugWindow = function(){}", "");
     test("goog.inherits(goog.debug.DebugWindow,Base)", "");

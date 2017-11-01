@@ -17,10 +17,13 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.jscomp.CompilerTestCase.LINE_JOINER;
+import static com.google.javascript.jscomp.parsing.Config.JsDocParsing.INCLUDE_DESCRIPTIONS_NO_WHITESPACE;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Ordering;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.SymbolTable.Reference;
 import com.google.javascript.jscomp.SymbolTable.Symbol;
 import com.google.javascript.jscomp.SymbolTable.SymbolScope;
@@ -47,10 +50,12 @@ public final class SymbolTableTest extends TestCase {
   private CompilerOptions options;
 
   @Override
-  public void setUp() throws Exception {
+  protected void setUp() throws Exception {
     super.setUp();
 
     options = new CompilerOptions();
+    options.setLanguageIn(LanguageMode.ECMASCRIPT_2017);
+    options.setLanguageOut(LanguageMode.ECMASCRIPT5);
     options.setCodingConvention(new ClosureCodingConvention());
     CompilationLevel.SIMPLE_OPTIMIZATIONS.setOptionsForCompilationLevel(
         options);
@@ -59,7 +64,22 @@ public final class SymbolTableTest extends TestCase {
     options.setPreserveDetailedSourceInfo(true);
     options.setContinueAfterErrors(true);
     options.setAllowHotswapReplaceScript(true);
-    options.setParseJsDocDocumentation(true);
+    options.setParseJsDocDocumentation(INCLUDE_DESCRIPTIONS_NO_WHITESPACE);
+  }
+
+  /**
+   * Make sure rewrite of super() call containing a function literal doesn't cause
+   * the SymbolTable to crash.
+   */
+  public void testFunctionInCall() {
+    createSymbolTable(
+        LINE_JOINER.join(
+            "class Y { constructor(fn) {} }",
+            "class X extends Y {",
+            "  constructor() {",
+            "    super(function() {});",
+            "  }",
+            "}"));
   }
 
   public void testGlobalVar() throws Exception {
@@ -169,6 +189,7 @@ public final class SymbolTableTest extends TestCase {
     assertThat(refs).hasSize(2);
   }
 
+  // No 'this' reference is created for empty functions.
   public void testLocalThisReferences3() throws Exception {
     SymbolTable table = createSymbolTable(
         "/** @constructor */ function F() {}");
@@ -177,10 +198,7 @@ public final class SymbolTableTest extends TestCase {
     assertNotNull(baz);
 
     Symbol t = table.getParameterInFunction(baz, "this");
-    assertNotNull(t);
-
-    List<Reference> refs = table.getReferenceList(t);
-    assertThat(refs).isEmpty();
+    assertNull(t);
   }
 
   public void testNamespacedReferences() throws Exception {
@@ -839,9 +857,9 @@ public final class SymbolTableTest extends TestCase {
     assertNotNull(abc);
     assertThat(table.getReferenceList(abc)).hasSize(1);
 
-    assertEquals("{b: {c: function (): undefined}}", a.getType().toString());
-    assertEquals("{c: function (): undefined}", ab.getType().toString());
-    assertEquals("function (): undefined", abc.getType().toString());
+    assertEquals("{b: {c: function(): undefined}}", a.getType().toString());
+    assertEquals("{c: function(): undefined}", ab.getType().toString());
+    assertEquals("function(): undefined", abc.getType().toString());
   }
 
   public void testMethodInAnonObject2() throws Exception {
@@ -854,9 +872,9 @@ public final class SymbolTableTest extends TestCase {
     assertNotNull(abc);
     assertThat(table.getReferenceList(abc)).hasSize(1);
 
-    assertEquals("{b: {c: function (): undefined}}", a.getType().toString());
-    assertEquals("{c: function (): undefined}", ab.getType().toString());
-    assertEquals("function (): undefined", abc.getType().toString());
+    assertEquals("{b: {c: function(): undefined}}", a.getType().toString());
+    assertEquals("{c: function(): undefined}", ab.getType().toString());
+    assertEquals("function(): undefined", abc.getType().toString());
   }
 
   public void testJSDocOnlySymbol() throws Exception {
@@ -1068,6 +1086,42 @@ public final class SymbolTableTest extends TestCase {
         getGlobalVar(table, "SubFoo.prototype.xyzzy").getVisibility());
     assertEquals(Visibility.INHERITED,
         getGlobalVar(table, "SubFoo.prototype.plugh").getVisibility());
+  }
+
+  public void testPrototypeSymbolEqualityForTwoPathsToSamePrototype() {
+    String input =
+        LINE_JOINER.join(
+            "/**\n",
+            "* An employer.\n",
+            "*\n",
+            "* @param {String} name name of employer.\n",
+            "* @param {String} address address of employer.\n",
+            "* @constructor\n",
+            "*/\n",
+            "function Employer(name, address) {\n",
+            "this.name = name;\n",
+            "this.address = address;\n",
+            "}\n",
+            "\n",
+            "/**\n",
+            "* @return {String} information about an employer.\n",
+            "*/\n",
+            "Employer.prototype.getInfo = function() {\n",
+            "return this.name + '.' + this.address;\n",
+            "};");
+    SymbolTable table = createSymbolTable(input);
+    Symbol employer = getGlobalVar(table, "Employer");
+    assertNotNull(employer);
+    SymbolScope propertyScope = employer.getPropertyScope();
+    assertNotNull(propertyScope);
+    Symbol prototypeOfEmployer = propertyScope.getQualifiedSlot("prototype");
+    assertNotNull(prototypeOfEmployer);
+
+    Symbol employerPrototype = getGlobalVar(table, "Employer.prototype");
+    assertNotNull(employerPrototype);
+
+    assertEquals(employerPrototype.hashCode(), prototypeOfEmployer.hashCode());
+    assertEquals(employerPrototype, prototypeOfEmployer);
   }
 
   private void assertSymmetricOrdering(

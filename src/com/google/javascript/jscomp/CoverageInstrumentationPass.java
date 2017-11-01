@@ -16,8 +16,9 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.common.annotations.GwtIncompatible;
-import com.google.common.base.Preconditions;
 import com.google.javascript.rhino.Node;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -71,6 +72,13 @@ class CoverageInstrumentationPass implements CompilerPass {
    */
   private void addHeaderCode(Node script) {
     script.addChildToFront(createConditionalObjectDecl(JS_INSTRUMENTATION_OBJECT_NAME, script));
+
+    // Make subsequent usages of "window" and "window.top" work in a Web Worker context.
+    script.addChildToFront(
+        compiler.parseSyntheticCode(
+            "if (!self.window) { self.window = self; self.window.top = self; }")
+        .removeFirstChild()
+        .useSourceInfoIfMissingFromForTree(script));
   }
 
   @Override
@@ -88,7 +96,7 @@ class CoverageInstrumentationPass implements CompilerPass {
             new CoverageInstrumentationCallback(compiler, instrumentationData, reach));
       }
       Node firstScript = rootNode.getFirstChild();
-      Preconditions.checkState(firstScript.isScript());
+      checkState(firstScript.isScript());
       addHeaderCode(firstScript);
     }
   }

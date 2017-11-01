@@ -24,6 +24,8 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.Table;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
 import com.google.javascript.jscomp.Normalize.NormalizeStatements;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfoBuilder;
@@ -50,7 +52,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
     implements HotSwapCompilerPass {
 
   private static final Set<Token> LOOP_TOKENS =
-      EnumSet.of(Token.WHILE, Token.FOR, Token.FOR_OF, Token.DO, Token.FUNCTION);
+      EnumSet.of(Token.WHILE, Token.FOR, Token.FOR_IN, Token.FOR_OF, Token.DO, Token.FUNCTION);
 
   private final AbstractCompiler compiler;
   private final Table<Node, String, String> renameTable = HashBasedTable.create();
@@ -81,6 +83,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
       }
       undefined.useSourceInfoFromForTree(nameNode);
       nameNode.addChildToFront(undefined);
+      compiler.reportChangeToEnclosingScope(undefined);
     }
 
     String oldName = nameNode.getString();
@@ -88,30 +91,25 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
       letConsts.add(n);
     }
     Scope hoistScope = scope.getClosestHoistScope();
-    boolean doRename = false;
     if (scope != hoistScope) {
-      doRename = hoistScope.isDeclared(oldName, true) || undeclaredNames.contains(oldName);
-      String newName = doRename
-          ? oldName + "$" + compiler.getUniqueNameIdSupplier().get()
-          : oldName;
-      Var oldVar = scope.getVar(oldName);
-      scope.undeclare(oldVar);
-      hoistScope.declare(newName, nameNode, oldVar.input);
-      if (doRename) {
+      String newName = oldName;
+      if (hoistScope.isDeclared(oldName, true) || undeclaredNames.contains(oldName)) {
+        do {
+          newName = oldName + "$" + compiler.getUniqueNameIdSupplier().get();
+        } while (hoistScope.isDeclared(newName, true));
         nameNode.setString(newName);
+        compiler.reportChangeToEnclosingScope(nameNode);
         Node scopeRoot = scope.getRootNode();
         renameTable.put(scopeRoot, oldName, newName);
       }
-    }
-    if (doRename) {
-      compiler.reportCodeChange();
+      Var oldVar = scope.getVar(oldName);
+      scope.undeclare(oldVar);
+      hoistScope.declare(newName, nameNode, oldVar.input);
     }
   }
 
   @Override
   public void process(Node externs, Node root) {
-    // Since block-scoped function declarations can appear in any language mode, we need to run
-    // this pass unconditionally.
     NodeTraversal.traverseEs6(compiler, root, new CollectUndeclaredNames());
     NodeTraversal.traverseEs6(compiler, root, this);
     // Needed for let / const declarations in .d.ts externs.
@@ -121,9 +119,25 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
     NodeTraversal.traverseEs6(compiler, root, transformer);
     transformer.transformLoopClosure();
     varify();
-    TranspilationPasses.processTranspile(
-        compiler, externs, new RewriteBlockScopedFunctionDeclaration());
-    NodeTraversal.traverseEs6(compiler, root, new RewriteBlockScopedFunctionDeclaration());
+
+    // Block scoped function declarations can occur in any language mode, however for
+    // transpilation to ES3 and ES5, we want to hoist the functions from the block-scope by
+    // redeclaring them in var assignments
+    //
+    // If block-scope-declared function is the only "ES6 feature" for which we want to transpile,
+    // then the transpilation process will not rewriteFunctions. Thus, we manually check whether
+    // we need to rewrite in that case.
+    if (compiler.getOptions().needsTranspilationFrom(FeatureSet.ES6)) {
+      RewriteBlockScopedFunctionDeclaration rewriteFunction =
+          new RewriteBlockScopedFunctionDeclaration();
+
+      for (Node singleRoot : root.children()) {
+        FeatureSet features = (FeatureSet) singleRoot.getProp(Node.FEATURE_SET);
+        if (features.has(Feature.BLOCK_SCOPED_FUNCTION_DECLARATION)) {
+          NodeTraversal.traverseEs6(compiler, singleRoot, rewriteFunction);
+        }
+      }
+    }
   }
 
   @Override
@@ -144,7 +158,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
    */
   private boolean inLoop(Node n) {
     Node enclosingNode = NodeUtil.getEnclosingNode(n, loopPredicate);
-    return enclosingNode != null && enclosingNode.getToken() != Token.FUNCTION;
+    return enclosingNode != null && !enclosingNode.isFunction();
   }
 
   private static final Predicate<Node> loopPredicate = new Predicate<Node>() {
@@ -169,7 +183,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
       Node destDeclaration) {
     if (srcDeclaration.isConst()
         // Don't add @const for the left side of a for/in. If we do we get warnings from the NTI.
-        && !(NodeUtil.isForIn(srcParent) && srcDeclaration == srcParent.getFirstChild())) {
+        && !(srcParent.isForIn() && srcDeclaration == srcParent.getFirstChild())) {
       extractInlineJSDoc(srcDeclaration, srcName, destDeclaration);
       JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(destDeclaration.getJSDocInfo());
       builder.recordConstancy();
@@ -177,24 +191,26 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
     }
   }
 
-  private static void handleDeclarationList(Node declarationList, Node parent) {
+  private void handleDeclarationList(Node declarationList, Node parent) {
     // Normalize: "const i = 0, j = 0;" becomes "/** @const */ var i = 0; /** @const */ var j = 0;"
     while (declarationList.hasMoreThanOneChild()) {
       Node name = declarationList.getLastChild();
       Node newDeclaration = IR.var(name.detach()).useSourceInfoFrom(declarationList);
       maybeAddConstJSDoc(declarationList, parent, name, newDeclaration);
       parent.addChildAfter(newDeclaration, declarationList);
+      compiler.reportChangeToEnclosingScope(parent);
     }
     maybeAddConstJSDoc(declarationList, parent, declarationList.getFirstChild(), declarationList);
     declarationList.setToken(Token.VAR);
   }
 
-  private static void addNodeBeforeLoop(Node newNode, Node loopNode) {
+  private void addNodeBeforeLoop(Node newNode, Node loopNode) {
     Node insertSpot = loopNode;
     while (insertSpot.getParent().isLabel()) {
       insertSpot = insertSpot.getParent();
     }
     insertSpot.getParent().addChildBefore(newNode, insertSpot);
+    compiler.reportChangeToEnclosingScope(newNode);
   }
 
   private void varify() {
@@ -204,16 +220,16 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
           handleDeclarationList(n, n.getParent());
         }
         n.setToken(Token.VAR);
+        compiler.reportChangeToEnclosingScope(n);
       }
-      compiler.reportCodeChange();
     }
   }
 
   private class RewriteBlockScopedFunctionDeclaration extends AbstractPostOrderCallback {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
-      if (n.isFunction() && NormalizeStatements.maybeNormalizeFunctionDeclaration(n)) {
-        compiler.reportCodeChange();
+      if (n.isFunction()) {
+        NormalizeStatements.visitFunction(n, compiler);
       }
     }
   }
@@ -336,7 +352,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
         Node objectLit =
             IR.var(IR.name(object.name), IR.objectlit()).useSourceInfoFromForTree(loopNode);
         addNodeBeforeLoop(objectLit, loopNode);
-        if (NodeUtil.isVanillaFor(loopNode)) { // For
+        if (loopNode.isVanillaFor()) { // For
           // The initializer is pulled out and placed prior to the loop.
           Node initializer = loopNode.getFirstChild();
           loopNode.replaceChild(initializer, IR.empty());
@@ -367,6 +383,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
           loopNode.getLastChild().addChildToBack(IR.exprResult(updateLoopObject)
               .useSourceInfoIfMissingFromForTree(loopNode));
         }
+        compiler.reportChangeToEnclosingScope(loopNode);
 
         // For captured variables, change declarations to assignments on the
         // corresponding field of the introduced object. Rename all references
@@ -405,7 +422,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
                   grandParent.removeChild(declaration);
                 }
                 letConsts.remove(declaration);
-                compiler.reportCodeChange();
+                compiler.reportChangeToEnclosingScope(grandParent);
               }
 
               if (reference.getParent().isCall()
@@ -413,9 +430,14 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
                 reference.getParent().putBooleanProp(Node.FREE_CALL, false);
               }
               // Change reference to GETPROP.
+              Node changeScope = NodeUtil.getEnclosingChangeScopeRoot(reference);
               reference.replaceWith(
                   IR.getprop(IR.name(object.name), IR.string(var.name))
                       .useSourceInfoIfMissingFromForTree(reference));
+              // TODO(johnlenz): Don't work on detached nodes.
+              if (changeScope != null) {
+                compiler.reportChangeToChangeScope(changeScope);
+              }
             }
           }
         }
@@ -438,6 +460,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
             IR.name(""),
             IR.paramList(objectNames),
             IR.block(returnNode));
+        compiler.reportChangeToChangeScope(iife);
         Node call = IR.call(iife, objectNamesForCall);
         call.putBooleanProp(Node.FREE_CALL, true);
         Node replacement;
@@ -449,6 +472,7 @@ public final class Es6RewriteBlockScopedDeclaration extends AbstractPostOrderCal
         }
         function.replaceWith(replacement);
         returnNode.addChildToFront(function);
+        compiler.reportChangeToEnclosingScope(replacement);
       }
     }
 

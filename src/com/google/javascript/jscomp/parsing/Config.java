@@ -16,8 +16,6 @@
 
 package com.google.javascript.jscomp.parsing;
 
-import static com.google.common.base.Preconditions.checkArgument;
-
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
@@ -63,11 +61,25 @@ public final class Config {
     public static LanguageMode minimumRequiredFor(FeatureSet.Feature feature) {
       // relies on the LanguageMode enums being in the right order
       for (LanguageMode mode : LanguageMode.values()) {
-        if (mode.featureSet.contains(feature)) {
+        if (mode.featureSet.has(feature)) {
           return mode;
         }
       }
       throw new IllegalStateException("No input language mode supports feature: " + feature);
+    }
+
+    /** Returns the lowest {@link LanguageMode} that supports the specified feature set. */
+    public static LanguageMode minimumRequiredForSet(FeatureSet featureSet) {
+      for (LanguageMode mode : LanguageMode.values()) {
+        if (mode.featureSet.contains(featureSet)) {
+          return mode;
+        }
+      }
+      throw new IllegalStateException("No input language mode supports feature set: " + featureSet);
+    }
+
+    public static LanguageMode latestEcmaScript() {
+      return ECMASCRIPT8;
     }
   }
 
@@ -140,7 +152,6 @@ public final class Config {
       LanguageMode languageMode,
       boolean parseInlineSourceMaps,
       StrictMode strictMode) {
-    checkArgument(!(languageMode == LanguageMode.ECMASCRIPT3 && strictMode == StrictMode.STRICT));
     this.parseInlineSourceMaps = parseInlineSourceMaps;
     this.annotationNames = buildAnnotationNames(annotationWhitelist);
     this.parseJsDocDocumentation = parseJsDocDocumentation;

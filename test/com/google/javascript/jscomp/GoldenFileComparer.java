@@ -20,7 +20,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Files;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -37,7 +36,8 @@ public class GoldenFileComparer {
           + "com/google/javascript/jscomp/testdata/";
 
   private static List<SourceFile> coverageExterns() {
-      SourceFile externs = SourceFile.fromCode("externs", "function Symbol() {}; var window;");
+    SourceFile externs = SourceFile.fromCode(
+        "externs", "function Symbol() {}; var window; var self;");
       return ImmutableList.of(externs);
   }
 
@@ -54,7 +54,7 @@ public class GoldenFileComparer {
   }
 
   private static String readFile(String filePath) throws IOException {
-    return Files.toString(new File(filePath), UTF_8);
+    return Files.asCharSource(new File(filePath), UTF_8).read();
   }
 
   private static SourceFile readSource(String fileName) throws IOException {

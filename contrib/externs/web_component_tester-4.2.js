@@ -47,3 +47,11 @@ var stub = function(tag, impl) {};
  * @return {!Element}
  */
 var fixture = function(name, opt_model) {};
+
+/**
+ * @param {string} fixtureId
+ * @param {!Array<string>=} ignoredRules
+ * @param {!Function=} beforeEach Function to be called before each test to
+ * ensure proper setup
+ */
+var a11ySuite = function(fixtureId, ignoredRules, beforeEach) {};

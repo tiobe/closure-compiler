@@ -16,10 +16,13 @@
 
 package com.google.javascript.jscomp;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticScope;
-
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -32,24 +35,24 @@ import java.util.Map;
  * @see NodeTraversal
  *
  */
-public class Scope implements StaticScope {
-  private final Map<String, Var> vars = new LinkedHashMap<>();
-  private final Scope parent;
-  protected final int depth;
+public class Scope implements StaticScope, Serializable {
+  protected final Map<String, Var> vars = new LinkedHashMap<>();
+  protected Scope parent;
+  protected int depth;
   protected final Node rootNode;
   private Var arguments;
 
   /**
-   * Creates a Scope given the parent Scope and the root node of the scope.
-   * @param parent  The parent Scope. Cannot be null.
-   * @param rootNode  Typically the FUNCTION node.
+   * Creates a Scope given the parent Scope and the root node of the current scope.
+   *
+   * @param parent The parent Scope. Cannot be null.
+   * @param rootNode The root node of the current scope. Cannot be null.
    */
   Scope(Scope parent, Node rootNode) {
-    Preconditions.checkNotNull(parent);
-    Preconditions.checkNotNull(rootNode);
-    Preconditions.checkArgument(
-        rootNode != parent.rootNode,
-        "Root node: %s\nParent's root node: %s", rootNode, parent.rootNode);
+    checkNotNull(parent);
+    checkArgument(NodeUtil.createsScope(rootNode), rootNode);
+    checkArgument(
+        rootNode != parent.rootNode, "rootNode should not be the parent's root node", rootNode);
 
     this.parent = parent;
     this.rootNode = rootNode;
@@ -57,7 +60,9 @@ public class Scope implements StaticScope {
   }
 
   protected Scope(Node rootNode) {
-    Preconditions.checkNotNull(rootNode);
+    // TODO(tbreisacher): Can we tighten this to just NodeUtil.createsScope?
+    checkArgument(
+        NodeUtil.createsScope(rootNode) || rootNode.isScript() || rootNode.isRoot(), rootNode);
     this.parent = null;
     this.rootNode = rootNode;
     this.depth = 0;
@@ -69,12 +74,28 @@ public class Scope implements StaticScope {
   }
 
   static Scope createGlobalScope(Node rootNode) {
+    // TODO(tbreisacher): Can we tighten this to allow only ROOT nodes?
+    checkArgument(rootNode.isRoot() || rootNode.isScript(), rootNode);
     return new Scope(rootNode);
   }
 
   /** The depth of the scope. The global scope has depth 0. */
   public int getDepth() {
     return depth;
+  }
+
+  /**
+   * @return True if this scope contains {@code other}, or is the same scope as {@code other}.
+   */
+  boolean contains(Scope other) {
+    Scope s = checkNotNull(other);
+    while (s != null) {
+      if (s == this) {
+        return true;
+      }
+      s = s.getParent();
+    }
+    return false;
   }
 
   /**
@@ -111,9 +132,9 @@ public class Scope implements StaticScope {
    * @param input the input in which this variable is defined.
    */
   Var declare(String name, Node nameNode, CompilerInput input) {
-    Preconditions.checkState(name != null && !name.isEmpty());
+    checkState(name != null && !name.isEmpty());
     // Make sure that it's declared only once
-    Preconditions.checkState(vars.get(name) == null);
+    checkState(vars.get(name) == null);
     Var var = new Var(name, nameNode, this, vars.size(), input);
     vars.put(name, var);
     return var;
@@ -124,9 +145,14 @@ public class Scope implements StaticScope {
    * a variable and removes it from the scope.
    */
   void undeclare(Var var) {
-    Preconditions.checkState(var.scope == this);
-    Preconditions.checkState(vars.get(var.name) == var);
-    vars.remove(var.name);
+    checkState(var.scope == this);
+    checkState(vars.get(var.name).equals(var));
+    undeclareInteral(var);
+  }
+
+  /** Without any safety checks */
+  void undeclareInteral(Var var) {
+     vars.remove(var.name);
   }
 
   @Override
@@ -162,10 +188,30 @@ public class Scope implements StaticScope {
    * Get a unique VAR object to represents "arguments" within this scope
    */
   public Var getArgumentsVar() {
+    if (isGlobal() || isModuleScope()) {
+      return null;
+    }
+
+    if (!isFunctionScope() || rootNode.isArrowFunction()) {
+      return parent.getArgumentsVar();
+    }
+
     if (arguments == null) {
       arguments = Var.makeArgumentsVar(this);
     }
     return arguments;
+  }
+
+  /**
+   * Use only when in a function block scope and want to tell if a name is either at the top of the
+   * function block scope or the function parameter scope
+   */
+  public boolean isDeclaredInFunctionBlockOrParameter(String name) {
+    // In ES6, we create a separate "function parameter scope" above the function block scope to
+    // handle default parameters. Since nothing in the function block scope is allowed to shadow
+    // the variables in the function scope, we treat the two scopes as one in this method.
+    checkState(isFunctionBlockScope());
+    return isDeclared(name, false) || parent.isDeclared(name, false);
   }
 
   /**
@@ -178,10 +224,7 @@ public class Scope implements StaticScope {
         return true;
       }
 
-      // In ES6, we create a separate "function parameter scope" above the function block scope to
-      // handle default parameters. Since nothing in the function block scope is allowed to shadow
-      // the variables in the function scope, we treat the two scopes as one in this method.
-      if (scope.isFunctionBlockScope() || (scope.parent != null && recurse)) {
+      if (scope.parent != null && recurse) {
         scope = scope.parent;
         continue;
       }
@@ -195,6 +238,33 @@ public class Scope implements StaticScope {
    */
   public Iterable<? extends Var> getVarIterable() {
     return vars.values();
+  }
+
+  /**
+   * Return an iterable over all of the variables accessible to this scope (i.e. the variables in
+   * this scope and its parent scopes). Any variables declared in the local scope with the same name
+   * as a variable declared in a parent scope gain precedence - if let x exists in the block scope,
+   * a declaration let x from the parent scope would not be included because the parent scope's
+   * variable gets shadowed.
+   *
+   * <p>The iterable contains variables from inner scopes before adding variables from outer parent
+   * scopes.
+   *
+   * <p>We do not include the special 'arguments' variable.
+   */
+  public Iterable<? extends Var> getAllAccessibleVariables() {
+    Map<String, Var> accessibleVars = new LinkedHashMap<>();
+    Scope s = this;
+
+    while (s != null) {
+      for (Var v : s.getVarIterable()) {
+        if (!accessibleVars.containsKey(v.getName())){
+          accessibleVars.put(v.getName(), v);
+        }
+      }
+      s = s.getParent();
+    }
+    return accessibleVars.values();
   }
 
   public Iterable<? extends Var> getAllSymbols() {
@@ -227,7 +297,7 @@ public class Scope implements StaticScope {
   }
 
   public boolean isFunctionBlockScope() {
-    return isBlockScope() && parent != null && parent.getRootNode().isFunction();
+    return NodeUtil.isFunctionBlock(getRootNode());
   }
 
   public boolean isFunctionScope() {
@@ -236,6 +306,36 @@ public class Scope implements StaticScope {
 
   public boolean isModuleScope() {
     return getRootNode().isModuleBody();
+  }
+
+  public boolean isCatchScope() {
+    return getRootNode().isNormalBlock()
+        && getRootNode().hasOneChild()
+        && getRootNode().getFirstChild().isCatch();
+  }
+
+  /**
+   * If a var were declared in this scope, would it belong to this scope (as opposed to some
+   * enclosing scope)?
+   *
+   * We consider function scopes to be hoist scopes. Even though it's impossible to declare a var
+   * inside function parameters, it would make less sense to say that if you did declare one in
+   * the function parameters, it would be hoisted somewhere else.
+   */
+  boolean isHoistScope() {
+    return isFunctionScope() || isFunctionBlockScope() || isGlobal() || isModuleScope();
+  }
+
+  public static boolean isHoistScopeRootNode(Node n) {
+    switch (n.getToken()) {
+      case FUNCTION:
+      case MODULE_BODY:
+      case ROOT:
+      case SCRIPT:
+        return true;
+      default:
+        return NodeUtil.isFunctionBlock(n);
+    }
   }
 
   /**
@@ -248,10 +348,7 @@ public class Scope implements StaticScope {
   public Scope getClosestHoistScope() {
     Scope current = this;
     while (current != null) {
-      if (current.isFunctionScope()
-          || current.isFunctionBlockScope()
-          || current.isGlobal()
-          || current.isModuleScope()) {
+      if (current.isHoistScope()) {
         return current;
       }
       current = current.parent;

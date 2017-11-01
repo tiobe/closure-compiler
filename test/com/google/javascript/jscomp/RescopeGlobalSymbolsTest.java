@@ -26,9 +26,6 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
 
   private boolean assumeCrossModuleNames = true;
 
-  public RescopeGlobalSymbolsTest() {
-  }
-
   @Override protected CompilerPass getProcessor(Compiler compiler) {
     return new RescopeGlobalSymbols(
         compiler,
@@ -37,7 +34,8 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
         assumeCrossModuleNames);
   }
 
-  @Override public void setUp() throws Exception {
+  @Override
+  protected void setUp() throws Exception {
     super.setUp();
     assumeCrossModuleNames = true;
   }
@@ -144,11 +142,42 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
     test(
         "function test(){}",
         "_.test=function (){}");
-    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT6);
+    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     test(
         "if(1)function test(){}",
         "if(1)_.test=function (){}");
-    new StringCompare().testFreeCallSemantics();
+  }
+
+  public void testFunctionStatements_freeCallSemantics() throws Exception {
+    disableCompareAsTree();
+
+    // This triggers free call.
+    test(
+        "function x(){this};var y=function(){var val=x()||{}}",
+        "_.x=function(){this};_.y=function(){var val=(0,_.x)()||{}}");
+    test(
+        "function x(){this;x()}",
+        "_.x=function(){this;(0,_.x)()}");
+    test(
+        "var a=function(){this};a()",
+        "_.a=function(){this};(0,_.a)()");
+    // Cases where free call forcing through (0, foo)() is not necessary.
+    test(
+        "var a=function(){};a()",
+        "_.a=function(){};_.a()");
+    test(
+        "function a(){};a()",
+        "_.a=function(){};_.a()");
+    test(
+        "var a;a=function(){};a()",
+        "_.a=function(){};_.a()");
+    // Ambigious cases.
+    test(
+        "var a=1;a=function(){};a()",
+        "_.a=1;_.a=function(){};(0,_.a)()");
+    test(
+        "var b;var a=b;a()",
+        "_.a=_.b;(0,_.a)()");
   }
 
   public void testDeeperScopes() {
@@ -218,93 +247,133 @@ public final class RescopeGlobalSymbolsTest extends CompilerTestCase {
     test(
         "var document;",
         "document",
-        "window.document", null, null);
+        "window.document");
     test(
         "var document;",
         "document.getElementsByTagName('test')",
-        "window.document.getElementsByTagName('test')", null, null);
+        "window.document.getElementsByTagName('test')");
     test(
         "var document;",
         "window.document.getElementsByTagName('test')",
-        "window.document.getElementsByTagName('test')", null, null);
+        "window.document.getElementsByTagName('test')");
     test(
         "var document;document.getElementsByTagName",
         "document.getElementsByTagName('test')",
-        "window.document.getElementsByTagName('test')", null, null);
+        "window.document.getElementsByTagName('test')");
     test(
         "var document,navigator",
         "document.navigator;navigator",
-        "window.document.navigator;window.navigator", null, null);
+        "window.document.navigator;window.navigator");
     test(
         "var iframes",
         "function test() { iframes.resize(); }",
-        "_.test = function() { window.iframes.resize(); }", null, null);
+        "_.test = function() { window.iframes.resize(); }");
     test(
         "var iframes",
         "var foo = iframes;",
-        "_.foo = window.iframes;", null, null);
+        "_.foo = window.iframes;");
     // Special names.
     test(
         "var arguments, window, eval;",
         "arguments;window;eval;",
-        "arguments;window;eval;", null, null);
+        "arguments;window;eval;");
     // Actually not an extern.
     test(
         "",
         "document",
-        "window.document", null, null);
+        "window.document");
     // Javascript builtin objects
-    test(
-        "Object;Function;Array;String;Boolean;Number;Math;"
-        + "Date;RegExp;JSON;Error;EvalError;ReferenceError;"
-        + "SyntaxError;TypeError;URIError;",
+    testSame(
         "Object;Function;Array;String;Boolean;Number;Math;"
         + "Date;RegExp;JSON;Error;EvalError;ReferenceError;"
         + "SyntaxError;TypeError;URIError;");
   }
 
-  private class StringCompare extends CompilerTestCase {
+  public void testSameVarDeclaredInExternsAndSource() {
+    test(
+        "/** @const */ var ns = {}; function f() {}",
+        "/** @const */ var ns = ns || {};",
+        "/** @const */ window.ns = window.ns || {};");
 
-    StringCompare() {
-      super("", false);
-    }
+    test(
+        "var x;",
+        "var x = 1; x = 2;",
+        "window.x = 1; window.x = 2;");
 
-    @Override protected CompilerPass getProcessor(Compiler compiler) {
-      return new RescopeGlobalSymbols(
-          compiler,
-          NAMESPACE,
-          false,
-          assumeCrossModuleNames);
-    }
+    test(
+        "var x;",
+        "var x; x = 1;",
+        "window.x = 1;");
 
-    public void testFreeCallSemantics() {
-      // This triggers free call.
-      test(
-          "function x(){this};var y=function(){var val=x()||{}}",
-          "_.x=function(){this};_.y=function(){var val=(0,_.x)()||{}}");
-      test(
-          "function x(){this;x()}",
-          "_.x=function(){this;(0,_.x)()}");
-      test(
-          "var a=function(){this};a()",
-          "_.a=function(){this};(0,_.a)()");
-      // Cases where free call forcing through (0, foo)() is not necessary.
-      test(
-          "var a=function(){};a()",
-          "_.a=function(){};_.a()");
-      test(
-          "function a(){};a()",
-          "_.a=function(){};_.a()");
-      test(
-          "var a;a=function(){};a()",
-          "_.a=function(){};_.a()");
-      // Ambigious cases.
-      test(
-          "var a=1;a=function(){};a()",
-          "_.a=1;_.a=function(){};(0,_.a)()");
-      test(
-          "var b;var a=b;a()",
-          "_.a=_.b;(0,_.a)()");
-    }
+    test(
+        "var x;",
+        "function f() { var x; x = 1; }",
+        "_.f = function() { var x; x = 1; }");
+
+    test(
+        "var x, y;",
+        "var x = 1, y = 2;",
+        "window.x = 1; window.y = 2;");
+
+    test(
+        "var x, y;",
+        "var x, y = 2;",
+        "window.y = 2;");
+
+    test(
+        "var x;",
+        "var x = 1, y = 2;",
+        "window.x = 1; _.y = 2;");
+
+    test(
+        "var x;",
+        "var y = 2, x = 1;",
+        "_.y = 2; window.x = 1;");
+
+    test(
+        "var x;",
+        "var y, x = 1;",
+        "window.x = 1;");
+
+    test(
+        "var foo;",
+        "var foo = function(x) { if (x > 0) { var y = foo; } };",
+        "window.foo = function(x) { if (x > 0) { var y = window.foo; } };");
+
+    // The parameter x doesn't conflict with the x in the source
+    test(
+        "function f(x) {}",
+        "var f = 1; var x = 2;",
+        "window.f = 1; _.x = 2;");
+  }
+
+  public void testSameVarDeclaredInExternsAndSource2() {
+    assumeCrossModuleNames = false;
+
+    test(createModules(
+        LINE_JOINER.join(
+            "Foo = function() { this.b = ns; };",
+            "var f = function(a) {",
+            "  if (a instanceof Foo && a.b === ns) {}",
+            "},",
+            "ns = {},",
+            "g = function(a) { var b = new Foo; };"),
+        "f; g;"),
+        new String[] {
+            LINE_JOINER.join(
+                "var ns;",
+                "window.Foo = function() { this.b = ns; };",
+                "_.f = function(a) {",
+                "  if (a instanceof window.Foo && a.b === ns) {}",
+                "};",
+                "ns = {};",
+                "_.g = function(a) { var b = new window.Foo; };"),
+            "_.f; _.g;"
+    });
+
+    test(
+        "var y;",
+        "var x = 1, y = 2; function f() { return x + window.y; }",
+        "var x; x = 1; window.y = 2; var f = function() { return x + window.y; }");
   }
 }

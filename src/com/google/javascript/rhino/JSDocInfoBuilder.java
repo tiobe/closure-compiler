@@ -39,8 +39,10 @@
 
 package com.google.javascript.rhino;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.javascript.rhino.JSDocInfo.Visibility;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.Nullable;
@@ -66,6 +68,9 @@ public final class JSDocInfoBuilder {
   // the current marker, if any.
   private JSDocInfo.Marker currentMarker;
 
+  // the set of unique license texts
+  private final Set<String> licenseTexts;
+
   public JSDocInfoBuilder(boolean parseDocumentation) {
     this(new JSDocInfo(parseDocumentation), parseDocumentation, false);
   }
@@ -75,6 +80,7 @@ public final class JSDocInfoBuilder {
     this.currentInfo = info;
     this.parseDocumentation = parseDocumentation;
     this.populated = populated;
+    this.licenseTexts = new HashSet<>();
   }
 
   public static JSDocInfoBuilder copyFrom(JSDocInfo info) {
@@ -131,7 +137,7 @@ public final class JSDocInfoBuilder {
   public boolean isPopulatedWithFileOverview() {
     return isPopulated() &&
         (currentInfo.hasFileOverview() || currentInfo.isExterns() ||
-         currentInfo.isNoCompile());
+         currentInfo.isNoCompile() || currentInfo.isTypeSummary());
   }
 
   /**
@@ -183,7 +189,7 @@ public final class JSDocInfoBuilder {
    */
   public JSDocInfo build(boolean always) {
     if (populated || always) {
-      Preconditions.checkState(currentInfo != null);
+      checkState(currentInfo != null);
       JSDocInfo built = currentInfo;
       currentInfo = null;
       populateDefaults(built);
@@ -253,7 +259,7 @@ public final class JSDocInfoBuilder {
   /**
    * Adds a name declaration to the current marker.
    */
-  public void markName(String name, StaticSourceFile file,
+  public void markName(String name, Node templateNode,
       int lineno, int charno) {
     if (currentMarker != null) {
       // Record the name as both a SourcePosition<String> and a
@@ -272,7 +278,9 @@ public final class JSDocInfoBuilder {
       JSDocInfo.NamePosition nodePos = new JSDocInfo.NamePosition();
       Node node = Node.newString(Token.NAME, name, lineno, charno);
       node.setLength(name.length());
-      node.setStaticSourceFile(file);
+      if (templateNode != null) {
+        node.setStaticSourceFileFrom(templateNode);
+      }
       nodePos.setItem(node);
       nodePos.setPositionInformation(lineno, charno,
           lineno, charno + name.length());
@@ -814,10 +822,15 @@ public final class JSDocInfoBuilder {
   }
 
   public boolean addLicense(String license) {
+    if (!licenseTexts.add(license)) {
+      return false;
+    }
+
     String txt = currentInfo.getLicense();
     if (txt == null) {
       txt = "";
     }
+
     currentInfo.setLicense(txt + license);
     populated = true;
     return true;
@@ -1133,8 +1146,22 @@ public final class JSDocInfoBuilder {
    * {@link JSDocInfo#isExterns()} flag set to {@code true}.
    */
   public boolean recordExterns() {
-    if (!currentInfo.isExterns()) {
+    if (!currentInfo.isExterns() && !currentInfo.isTypeSummary()) {
       currentInfo.setExterns(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * Records that the {@link JSDocInfo} being built should have its
+   * {@link JSDocInfo#isTypeSummary()} flag set to {@code true}.
+   */
+  public boolean recordTypeSummary() {
+    if (!currentInfo.isTypeSummary() && !currentInfo.isExterns()) {
+      currentInfo.setTypeSummary(true);
       populated = true;
       return true;
     } else {
@@ -1161,7 +1188,7 @@ public final class JSDocInfoBuilder {
    * Records an implemented interface.
    */
   public boolean recordImplementedInterface(JSTypeExpression interfaceName) {
-    if (currentInfo.addImplementedInterface(interfaceName)) {
+    if (interfaceName != null && currentInfo.addImplementedInterface(interfaceName)) {
       populated = true;
       return true;
     } else {
@@ -1173,7 +1200,7 @@ public final class JSDocInfoBuilder {
    * Records an extended interface type.
    */
   public boolean recordExtendedInterface(JSTypeExpression interfaceType) {
-    if (currentInfo.addExtendedInterface(interfaceType)) {
+    if (interfaceType != null && currentInfo.addExtendedInterface(interfaceType)) {
       populated = true;
       return true;
     } else {
@@ -1328,6 +1355,68 @@ public final class JSDocInfoBuilder {
   public boolean recordPolymerBehavior() {
     if (!isPolymerBehaviorRecorded()) {
       currentInfo.setPolymerBehavior(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /** Returns whether current JSDoc is annotated with {@code @polymer}. */
+  public boolean isPolymerRecorded() {
+    return currentInfo.isPolymer();
+  }
+
+  /** Records that this method is to be exposed as a polymer element. */
+  public boolean recordPolymer() {
+    if (!isPolymerRecorded()) {
+      currentInfo.setPolymer(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /** Returns whether current JSDoc is annotated with {@code @customElement}. */
+  public boolean isCustomElementRecorded() {
+    return currentInfo.isCustomElement();
+  }
+
+  /** Records that this method is to be exposed as a customElement. */
+  public boolean recordCustomElement() {
+    if (!isCustomElementRecorded()) {
+      currentInfo.setCustomElement(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }/** Returns whether current JSDoc is annotated with {@code @mixinClass}. */
+  public boolean isMixinClassRecorded() {
+    return currentInfo.isMixinClass();
+  }
+
+  /** Records that this method is to be exposed as a mixinClass. */
+  public boolean recordMixinClass() {
+    if (!isMixinClassRecorded()) {
+      currentInfo.setMixinClass(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /** Returns whether current JSDoc is annotated with {@code @mixinFunction}. */
+  public boolean isMixinFunctionRecorded() {
+    return currentInfo.isMixinFunction();
+  }
+
+  /** Records that this method is to be exposed as a mixinFunction. */
+  public boolean recordMixinFunction() {
+    if (!isMixinFunctionRecorded()) {
+      currentInfo.setMixinFunction(true);
       populated = true;
       return true;
     } else {

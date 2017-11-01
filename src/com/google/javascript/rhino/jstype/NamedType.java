@@ -39,13 +39,15 @@
 
 package com.google.javascript.rhino.jstype;
 
-import com.google.common.base.Preconditions;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.base.Predicate;
+import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
-
 import java.util.ArrayList;
 import java.util.List;
+import javax.annotation.Nullable;
 
 /**
  * A {@code NamedType} is a named reference to some other type.  This provides
@@ -90,12 +92,19 @@ public class NamedType extends ProxyObjectType {
   /**
    * Validates the type resolution.
    */
-  private Predicate<JSType> validator;
+  private transient Predicate<JSType> validator;
 
   /**
    * Property-defining continuations.
    */
   private List<PropertyContinuation> propertyContinuations = null;
+
+  /**
+   * Template types defined on a named, not yet resolved type, or {@code null} if none. These are
+   * ignored during resolution, for backwards compatibility with existing usage.
+   * This field is not used for JSCompiler's type checking; it is only needed by Clutz.
+   */
+  @Nullable private ImmutableList<JSType> templateTypes;
 
   /**
    * Create a named type based on the reference.
@@ -104,11 +113,27 @@ public class NamedType extends ProxyObjectType {
       String sourceName, int lineno, int charno) {
     super(registry, registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE));
 
-    Preconditions.checkNotNull(reference);
+    checkNotNull(reference);
     this.reference = reference;
     this.sourceName = sourceName;
     this.lineno = lineno;
     this.charno = charno;
+  }
+
+  NamedType(
+      JSTypeRegistry registry,
+      String reference,
+      String sourceName,
+      int lineno,
+      int charno,
+      ImmutableList<JSType> templateTypes) {
+    this(registry, reference, sourceName, lineno, charno);
+    this.templateTypes = templateTypes;
+  }
+
+  @Override
+  public ImmutableList<JSType> getTemplateTypes() {
+    return templateTypes;
   }
 
   @Override
@@ -153,8 +178,8 @@ public class NamedType extends ProxyObjectType {
   }
 
   @Override
-  String toStringHelper(boolean forAnnotations) {
-    return reference;
+  StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
+    return sb.append(this.reference);
   }
 
   @Override
@@ -335,12 +360,10 @@ public class NamedType extends ProxyObjectType {
     boolean isForwardDeclared =
         ignoreForwardReferencedTypes && registry.isForwardDeclaredType(reference);
     if (!isForwardDeclared) {
-      warning(t, "Bad type annotation. Unknown type " + reference);
+      String msg = "Bad type annotation. Unknown type " + reference;
+      warning(t, msg);
     } else {
-      setReferencedType(
-          registry.getNativeObjectType(
-              JSTypeNative.NO_RESOLVED_TYPE));
-
+      setReferencedType(new NoResolvedType(registry, getReferenceName(), getTemplateTypes()));
       if (validator != null) {
         validator.apply(getReferencedType());
       }

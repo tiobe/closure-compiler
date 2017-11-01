@@ -24,6 +24,7 @@
 
 /**
  * @constructor
+ * @implements {Iterable<!Array<string>>}
  * @param {(string|!URLSearchParams)=} init
  */
 function URLSearchParams(init) {}
@@ -109,7 +110,7 @@ URL.prototype.search;
 
 /**
  * @const
- * @type {URLSearchParams}
+ * @type {!URLSearchParams}
  */
 URL.prototype.searchParams;
 
