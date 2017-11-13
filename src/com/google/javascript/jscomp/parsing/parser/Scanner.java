@@ -267,6 +267,7 @@ public class Scanner {
 
   private static boolean isWhitespace(char ch) {
     switch (ch) {
+      case '@':       // 18860
       case '\u0009':  // Tab
       case '\u000B':  // Vertical Tab
       case '\u000C':  // Form Feed
