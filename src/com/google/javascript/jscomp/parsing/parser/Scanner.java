@@ -603,6 +603,17 @@ public class Scanner {
   }
 
   private boolean scanJSX() {
+    final Character prev = peekChar(-2);
+    if (Character.isLetter(prev)) {
+      /**
+       * Prevents the following constructs from being parsed as JSX:
+       *
+       * interface Foo<T> { }
+       * var a = b | c || d ^ e && f & !g != h << i <= j < k >>> l > m * n % !o;
+       * var x: test.Type<string>;
+       */
+      return false;
+    }
     if (!looksLikeHtmlElemOpen()) return false;
     while (!elemStack.isEmpty()) {
       switch (nextChar()) {
@@ -649,7 +660,9 @@ public class Scanner {
     final String elementName = getElemName(n - 1);
 
     nextChar();
-    if (!elementName.equals(elemStack.peekFirst()));
+    if (!elementName.equals(elemStack.peekFirst())) {
+      // They should be the same, but we do nothing with this at the moment
+    }
     elemStack.removeFirst();
     return true;
   }
@@ -665,12 +678,11 @@ public class Scanner {
     char c = peekChar(m);
 
     if (isWhitespace(c) || c == '/' || c == '>') {
-      final int la = 200 + m;
 
-      while (m < la && c != '\0' && c != '>') {
+      while (c != '\0' && c != '>') {
         c = peekChar(m++);
       }
-      if (la <= m) return -1;
+      if (c == '\0') return -1;
       return m;
     }
     return -1;
