@@ -21,7 +21,7 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.jstype.JSType;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -34,8 +34,7 @@ import java.util.Set;
  * these properties may be indirectly referenced using "for-in" or
  * "Object.keys".
  *
- * This class is based on RemoveUnusedClassProperties, some effort should
- * be made to extract the common pieces.
+ * This class is based on RemoveUnusedCode, some effort should be made to extract the common pieces.
  *
  * @author johnlenz@google.com (John Lenz)
  */
@@ -47,8 +46,8 @@ class CheckUnusedPrivateProperties
           "JSC_UNUSED_PRIVATE_PROPERTY", "Private property {0} is never read");
 
   private final AbstractCompiler compiler;
-  private Set<String> used = new HashSet<>();
-  private List<Node> candidates = new ArrayList<>();
+  private final Set<String> used = new HashSet<>();
+  private final List<Node> candidates = new ArrayList<>();
 
   CheckUnusedPrivateProperties(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -56,12 +55,12 @@ class CheckUnusedPrivateProperties
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   private void reportUnused(NodeTraversal t) {
@@ -130,7 +129,9 @@ class CheckUnusedPrivateProperties
          // Assume any object literal definition might be a reflection on the
          // class property.
          for (Node c : n.children()) {
-           used.add(c.getString());
+            if (c.isStringKey() || c.isGetterDef() || c.isSetterDef() || c.isMemberFunctionDef()) {
+              used.add(c.getString());
+            }
          }
          break;
        }
@@ -181,7 +182,7 @@ class CheckUnusedPrivateProperties
   private boolean isConstructor(Node n) {
     // If type checking is enabled (not just a per-file lint check),
     // we can check constructor properties too. But it isn't required.
-    TypeI type = n.getTypeI();
+    JSType type = n.getJSType();
     return type != null && (type.isConstructor() || type.isInterface());
   }
 

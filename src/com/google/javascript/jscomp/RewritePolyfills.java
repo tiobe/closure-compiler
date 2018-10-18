@@ -99,9 +99,9 @@ public class RewritePolyfills implements HotSwapCompilerPass {
      * text file with lines containing space-separated tokens:
      *   [NATIVE_SYMBOL] [NATIVE_VERSION] [POLYFILL_VERSION] [LIBRARY]
      * For example,
-     *   Array.prototype.fill es6-impl es3 es6/array/fill
-     *   Map es6-impl es3 es6/map
-     *   WeakMap es6-impl es6-impl
+     *   Array.prototype.fill es6 es3 es6/array/fill
+     *   Map es6 es3 es6/map
+     *   WeakMap es6 es6
      * The last line, WeakMap, does not have a polyfill available, so the
      * library token is empty.
      */
@@ -142,8 +142,9 @@ public class RewritePolyfills implements HotSwapCompilerPass {
 
     private static final Function<String, String> EXTRACT_SUFFIX =
         new Function<String, String>() {
-          @Override public String apply(String arg) {
-            return arg.substring(arg.lastIndexOf(".") + 1);
+          @Override
+          public String apply(String arg) {
+            return arg.substring(arg.lastIndexOf('.') + 1);
           }
         };
   }
@@ -167,7 +168,7 @@ public class RewritePolyfills implements HotSwapCompilerPass {
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
     Traverser traverser = new Traverser();
-    NodeTraversal.traverseEs6(compiler, scriptRoot, traverser);
+    NodeTraversal.traverse(compiler, scriptRoot, traverser);
 
     if (!traverser.libraries.isEmpty()) {
       Node lastNode = null;
@@ -246,7 +247,7 @@ public class RewritePolyfills implements HotSwapCompilerPass {
                 node,
                 INSUFFICIENT_OUTPUT_VERSION_ERROR,
                 name,
-                compiler.getOptions().getLanguageOut().toString());
+                compiler.getOptions().getOutputFeatureSet().version());
           }
           inject(polyfill);
 
@@ -291,13 +292,15 @@ public class RewritePolyfills implements HotSwapCompilerPass {
       ImmutableSet.of("goog.global.", "window.");
 
   private boolean languageOutIsAtLeast(LanguageMode mode) {
-    return compiler.getOptions().getLanguageOut().compareTo(mode) >= 0;
+    return compiler.getOptions().getOutputFeatureSet().contains(mode.toFeatureSet());
   }
 
   private boolean languageOutIsAtLeast(FeatureSet features) {
     switch (features.version()) {
       case "ts":
         return languageOutIsAtLeast(LanguageMode.ECMASCRIPT6_TYPED);
+      case "es9":
+        return languageOutIsAtLeast(LanguageMode.ECMASCRIPT_2018);
       case "es8":
         return languageOutIsAtLeast(LanguageMode.ECMASCRIPT_2017);
       case "es7":

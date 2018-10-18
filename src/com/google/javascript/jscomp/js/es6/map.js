@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+'require es6/conformance';
 'require es6/symbol';
 'require es6/util/makeiterator';
 'require es6/weakmap';
@@ -49,9 +50,16 @@ $jscomp.polyfill('Map',
      * @suppress {reportUnknownTypes}
      */
     function(NativeMap) {
-  // Perform a conformance check to ensure correct native implementation.
-  var isConformant = !$jscomp.ASSUME_NO_NATIVE_MAP && (function() {
-    if (!NativeMap ||
+
+  /**
+   * Checks conformance of the existing Map.
+   * @return {boolean} True if the browser's implementation conforms.
+   * @suppress {missingProperties} "entries" unknown prototype
+   */
+  function isConformant() {
+    if ($jscomp.ASSUME_NO_NATIVE_MAP ||
+        !NativeMap ||
+        typeof NativeMap != "function" ||
         !NativeMap.prototype.entries ||
         typeof Object.seal != 'function') {
       return false;
@@ -79,11 +87,15 @@ $jscomp.polyfill('Map',
     } catch (err) { // This should hopefully never happen, but let's be safe.
       return false;
     }
-  })();
-  if (isConformant) return NativeMap;
+  }
+
+  if ($jscomp.USE_PROXY_FOR_ES6_CONFORMANCE_CHECKS) {
+    if (NativeMap && $jscomp.ES6_CONFORMANCE) return NativeMap;
+  } else {
+    if (isConformant()) return NativeMap;
+  }
 
   // We depend on Symbol.iterator, so ensure it's loaded.
-  $jscomp.initSymbol();
   $jscomp.initSymbolIterator();
 
 
@@ -129,6 +141,8 @@ $jscomp.polyfill('Map',
 
   /** @override */
   PolyfillMap.prototype.set = function(key, value) {
+    // normalize -0/+0 to +0
+    key = key === 0 ? 0 : key;
     var r = maybeGetEntry(this, key);
     if (!r.list) {
       r.list = (this.data_[r.id] = []);

@@ -74,12 +74,6 @@ class ReplaceIdGenerators implements CompilerPass {
           "Object literal shorthand functions is not allowed in the "
           + "arguments of an id generator");
 
-  static final DiagnosticType SHORTHAND_ASSIGNMENT_NOT_SUPPORTED_IN_ID_GEN =
-      DiagnosticType.error(
-          "JSC_SHORTHAND_ASSIGNMENT_NOT_SUPPORTED_IN_ID_GEN",
-          "Object literal shorthand assignment is not allowed in the "
-          + "arguments of an id generator");
-
   static final DiagnosticType COMPUTED_PROP_NOT_SUPPORTED_IN_ID_GEN =
       DiagnosticType.error(
           "JSC_COMPUTED_PROP_NOT_SUPPORTED_IN_ID_GEN",
@@ -147,7 +141,7 @@ class ReplaceIdGenerators implements CompilerPass {
   private static class ObfuscatedNameSupplier implements NameSupplier {
     private final NameGenerator generator;
     private final Map<String, String> previousMappings;
-    private RenameStrategy renameStrategy;
+    private final RenameStrategy renameStrategy;
 
     public ObfuscatedNameSupplier(
         RenameStrategy renameStrategy, BiMap<String, String> previousMappings) {
@@ -174,7 +168,7 @@ class ReplaceIdGenerators implements CompilerPass {
 
   private static class PseudoNameSupplier implements NameSupplier {
     private int counter = 0;
-    private RenameStrategy renameStrategy;
+    private final RenameStrategy renameStrategy;
 
     public PseudoNameSupplier(RenameStrategy renameStrategy) {
       this.renameStrategy = renameStrategy;
@@ -331,9 +325,9 @@ class ReplaceIdGenerators implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, new GatherGenerators());
+    NodeTraversal.traverse(compiler, root, new GatherGenerators());
     if (!nameGenerators.isEmpty()) {
-      NodeTraversal.traverseEs6(compiler, root, new ReplaceGenerators());
+      NodeTraversal.traverse(compiler, root, new ReplaceGenerators());
     }
   }
 
@@ -379,10 +373,6 @@ class ReplaceIdGenerators implements CompilerPass {
         for (Node key : arg.children()) {
           if (key.isMemberFunctionDef()) {
             compiler.report(t.makeError(n, SHORTHAND_FUNCTION_NOT_SUPPORTED_IN_ID_GEN));
-            return;
-          }
-          if (key.isStringKey() && !key.hasChildren()) {
-            compiler.report(t.makeError(n, SHORTHAND_ASSIGNMENT_NOT_SUPPORTED_IN_ID_GEN));
             return;
           }
           if (key.isComputedProp()) {

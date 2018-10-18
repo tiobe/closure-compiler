@@ -16,18 +16,23 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.CompilerOptions.Reach;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Inline function tests.
+ *
  * @author johnlenz@google.com (john lenz)
  */
 
+@RunWith(JUnit4.class)
 public class InlineFunctionsTest extends CompilerTestCase {
-  boolean allowGlobalFunctionInlining;
-  boolean allowBlockInlining;
+  Reach inliningReach;
   final boolean allowExpressionDecomposition = true;
   final boolean allowFunctionExpressionInlining = true;
-  final boolean allowLocalFunctionInlining = true;
   boolean assumeStrictThis;
   boolean assumeMinimumCapture;
   int maxSizeAfterInlining;
@@ -44,13 +49,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     maybeEnableInferConsts();
     enableNormalize();
     enableComputeSideEffects();
-    allowGlobalFunctionInlining = true;
-    allowBlockInlining = true;
+    inliningReach = Reach.ALL;
     assumeStrictThis = false;
     assumeMinimumCapture = false;
     maxSizeAfterInlining = CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING;
@@ -63,9 +68,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     return new InlineFunctions(
         compiler,
         compiler.getUniqueNameIdSupplier(),
-        allowGlobalFunctionInlining,
-        allowLocalFunctionInlining,
-        allowBlockInlining,
+        inliningReach,
         assumeStrictThis,
         assumeMinimumCapture,
         maxSizeAfterInlining);
@@ -81,6 +84,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
     return 3;
   }
 
+  @Test
+  public void testNoInline() {
+    testSame("/** @noinline */ function foo(){} foo();foo();foo();");
+    testSame("/** @noinline */ var foo = function(){}; foo();foo();foo();");
+  }
+
+  @Test
   public void testInlineEmptyFunction1() {
     // Empty function, no params.
     test("function foo(){}" +
@@ -88,33 +98,31 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "void 0;");
   }
 
+  @Test
   public void testInlineEmptyFunction2() {
     // Empty function, params with no side-effects.
     test("function foo(){}\n foo(1, new Date, function(){});", "void 0;");
   }
 
+  @Test
   public void testInlineEmptyFunction3() {
     // Empty function, multiple references.
     test("function foo(){}\n foo();foo();foo();", "void 0;void 0;void 0");
   }
 
+  @Test
   public void testInlineEmptyFunction4() {
     // Empty function, params with side-effects forces block inlining.
     test("function foo(){}\n foo(x());", "{var JSCompiler_inline_anon_param_0 = x();}");
   }
 
-  public void testInlineEmptyFunction5() {
-    // Empty function, call params with side-effects in expression can not
-    // be inlined.
-    allowBlockInlining = false;
-    testSame("function foo(){}\n foo(x());");
-  }
-
+  @Test
   public void testInlineEmptyFunction6() {
     test("if (window) { f(); function f() {} }",
         "if (window) { void 0; }");
   }
 
+  @Test
   public void testInlineFunctions1() {
     // As simple a test as we can get.
     test("function foo(){ return 4 }" +
@@ -122,6 +130,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "4");
   }
 
+  @Test
   public void testInlineFunctions2() {
     // inline simple constants
     // NOTE: CD is not inlined.
@@ -132,6 +141,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          );
   }
 
+  @Test
   public void testInlineFunctions3() {
     // inline simple constants
     test("var t;var AB=function(){return 4};" +
@@ -140,6 +150,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "var t;x=3+5;y=4;z=6");
   }
 
+  @Test
   public void testInlineFunctions4() {
     // don't inline if there are multiple definitions (need DFA for that).
     test("var t; var AB = function() { return 4 }; " +
@@ -150,6 +161,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "var t;CD=0;CD=function(x){return x+5};x=CD(3);y=4;z=6");
   }
 
+  @Test
   public void testInlineFunctions5() {
     // inline additions
     test("var FOO_FN=function(x,y) { return \"de\" + x + \"nu\" + y };" +
@@ -158,6 +170,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var a=\"de\"+\"ez\"+\"nu\"+\"ts\"");
   }
 
+  @Test
   public void testInlineFunctions6() {
     // more complex inlines
     test("function BAR_FN(x, y, z) { return z(nochg(x + y)) }" +
@@ -166,6 +179,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "alert(baz(nochg(1+2)))");
   }
 
+  @Test
   public void testInlineFunctions7() {
     // inlines appearing multiple times
     test("function FN(x,y,z){return x+x+y}" +
@@ -174,6 +188,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var b=1+1+2");
   }
 
+  @Test
   public void testInlineFunctions8() {
     // check correct parenthesization
     test("function MUL(x,y){return x*y}function ADD(x,y){return x+y}" +
@@ -182,6 +197,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var a=1+2*3;var b=2*(3+4)");
   }
 
+  @Test
   public void testInlineFunctions9() {
     // don't inline if the input parameter is modified.
     test("function INC(x){return x++}" +
@@ -190,13 +206,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "y=x$jscomp$inline_0++}");
   }
 
+  @Test
   public void testInlineFunctions10() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function INC(x){return x++}",
             "var y = INC(i);",
             "y = INC(i);"),
-        LINE_JOINER.join(
+        lines(
             "var y;",
             "{",
             "  var x$jscomp$inline_0 = i;",
@@ -208,23 +225,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineFunctions11() {
     test("function f(x){return x}" +
           "var y=f(i)",
           "var y=i");
   }
 
-  public void testInlineFunctions12() {
-    // don't inline if the input parameter has side-effects.
-    allowBlockInlining = false;
-    test("function f(x){return x}" +
-          "var y=f(i)",
-          "var y=i");
-    test(
-        "function f(x){return x} var y=f(i++)",
-        "var y = i++");
-  }
-
+  @Test
   public void testInlineFunctions13() {
     // inline as block if the input parameter has side-effects.
     test("function f(x){return x}" +
@@ -232,6 +240,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var y=i++");
   }
 
+  @Test
   public void testInlineFunctions13a() {
     // inline as block if the input parameter has side-effects.
     test("function f(x){return random() || x}" +
@@ -239,6 +248,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var y;{var x$jscomp$inline_0=i++;y=random() || x$jscomp$inline_0}");
   }
 
+  @Test
   public void testInlineFunctions14() {
     // don't remove functions that are referenced on other ways
     test("function FOO(x){return x}var BAR=function(y){return y}" +
@@ -248,6 +258,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
              ";b=FOO;a(BAR);x=1;y=2");
   }
 
+  @Test
   public void testInlineFunctions15a() {
     // closure factories: do inline into global scope.
     test("function foo(){return function(a){return a+1}}" +
@@ -257,12 +268,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var d=c+function(a){return a+1}");
   }
 
+  @Test
   public void testInlineFunctions15b() {
     assumeMinimumCapture = false;
 
     // closure factories: don't inline closure with locals into global scope.
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo(){var x; return function(a){ return a+1; };}",
             "var b = function() { return c; };",
             "var d = b() + foo()"),
@@ -271,11 +283,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
     assumeMinimumCapture = true;
 
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo() { var x; return function(a) { return a + 1; }; }",
             "var b = function() { return c; };",
             "var d = b() + foo()"),
-        LINE_JOINER.join(
+        lines(
             "var JSCompiler_inline_result$jscomp$0;",
             "{",
             "  var x$jscomp$inline_1;",
@@ -286,6 +298,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "var d = c+JSCompiler_inline_result$jscomp$0;"));
   }
 
+  @Test
   public void testInlineFunctions15c() {
     assumeMinimumCapture = false;
 
@@ -308,16 +321,17 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testInlineFunctions15d() {
     assumeMinimumCapture = false;
 
     // closure factories: don't inline functions with vars.
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo() { var x; return function(a) { return a+1; }; }",
             "var b = function() { return c; };",
             "function _x(){ var d = b()+foo() }"),
-        LINE_JOINER.join(
+        lines(
             "function foo() {",
             "  var x;",
             "  return function(a){ return a+1; };",
@@ -328,11 +342,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
     // closure factories: inline functions with vars.
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo(){var x; return function(a){return a+1}}",
             "var b = function(){return c};",
             "function _x(){ var d=b()+foo() }"),
-        LINE_JOINER.join(
+        lines(
             "function _x() {",
             "  var JSCompiler_inline_result$jscomp$0;",
             "  {",
@@ -345,6 +359,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineFunctions16a() {
     assumeMinimumCapture = false;
 
@@ -359,26 +374,20 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "d=window.bar(function(){c(b$jscomp$inline_0)})}");
   }
 
+  @Test
   public void testInlineFunctions16b() {
     test("function foo(){return window.bar(function(){c()})}" +
          "var d=foo(e)",
          "var d=window.bar(function(){c()})");
   }
 
+  @Test
   public void testInlineFunctions17() {
     // don't inline recursive functions
     testSame("function foo(x){return x*x+foo(3)}var bar=foo(4)");
   }
 
-  public void testInlineFunctions18() {
-    // TRICKY ... test nested inlines
-    allowBlockInlining = false;
-    test("function foo(a, b){return a+b}" +
-         "function bar(d){return c}" +
-         "var d=foo(bar(1),e)",
-         "var d=c+e");
-  }
-
+  @Test
   public void testInlineFunctions19() {
     // TRICKY ... test nested inlines
     // with block inlining possible
@@ -388,15 +397,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "var d=c+e;");
   }
 
-  public void testInlineFunctions20() {
-    // Make sure both orderings work
-    allowBlockInlining = false;
-    test("function foo(a, b){return a+b}" +
-         "function bar(d){return c}" +
-         "var d=bar(foo(1,e));",
-         "var d=c");
-  }
-
+  @Test
   public void testInlineFunctions21() {
     // with block inlining possible
     test("function foo(a, b){return a+b}" +
@@ -405,15 +406,16 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "var d=c");
   }
 
+  @Test
   public void testInlineFunctions22() {
     // Another tricky case ... test nested compiler inlines
     test(
-        LINE_JOINER.join(
+        lines(
             "function plex(a){if(a) return 0;else return 1;}",
             "function foo(a, b){return bar(a+b)}",
             "function bar(d){return plex(d)}",
             "var d=foo(1,2)"),
-        LINE_JOINER.join(
+        lines(
             "var d;",
             "{",
             "  JSCompiler_inline_label_plex_1:{",
@@ -429,15 +431,16 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineFunctions23() {
     // Test both orderings again
     test(
-        LINE_JOINER.join(
+        lines(
             "function complex(a){if(a) return 0;else return 1;}",
             "function bar(d){return complex(d)}",
             "function foo(a, b){return bar(a+b)}",
             "var d=foo(1,2)"),
-        LINE_JOINER.join(
+        lines(
             "var d;",
             "{",
             "  JSCompiler_inline_label_complex_1:{",
@@ -453,20 +456,19 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineFunctions24() {
     // Don't inline functions with 'arguments' or 'this'
     testSame("function foo(x){return this}foo(1)");
   }
 
-  public void testInlineFunctions25() {
-    testSame("function foo(){return arguments[0]}foo()");
-  }
-
+  @Test
   public void testInlineFunctions26() {
     // Don't inline external functions
     testSame("function _foo(x){return x}_foo(1)");
   }
 
+  @Test
   public void testInlineFunctions27() {
     test("var window = {}; function foo(){window.bar++; return 3;}" +
         "var x = {y: 1, z: foo(2)};",
@@ -479,6 +481,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "var x = {y: 1, z: JSCompiler_inline_result$jscomp$0};");
   }
 
+  @Test
   public void testInlineFunctions28() {
     test("var window = {}; function foo(){window.bar++; return 3;}" +
         "var x = {y: alert(), z: foo(2)};",
@@ -494,6 +497,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "};");
   }
 
+  @Test
   public void testInlineFunctions29() {
     test("var window = {}; function foo(){window.bar++; return 3;}" +
         "var x = {a: alert(), b: alert2(), c: foo(2)};",
@@ -511,11 +515,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "};");
   }
 
+  @Test
   public void testInlineFunctions30() {
     // As simple a test as we can get.
     testSame("function foo(){ return eval() } foo();");
   }
 
+  @Test
   public void testInlineFunctions31() {
     // Don't introduce a duplicate label in the same scope
     test(
@@ -523,6 +529,90 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "lab:{{JSCompiler_inline_label_0:{4}}}");
   }
 
+  @Test
+  public void testInlineFunctions32() {
+    test(
+        "let f = function() { return 5; }; f();",
+        "5;");
+  }
+
+  @Test
+  public void testInlineFunctions33() {
+    test(
+        "const f = function() { return 5; }; f();",
+        "5;");
+  }
+
+  @Test
+  public void testInlineFunctions34() {
+    test(
+        lines(
+            "class X {}",
+            "(function(e) {",
+            "  for (var el = f(e.target); el != null; el = el.parent) {}",
+            "  function f(x) { return x instanceof X ? x : null; }",
+            "})({target:{}});",
+            ""),
+        lines(
+            "class X {}",
+            "{",
+            "  var e$jscomp$inline_0 = {target:{}};",
+            "  var el$jscomp$inline_1;",
+            "  {",
+            "    var x$jscomp$inline_2 = e$jscomp$inline_0.target;",
+            "    el$jscomp$inline_1 = x$jscomp$inline_2 instanceof X ? x$jscomp$inline_2 : null;",
+            "  }",
+            "  for(;el$jscomp$inline_1 != null; el$jscomp$inline_1 = el$jscomp$inline_1.parent);",
+            "}",
+            ""));
+  }
+
+  // Same as above, except the for loop uses a let instead of a var. See b/73373371.
+  @Test
+  public void testInlineFunctions35() {
+    test(
+        lines(
+            "class X {}",
+            "(function(e) {",
+            "  for (let el = f(e.target); el != null; el = el.parent) {}",
+            "  function f(x) { return x instanceof X ? x : null; }",
+            "})({target:{}});",
+            ""),
+        lines(
+            "class X {}",
+            "{",
+            "  var e$jscomp$inline_0 = {target: {}};",
+            "  var JSCompiler_inline_result$jscomp$inline_1;",
+            "  {",
+            "    var x$jscomp$inline_2 = e$jscomp$inline_0.target;",
+            "    JSCompiler_inline_result$jscomp$inline_1 =",
+            "        x$jscomp$inline_2 instanceof X ? x$jscomp$inline_2 : null",
+            "  }",
+            "  for (let el$jscomp$inline_3 = JSCompiler_inline_result$jscomp$inline_1;",
+            "       el$jscomp$inline_3 != null;",
+            "       el$jscomp$inline_3 = el$jscomp$inline_3.parent) {}",
+            "}",
+            ""));
+  }
+
+  @Test
+  public void testDontInlineFunctionsWithDirectArgumentsReferences() {
+    testSame("function foo() { return arguments[0]; } foo(1);");
+  }
+
+  @Test
+  public void testDontInlineFunctionsWithArgumentsReferencesInArrowFunction() {
+    testSame("function foo() { return () => arguments[0]; } foo(1);");
+  }
+
+  @Test
+  public void testDoInlineFunctionsWithArgumentsReferencesInInnerVanillaFunction() {
+    test(
+        "function foo() { return function() { return arguments[0]; } } foo(1);",
+        "(function() { return arguments[0]; })");
+  }
+
+  @Test
   public void testMixedModeInlining1() {
     // Base line tests, direct inlining
     test("function foo(){return 1}" +
@@ -530,6 +620,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "1;");
   }
 
+  @Test
   public void testMixedModeInlining2() {
     // Base line tests, block inlining. Block inlining is needed by possible-side-effect parameter.
     test(
@@ -537,6 +628,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "{var JSCompiler_inline_anon_param_0=x();1}");
   }
 
+  @Test
   public void testMixedModeInlining3() {
     // Inline using both modes.
     test(
@@ -544,18 +636,20 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "1;{var JSCompiler_inline_anon_param_0=x();1}");
   }
 
+  @Test
   public void testMixedModeInlining4() {
     // Inline using both modes. Alternating. Second call of each type has
     // side-effect-less parameter, this is thrown away.
     test(
         "function foo(){return 1} foo(); foo(x()); foo(1);foo(1,x());",
-        LINE_JOINER.join(
+        lines(
             "1;",
             "{var JSCompiler_inline_anon_param_0=x();1}",
             "1;",
             "{var JSCompiler_inline_anon_param_4=x();1}"));
   }
 
+  @Test
   public void testMixedModeInliningCosting1() {
     // Inline using both modes. Costing estimates.
 
@@ -569,6 +663,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "2+3+2+3+4+5+6+7+8+9+1+2+3+4+5");
   }
 
+  @Test
   public void testMixedModeInliningCosting2() {
     // Don't inline here because the function definition can not be eliminated.
     // TODO(johnlenz): Should we add constant removing to the unit test?
@@ -578,14 +673,15 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "foo(2,3,x())");
   }
 
+  @Test
   public void testMixedModeInliningCosting3() {
     // Do inline here because the function definition can be eliminated.
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo(a,b){return a+b+a+b+4+5+6+7+8+9+1+2+3+10}",
             "foo(1,2);",
             "foo(2,3,x());"),
-        LINE_JOINER.join(
+        lines(
             "1+2+1+2+4+5+6+7+8+9+1+2+3+10;",
             "{",
             "  var JSCompiler_inline_anon_param_2 = x();",
@@ -593,6 +689,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testMixedModeInliningCosting4() {
     // Threshold test.
     testSame(
@@ -601,6 +698,23 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "foo(2,3,x())");
   }
 
+  /** See b/72513540 */
+  @Test
+  public void testDestructuringAssignInFunction() {
+    test(
+        lines(
+            "function foo(a) {",
+            "  [a] = [1];",
+            "}",
+            "foo(2);"),
+        lines(
+            "{",
+            "  var a$jscomp$inline_0 = 2;",
+            "  [a$jscomp$inline_0] = [1];",
+            "}"));
+  }
+
+  @Test
   public void testNoInlineIfParametersModified1() {
     // Assignment
     test("function f(x){return x=1}f(undefined)",
@@ -608,12 +722,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "x$jscomp$inline_0=1}");
   }
 
+  @Test
   public void testNoInlineIfParametersModified2() {
     test("function f(x){return (x)=1;}f(2)",
          "{var x$jscomp$inline_0=2;" +
          "x$jscomp$inline_0=1}");
   }
 
+  @Test
   public void testNoInlineIfParametersModified3() {
     // Assignment variant.
     test("function f(x){return x*=2}f(2)",
@@ -621,6 +737,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "x$jscomp$inline_0*=2}");
   }
 
+  @Test
   public void testNoInlineIfParametersModified4() {
     // Assignment in if.
     test("function f(x){return x?(x=2):0}f(2)",
@@ -629,6 +746,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "x$jscomp$inline_0=2):0}");
   }
 
+  @Test
   public void testNoInlineIfParametersModified5() {
     // Assignment in if, multiple params
     test("function f(x,y){return x?(y=2):0}f(2,undefined)",
@@ -636,12 +754,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "y$jscomp$inline_1=2):0}");
   }
 
+  @Test
   public void testNoInlineIfParametersModified6() {
     test("function f(x,y){return x?(y=2):0}f(2)",
          "{var y$jscomp$inline_1=void 0;2?(" +
          "y$jscomp$inline_1=2):0}");
   }
 
+  @Test
   public void testNoInlineIfParametersModified7() {
     // Increment
     test("function f(a){return++a<++a}f(1)",
@@ -650,44 +770,52 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "++a$jscomp$inline_0}");
   }
 
+  @Test
   public void testInlineIfParametersModified8() {
     // OK, object parameter modified.
     test("function f(a){return a.x=2}f(o)", "o.x=2");
   }
 
+  @Test
   public void testInlineIfParametersModified9() {
     // OK, array parameter modified.
     test("function f(a){return a[2]=2}f(o)", "o[2]=2");
   }
 
+  @Test
   public void testInlineNeverPartialSubtitution1() {
     test("function f(z){return x.y.z;}f(1)",
          "x.y.z");
   }
 
+  @Test
   public void testInlineNeverPartialSubtitution2() {
     test("function f(z){return x.y[z];}f(a)",
          "x.y[a]");
   }
 
+  @Test
   public void testInlineNeverMutateConstants() {
     test("function f(x){return x=1}f(undefined)",
          "{var x$jscomp$inline_0=undefined;" +
          "x$jscomp$inline_0=1}");
   }
 
+  @Test
   public void testInlineNeverOverrideNewValues() {
     test("function f(a){return++a<++a}f(1)",
         "{var a$jscomp$inline_0=1;" +
         "++a$jscomp$inline_0<++a$jscomp$inline_0}");
   }
 
+  @Test
   public void testInlineMutableArgsReferencedOnce() {
     test(
         "function foo(x){return x;}foo([])",
         "[]");
   }
 
+  @Test
   public void testInlineMutableArgsReferencedOnce2() {
     this.assumeMinimumCapture = true;
     // Don't inline a mutable value that will be reused.
@@ -701,18 +829,19 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "repeat(JSCompiler_inline_result$jscomp$0)");
   }
 
+  @Test
   public void testInlineMutableArgsReferencedOnce3() {
     this.assumeMinimumCapture = true;
     // Don't inline a mutable value that will be reused.
     test(
-        LINE_JOINER.join(
+        lines(
             "function f(a) {",
             "  for(var i=0; i<0; i++) {",
             "    g(a);",
             "  }",
             "}",
             "f([]);"),
-        LINE_JOINER.join(
+        lines(
             "{",
             "  var a$jscomp$inline_0 = [];",
             "  var i$jscomp$inline_1 = 0;",
@@ -722,50 +851,35 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
-  public void testNoInlineMutableArgs1() {
-    allowBlockInlining = false;
-    testSame("function foo(x){return x+x} foo([])");
-  }
-
-  public void testNoInlineMutableArgs2() {
-    allowBlockInlining = false;
-    testSame("function foo(x){return x+x} foo(new Date)");
-  }
-
-  public void testNoInlineMutableArgs3() {
-    allowBlockInlining = false;
-    testSame("function foo(x){return x+x} foo(true&&new Date)");
-  }
-
-  public void testNoInlineMutableArgs4() {
-    allowBlockInlining = false;
-    testSame("function foo(x){return x+x} foo({})");
-  }
-
+  @Test
   public void testInlineBlockMutableArgs1() {
     test("function foo(x){x+x}foo([])",
          "{var x$jscomp$inline_0=[];" +
          "x$jscomp$inline_0+x$jscomp$inline_0}");
   }
 
+  @Test
   public void testInlineBlockMutableArgs2() {
     test("function foo(x){x+x}foo(new Date)",
          "{var x$jscomp$inline_0=new Date;" +
          "x$jscomp$inline_0+x$jscomp$inline_0}");
   }
 
+  @Test
   public void testInlineBlockMutableArgs3() {
     test("function foo(x){x+x}foo(true&&new Date)",
          "{var x$jscomp$inline_0=true&&new Date;" +
          "x$jscomp$inline_0+x$jscomp$inline_0}");
   }
 
+  @Test
   public void testInlineBlockMutableArgs4() {
     test("function foo(x){x+x}foo({})",
          "{var x$jscomp$inline_0={};" +
          "x$jscomp$inline_0+x$jscomp$inline_0}");
   }
 
+  @Test
   public void testShadowVariables1() {
     // The Normalize pass now guarantees that that globals are never shadowed
     // by locals.
@@ -773,7 +887,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     // "foo" is inlined here as its parameter "a" doesn't conflict.
     // "bar" is assigned a new name.
     test(
-        LINE_JOINER.join(
+        lines(
             "var a = 0;",
             "function foo(a) { return 3+a; }",
             "function bar() { var a = foo(4); }",
@@ -781,6 +895,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "var a=0; {var a$jscomp$inline_0 = 3+4; }");
   }
 
+  @Test
   public void testShadowVariables2() {
     // "foo" is inlined here as its parameter "a" doesn't conflict.
     // "bar" is inlined as its uses global "a", and does introduce any new
@@ -794,14 +909,15 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "{a=3+4}");
   }
 
+  @Test
   public void testShadowVariables3() {
     // "foo" is inlined into exported "_bar", aliasing foo's "a".
     test(
-        LINE_JOINER.join(
+        lines(
             "var a = 0;",
             "function foo() { var a = 2; return 3+a; }",
             "function _bar() { a = foo(); }"),
-        LINE_JOINER.join(
+        lines(
             "var a=0;",
             "function _bar() {",
             "  {",
@@ -811,6 +927,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testShadowVariables4() {
     // "foo" is inlined.
     // block access to global "a".
@@ -823,22 +940,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "3+a+a$jscomp$1}");
   }
 
-  public void testShadowVariables5() {
-    // Can't yet inline multiple statements functions into expressions
-    // (though some are possible using the COMMA operator).
-    allowBlockInlining = false;
-    testSame("var a=0;" +
-        "function foo(){var a=4;return 3+a}" +
-        "function _bar(a){a=foo(4)+a}");
-  }
-
+  @Test
   public void testShadowVariables6() {
     test(
-        LINE_JOINER.join(
+        lines(
             "var a=0;",
             "function foo() { var a = 4; return 3+a; }",
             "function _bar(a) { a = foo(4); }"),
-        LINE_JOINER.join(
+        lines(
             "var a=0;",
             "function _bar(a$jscomp$2) {",
             "  {",
@@ -848,6 +957,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testShadowVariables7() {
     assumeMinimumCapture = false;
     test("var a=3;" +
@@ -866,6 +976,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          );
   }
 
+  @Test
   public void testShadowVariables8() {
     // this should be inlined
     test("var a=0;" +
@@ -876,6 +987,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _bar(){var a=3}");
   }
 
+  @Test
   public void testShadowVariables9() {
     // this should be inlined too [even if the global is not declared]
     test("function foo(){return 3}" +
@@ -884,6 +996,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _bar(){var a=3}");
   }
 
+  @Test
   public void testShadowVariables10() {
     // callee var must be renamed.
     test("var a;function foo(){return a}" +
@@ -891,6 +1004,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var a;function _bar(){var a$jscomp$1=a}");
   }
 
+  @Test
   public void testShadowVariables11() {
     // The call has a local variable
     // which collides with the function being inlined
@@ -903,6 +1017,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          );
   }
 
+  @Test
   public void testShadowVariables12() {
     // 2 globals colliding
     test("var a=0;var b=1;" +
@@ -914,6 +1029,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "alert(a$jscomp$1)}");
   }
 
+  @Test
   public void testShadowVariables13() {
     // The only change is to remove the collision
     test("var a=0;var b=1;" +
@@ -924,6 +1040,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _bar(){var c=a+a;alert(c)}");
   }
 
+  @Test
   public void testShadowVariables14() {
     // There is a collision even though it is not read.
     test("var a=0;var b=1;" +
@@ -934,6 +1051,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "b$jscomp$1;alert(c)}");
   }
 
+  @Test
   public void testShadowVariables15() {
     // Both parent and child reference a global
     test("var a=0;var b=1;" +
@@ -944,6 +1062,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _bar(){var c=a+a;alert(c+a)}");
   }
 
+  @Test
   public void testShadowVariables16() {
     assumeMinimumCapture = false;
     // Inline functions defined as a child of the CALL node.
@@ -965,6 +1084,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testShadowVariables17() {
     test("var a=0;" +
          "function bar(){return a+a}" +
@@ -975,14 +1095,15 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _goo(){var a$jscomp$1=2;var x=a+a}");
   }
 
+  @Test
   public void testShadowVariables18() {
     test(
-        LINE_JOINER.join(
+        lines(
             "var a=0;",
             "function bar() { return a + a; }",
             "function foo() { var a=3; return bar(); }",
             "function _goo() { var a=2; var x = foo(); }"),
-        LINE_JOINER.join(
+        lines(
             "var a=0;",
             "function _goo(){",
             "  var a$jscomp$2 = 2;",
@@ -994,6 +1115,49 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
+  public void testShadowVariables19() {
+    test(
+        lines(
+            "let a = 0;",
+            "function bar() { return a + a; }",
+            "function foo() { let a = 3; return bar(); }",
+            "function _goo() { let a = 2; let x = foo(); }"),
+        lines(
+            "let a = 0;",
+            "function _goo() {",
+            "  let a$jscomp$2 = 2;",
+            "  var JSCompiler_inline_result$jscomp$0;",
+            "  {",
+            "     let a$jscomp$inline_1 = 3;",
+            "     JSCompiler_inline_result$jscomp$0 = a + a;",
+            "  }",
+            "  let x = JSCompiler_inline_result$jscomp$0;",
+            "}"));
+  }
+
+  @Test
+  public void testShadowVariables20() {
+    test(
+        lines(
+            "const a = 0;",
+            "function bar() { return a + a; }",
+            "function foo() { const a = 3; return bar(); }",
+            "function _goo() { const a = 2; const x = foo(); }"),
+        lines(
+            "const a = 0;",
+            "function _goo() {",
+            "  const a$jscomp$2 = 2;",
+            "  var JSCompiler_inline_result$jscomp$0;",
+            "  {",
+            "    const a$jscomp$inline_1 = 3;",
+            "    JSCompiler_inline_result$jscomp$0 = a + a;",
+            "  }",
+            "  const x = JSCompiler_inline_result$jscomp$0;",
+            "}"));
+  }
+
+  @Test
   public void testCostBasedInlining1() {
     testSame(
         "function foo(a){return a}" +
@@ -1001,6 +1165,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "foo(1)");
   }
 
+  @Test
   public void testCostBasedInlining2() {
     // Baseline complexity tests.
     // Single call, function not removed.
@@ -1014,6 +1179,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t1(){return 1}");
   }
 
+  @Test
   public void testCostBasedInlining3() {
     // Two calls, function not removed.
     test(
@@ -1028,6 +1194,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){return 2+3}");
   }
 
+  @Test
   public void testCostBasedInlining4() {
     // Two calls, function not removed.
     // Here there isn't enough savings to justify inlining.
@@ -1038,6 +1205,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){return foo(2,3)}");
   }
 
+  @Test
   public void testCostBasedInlining5() {
     // Here there is enough savings to justify inlining.
     test(
@@ -1049,6 +1217,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){return 2+3+2+3}");
   }
 
+  @Test
   public void testCostBasedInlining6() {
     // Here we have a threshold test.
     // Do inline here:
@@ -1061,6 +1230,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){return 2+3+2+3+2+3+2+3+4+5+6+7+8+9+1+2+3+4+5}");
   }
 
+  @Test
   public void testCostBasedInlining7() {
     // Don't inline here (not enough savings):
     testSame(
@@ -1070,19 +1240,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){return foo(2,3)}");
   }
 
-  public void testCostBasedInlining8() {
-    // Verify multiple references in the same statement:
-    // Here "f" is not known to be removable, as it is a used as parameter
-    // and is not known to be side-effect free.  The first call to f() can
-    // not be inlined on the first pass (as the call to f() as a parameter
-    // prevents this). However, the call to f() would be inlinable, if it
-    // is small enough to be inlined without removing the function declaration.
-    // but it is not in this first test.
-    allowBlockInlining = false;
-    testSame("function f(a){return chg() + a + a;}" +
-        "var a = f(f(1));");
-  }
-
+  @Test
   public void testCostBasedInlining9() {
     // Here both direct and block inlining is used.  The call to f as a
     // parameter is inlined directly, which the call to f with f as a parameter
@@ -1094,14 +1252,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "a=chg()+a$jscomp$inline_0+a$jscomp$inline_0}");
   }
 
-  public void testCostBasedInlining10() {
-    allowBlockInlining = false;
-    // The remaining use of 'f' would be inlined after the constants are folded.
-    test("function f(a){return a + a;}" +
-        "var a = f(f(1));",
-        "function f(a$jscomp$1){return a$jscomp$1+a$jscomp$1}var a=f(1+1)");
-  }
-
+  @Test
   public void testCostBasedInlining11() {
     // With block inlining
     test("function f(a){return chg() + a + a;}" +
@@ -1111,6 +1262,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "a=chg()+a$jscomp$inline_0+a$jscomp$inline_0}");
   }
 
+  @Test
   public void testCostBasedInlining12() {
     test("function f(a){return 1 + a + a;}" +
          "var a = f(1) + f(2);",
@@ -1118,6 +1270,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "var a=1+1+1+(1+2+2)");
   }
 
+  @Test
   public void testCostBasedInlineForSimpleFunction() {
     int calls = 100;
     String src = "function f(a){return a;}\n";
@@ -1131,6 +1284,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     test(src, expected);
   }
 
+  @Test
   public void testCostBasedInliningComplex1() {
     testSame(
         "function foo(a){a()}" +
@@ -1138,6 +1292,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "foo(1)");
   }
 
+  @Test
   public void testCostBasedInliningComplex2() {
     // Baseline complexity tests.
     // Single call, function not removed.
@@ -1151,6 +1306,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t1(){{x()}}");
   }
 
+  @Test
   public void testCostBasedInliningComplex3() {
     // Two calls, function not removed.
     test(
@@ -1165,6 +1321,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){{2+3}}");
   }
 
+  @Test
   public void testCostBasedInliningComplex4() {
     // Two calls, function not removed.
     // Here there isn't enough savings to justify inlining.
@@ -1175,6 +1332,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){foo(2,3)}");
   }
 
+  @Test
   public void testCostBasedInliningComplex5() {
     // Here there is enough savings to justify inlining.
     test(
@@ -1186,6 +1344,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){{2+3+2+3}}");
   }
 
+  @Test
   public void testCostBasedInliningComplex6() {
     // Here we have a threshold test.
     // Do inline here:
@@ -1198,6 +1357,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){{2+3+2+3+2+3+2+3+4+5+6+7+8+9+1}}");
   }
 
+  @Test
   public void testCostBasedInliningComplex7() {
     // Don't inline here (not enough savings):
     testSame(
@@ -1206,26 +1366,21 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function _t2(){foo(2,3)}");
   }
 
+  @Test
   public void testCostBasedInliningComplex8() {
     // Verify multiple references in the same statement.
     testSame("function _f(a){1+a+a}" +
              "a=_f(1)+_f(1)");
   }
 
+  @Test
   public void testCostBasedInliningComplex9() {
     test("function f(a){1 + a + a;}" +
          "f(1);f(2);",
          "{1+1+1}{1+2+2}");
   }
 
-  public void testDoubleInlining1() {
-    allowBlockInlining = false;
-    test("var foo = function(a) { return nochg(a); };" +
-         "var bar = function(b) { return b; };" +
-         "foo(bar(x));",
-         "nochg(x)");
-  }
-
+  @Test
   public void testDoubleInlining2() {
     test("var foo = function(a) { return getWindow(a); };" +
          "var bar = function(b) { return b; };" +
@@ -1233,6 +1388,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "getWindow(x)");
   }
 
+  @Test
   public void testNoInlineOfNonGlobalFunction1() {
     test("var g;function _f(){function g(){return 0}}" +
          "function _h(){return g()}",
@@ -1240,13 +1396,20 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _h(){return g()}");
   }
 
+  @Test
   public void testNoInlineOfNonGlobalFunction2() {
-    test("var g;function _f(){var g=function(){return 0}}" +
-         "function _h(){return g()}",
-         "var g;function _f(){}" +
-         "function _h(){return g()}");
+    test(
+        lines(
+            "var g;",
+            "function _f() { var g = function() { return 0; }; }",
+            "function _h() { return g(); }"),
+        lines(
+             "var g;",
+             "function _f(){}",
+             "function _h(){ return g(); }"));
   }
 
+  @Test
   public void testNoInlineOfNonGlobalFunction3() {
     test("var g;function _f(){var g=function(){return 0}}" +
          "function _h(){return g()}",
@@ -1254,6 +1417,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _h(){return g()}");
   }
 
+  @Test
   public void testNoInlineOfNonGlobalFunction4() {
     test("var g;function _f(){function g(){return 0}}" +
          "function _h(){return g()}",
@@ -1262,6 +1426,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testNoInlineMaskedFunction() {
     // Normalization makes this test of marginal value.
     // The unreferenced function is removed.
@@ -1270,63 +1435,56 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _f(g$jscomp$1){return g$jscomp$1()}");
   }
 
+  @Test
   public void testNoInlineNonFunction() {
     testSame("var g=3;function _f(){return g()}");
   }
 
+  @Test
   public void testInlineCall() {
     test("function f(g) { return g.h(); } f('x');",
          "\"x\".h()");
   }
 
+  @Test
   public void testInlineFunctionWithArgsMismatch1() {
     test("function f(g) { return g; } f();",
          "void 0");
   }
 
+  @Test
   public void testInlineFunctionWithArgsMismatch2() {
     test("function f() { return 0; } f(1);",
          "0");
   }
 
+  @Test
   public void testInlineFunctionWithArgsMismatch3() {
     test("function f(one, two, three) { return one + two + three; } f(1);",
          "1+void 0+void 0");
   }
 
+  @Test
   public void testInlineFunctionWithArgsMismatch4() {
     test("function f(one, two, three) { return one + two + three; }" +
          "f(1,2,3,4,5);",
          "1+2+3");
   }
 
-  public void testArgumentsWithSideEffectsNeverInlined1() {
-    allowBlockInlining = false;
-    testSame("function f(){return 0} f(new goo());");
-  }
-
-  public void testArgumentsWithSideEffectsNeverInlined2() {
-    allowBlockInlining = false;
-    testSame("function f(g,h){return h+g}f(g(),h());");
-  }
-
-  public void testOneSideEffectCallDoesNotRuinOthers() {
-    allowBlockInlining = false;
-    test("function f(){return 0}f(new goo());f()",
-         "function f(){return 0}f(new goo());0");
-  }
-
+  @Test
   public void testComplexInlineNoResultNoParamCall1() {
     test("function f(){a()}f()",
          "{a()}");
   }
 
+  @Test
   public void testComplexInlineNoResultNoParamCall2() {
     test(
         "function f() { if (true) { return; } else; } f();",
         "{JSCompiler_inline_label_f_0:{ if(true)break JSCompiler_inline_label_f_0;else; } }");
   }
 
+  @Test
   public void testComplexInlineNoResultNoParamCall3() {
     // We now allow vars in the global space.
     //   Don't inline into vars into global scope.
@@ -1338,25 +1496,29 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testComplexInlineNoResultWithParamCall1() {
     test("function f(x){a(x)}f(1)",
          "{a(1)}");
   }
 
+  @Test
   public void testComplexInlineNoResultWithParamCall2() {
     test("function f(x,y){a(x)}var b=1;f(1,b)",
          "var b=1;{a(1)}");
   }
 
+  @Test
   public void testComplexInlineNoResultWithParamCall3() {
     test("function f(x,y){if (x) y(); return true;}var b=1;f(1,b)",
          "var b=1;{if(1)b();true}");
   }
 
+  @Test
   public void testComplexInline1() {
     test(
         "function f(){if (true){return;}else;} z=f();",
-        LINE_JOINER.join(
+        lines(
             "{",
             "  JSCompiler_inline_label_f_0: {",
             "    if (true) {",
@@ -1368,10 +1530,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInline2() {
     test(
         "function f(){if (true){return;}else return;} z=f();",
-        LINE_JOINER.join(
+        lines(
             "{",
             "  JSCompiler_inline_label_f_0: {",
             "    if(true) {",
@@ -1386,10 +1549,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInline3() {
     test(
         "function f(){if (true){return 1;}else return 0;} z=f();",
-        LINE_JOINER.join(
+        lines(
             "{",
             "JSCompiler_inline_label_f_0:{",
             "if(true){z=1;",
@@ -1402,25 +1566,29 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInline4() {
     test("function f(x){a(x)} z = f(1)",
          "{a(1);z=void 0}");
   }
 
+  @Test
   public void testComplexInline5() {
     test("function f(x,y){a(x)}var b=1;z=f(1,b)",
          "var b=1;{a(1);z=void 0}");
   }
 
+  @Test
   public void testComplexInline6() {
     test("function f(x,y){if (x) y(); return true;}var b=1;z=f(1,b)",
          "var b=1;{if(1)b();z=true}");
   }
 
+  @Test
   public void testComplexInline7() {
     test(
         "function f(x,y){if (x) return y(); else return true;} var b=1;z=f(1,b)",
-        LINE_JOINER.join(
+        lines(
             "var b=1;",
             "{",
             "  JSCompiler_inline_label_f_2: {",
@@ -1436,17 +1604,19 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInline8() {
     test("function f(x){a(x)}var z=f(1)",
          "var z;{a(1);z=void 0}");
   }
 
+  @Test
   public void testInlineIntoLoopWithUninitializedVars1() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function f(){var x;if (true){x=7} return x;}",
             "for(;;) {f();}"),
-        LINE_JOINER.join(
+        lines(
             "for(;;) {",
             "  {",
             "    var x$jscomp$inline_0 = void 0;",
@@ -1456,12 +1626,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineIntoLoopWithUninitializedVars2() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function f(){x = x||1; var x; return x;}",
             "for(;;) {f();}"),
-        LINE_JOINER.join(
+        lines(
             "for(;;) {",
             "  {",
             "    var x$jscomp$inline_0 = void 0;",
@@ -1471,10 +1642,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInlineVars1() {
     test(
         "function f() { if (true) { return; } else; } var z = f();",
-        LINE_JOINER.join(
+        lines(
             "var z;",
             "{",
             "  JSCompiler_inline_label_f_0:{",
@@ -1487,10 +1659,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInlineVars2() {
     test(
         "function f(){if (true){return;}else return;}var z=f();",
-        LINE_JOINER.join(
+        lines(
             "var z;",
             "{",
             "  JSCompiler_inline_label_f_0:{",
@@ -1506,10 +1679,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInlineVars3() {
     test(
         "function f(){if (true){return 1;}else return 0;}var z=f();",
-        LINE_JOINER.join(
+        lines(
             "var z;",
             "{",
             "  JSCompiler_inline_label_f_0:{",
@@ -1525,27 +1699,31 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInlineVars4() {
     test("function f(x){a(x)}var z = f(1)",
          "var z;{a(1);z=void 0}");
   }
 
+  @Test
   public void testComplexInlineVars5() {
     test("function f(x,y){a(x)}var b=1;var z=f(1,b)",
          "var b=1;var z;{a(1);z=void 0}");
   }
 
+  @Test
   public void testComplexInlineVars6() {
     test("function f(x,y){if (x) y(); return true;}var b=1;var z=f(1,b)",
          "var b=1;var z;{if(1)b();z=true}");
   }
 
+  @Test
   public void testComplexInlineVars7() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function f(x,y){if (x) return y(); else return true;}",
             "var b=1;var z=f(1,b)"),
-        LINE_JOINER.join(
+        lines(
             "var b=1;",
             "var z;",
             "{",
@@ -1562,36 +1740,43 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testComplexInlineVars8() {
     test("function f(x){a(x)}var x;var z=f(1)",
          "var x;var z;{a(1);z=void 0}");
   }
 
+  @Test
   public void testComplexInlineVars9() {
     test("function f(x){a(x)}var x;var z=f(1);var y",
          "var x;var z;{a(1);z=void 0}var y");
   }
 
+  @Test
   public void testComplexInlineVars10() {
     test("function f(x){a(x)}var x=blah();var z=f(1);var y=blah();",
           "var x=blah();var z;{a(1);z=void 0}var y=blah()");
   }
 
+  @Test
   public void testComplexInlineVars11() {
     test("function f(x){a(x)}var x=blah();var z=f(1);var y;",
          "var x=blah();var z;{a(1);z=void 0}var y");
   }
 
+  @Test
   public void testComplexInlineVars12() {
     test("function f(x){a(x)}var x;var z=f(1);var y=blah();",
          "var x;var z;{a(1);z=void 0}var y=blah()");
   }
 
+  @Test
   public void testComplexInlineInExpressionss1() {
     test("function f(){a()}var z=f()",
          "var z;{a();z=void 0}");
   }
 
+  @Test
   public void testComplexInlineInExpressionss2() {
     test("function f(){a()}c=z=f()",
          "var JSCompiler_inline_result$jscomp$0;" +
@@ -1599,6 +1784,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "c=z=JSCompiler_inline_result$jscomp$0");
   }
 
+  @Test
   public void testComplexInlineInExpressionss3() {
     test("function f(){a()}c=z=f()",
         "var JSCompiler_inline_result$jscomp$0;" +
@@ -1606,6 +1792,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "c=z=JSCompiler_inline_result$jscomp$0");
   }
 
+  @Test
   public void testComplexInlineInExpressionss4() {
     test("function f(){a()}if(z=f());",
         "var JSCompiler_inline_result$jscomp$0;" +
@@ -1613,6 +1800,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "if(z=JSCompiler_inline_result$jscomp$0);");
   }
 
+  @Test
   public void testComplexInlineInExpressionss5() {
     test("function f(){a()}if(z.y=f());",
          "var JSCompiler_temp_const$jscomp$0=z;" +
@@ -1621,87 +1809,91 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "if(JSCompiler_temp_const$jscomp$0.y=JSCompiler_inline_result$jscomp$1);");
   }
 
+  @Test
   public void testComplexNoInline1() {
     testSame("function f(){a()}while(z=f())continue");
   }
 
+  @Test
   public void testComplexNoInline2() {
     testSame("function f(){a()}do;while(z=f())");
   }
 
+  @Test
   public void testComplexSample() {
-    String result = "" +
-      "{{" +
-      "var styleSheet$jscomp$inline_2=null;" +
-      "if(goog$userAgent$IE)" +
-        "styleSheet$jscomp$inline_2=0;" +
-      "else " +
-        "var head$jscomp$inline_3=0;" +
-      "{" +
-        "var element$jscomp$inline_0=" +
-            "styleSheet$jscomp$inline_2;" +
-        "var stylesString$jscomp$inline_1=a;" +
-        "if(goog$userAgent$IE)" +
-          "element$jscomp$inline_0.cssText=" +
-              "stylesString$jscomp$inline_1;" +
-        "else " +
-        "{" +
-          "var propToSet$jscomp$inline_2=" +
-              "\"innerText\";" +
-          "element$jscomp$inline_0[" +
-              "propToSet$jscomp$inline_2]=" +
-                  "stylesString$jscomp$inline_1" +
-        "}" +
-      "}" +
-      "styleSheet$jscomp$inline_2" +
-      "}}";
-
-    test("var foo = function(stylesString, opt_element) { " +
-        "var styleSheet = null;" +
-        "if (goog$userAgent$IE)" +
-          "styleSheet = 0;" +
-        "else " +
-          "var head = 0;" +
-        "" +
-        "goo$zoo(styleSheet, stylesString);" +
-        "return styleSheet;" +
-     " };\n " +
-
-     "var goo$zoo = function(element, stylesString) {" +
-        "if (goog$userAgent$IE)" +
-          "element.cssText = stylesString;" +
-        "else {" +
-          "var propToSet = 'innerText';" +
-          "element[propToSet] = stylesString;" +
-        "}" +
-      "};" +
-      "(function(){foo(a,b);})();",
-     result);
+    test(
+        lines(
+            "var foo = function(stylesString, opt_element) { ",
+            "  var styleSheet = null;",
+            "  if (goog$userAgent$IE)",
+            "    styleSheet = 0;",
+            "  else",
+            "    var head = 0;",
+            "",
+            "  goo$zoo(styleSheet, stylesString);",
+            "  return styleSheet;",
+            "};",
+            "",
+            "var goo$zoo = function(element, stylesString) {",
+            "  if (goog$userAgent$IE)",
+            "    element.cssText = stylesString;",
+            "  else {",
+            "    var propToSet = 'innerText';",
+            "    element[propToSet] = stylesString;",
+            "  }",
+            "};",
+            "(function(){foo(a,b);})();"),
+        lines(
+            "{",
+            "  {",
+            "    var styleSheet$jscomp$inline_2 = null;",
+            "    if (goog$userAgent$IE)",
+            "      styleSheet$jscomp$inline_2 = 0;",
+            "    else",
+            "      var head$jscomp$inline_3 = 0;",
+            "    {",
+            "       var element$jscomp$inline_0 = styleSheet$jscomp$inline_2;",
+            "       var stylesString$jscomp$inline_1=a;",
+            "       if (goog$userAgent$IE)",
+            "         element$jscomp$inline_0.cssText = stylesString$jscomp$inline_1;",
+            "       else {",
+            "         var propToSet$jscomp$inline_2 = 'innerText';",
+            "         element$jscomp$inline_0[propToSet$jscomp$inline_2] =",
+            "             stylesString$jscomp$inline_1",
+            "       }",
+            "    }",
+            "    styleSheet$jscomp$inline_2;",
+            "  }",
+            "}"));
   }
 
+  @Test
   public void testComplexSampleNoInline() {
     testSame(
-      "foo=function(stylesString,opt_element){" +
-        "var styleSheet=null;" +
-        "if(goog$userAgent$IE)" +
-          "styleSheet=0;" +
-        "else " +
-          "var head=0;" +
-        "" +
-        "goo$zoo(styleSheet,stylesString);" +
-        "return styleSheet" +
-     "};" +
-     "goo$zoo=function(element,stylesString){" +
-        "if(goog$userAgent$IE)" +
-          "element.cssText=stylesString;" +
-        "else{" +
-          "var propToSet=goog$userAgent$WEBKIT?\"innerText\":\"innerHTML\";" +
-          "element[propToSet]=stylesString" +
-        "}" +
-      "}");
+        lines(
+            "foo = function(stylesString, opt_element) {",
+            "  var styleSheet = null;",
+            "  if(goog$userAgent$IE)",
+            "    styleSheet=0;",
+            "  else",
+            "    var head=0;",
+            "",
+            "  goo$zoo(styleSheet, stylesString);",
+            "  return styleSheet",
+            "};",
+            "",
+            "goo$zoo = function(element, stylesString) {",
+            "  if (goog$userAgent$IE)",
+            "    element.cssText = stylesString;",
+            "  else{",
+            "    var propToSet = goog$userAgent$WEBKIT? 'innerText' : 'innerHTML';",
+            "    element[propToSet] = stylesString",
+            "  }",
+            "}"));
   }
 
   // Test redefinition of parameter name.
+  @Test
   public void testComplexNoVarSub() {
     test(
         "function foo(x){" +
@@ -1714,38 +1906,71 @@ public class InlineFunctionsTest extends CompilerTestCase {
         );
    }
 
+  @Test
   public void testComplexFunctionWithFunctionDefinition1() {
     test("function f(){call(function(){return})}f()",
          "{call(function(){return})}");
   }
 
+  @Test
   public void testComplexFunctionWithFunctionDefinition2() {
     assumeMinimumCapture = false;
 
     // Don't inline if local names might be captured.
-    testSame("function f(a){call(function(){return})}f()");
+    testSame(
+        lines(
+            "function f(a) {",
+            "  call(function(){return});",
+            "}",
+            "f();"));
 
     assumeMinimumCapture = true;
 
-    test("(function(){" +
-         "var f = function(a){call(function(){return a})};f()})()",
-         "{{var a$jscomp$inline_0=void 0;call(function(){return a$jscomp$inline_0})}}");
+    test(
+        lines(
+            "(function() {",
+            "  var f = function(a) { call(function(){return a}); };",
+            "  f();",
+            "})();"),
+        lines(
+            "{",
+            "  {",
+            "    var a$jscomp$inline_0 = void 0;",
+            "    call(function() { return a$jscomp$inline_0; });",
+            "  }",
+            "}"));
   }
 
+  @Test
   public void testComplexFunctionWithFunctionDefinition2a() {
     assumeMinimumCapture = false;
 
     // Don't inline if local names might be captured.
-    testSame("(function(){" +
-        "var f = function(a){call(function(){return a})};f()})()");
+    testSame(
+        lines(
+            "(function() {",
+            "  var f = function(a) { call(function(){return a}); };",
+            "  f();",
+            "})()"));
 
     assumeMinimumCapture = true;
 
-    test("(function(){" +
-         "var f = function(a){call(function(){return a})};f()})()",
-         "{{var a$jscomp$inline_0=void 0;call(function(){return a$jscomp$inline_0})}}");
+    test(
+        lines(
+            "(function() {",
+            "  var f = function(a) { call(function(){return a}); };",
+            "  f();",
+            "})()"),
+        lines(
+            "{",
+            "  {",
+            "    var a$jscomp$inline_0 = void 0;",
+            "    call(function() { return a$jscomp$inline_0; });",
+            "  }",
+            "}"));
   }
 
+  @Test
   public void testComplexFunctionWithFunctionDefinition3() {
     assumeMinimumCapture = false;
 
@@ -1759,6 +1984,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testDecomposePlusEquals() {
     test("function f(){a=1;return 1} var x = 1; x += f()",
         "var x = 1;" +
@@ -1769,6 +1995,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "x = JSCompiler_temp_const$jscomp$0 + JSCompiler_inline_result$jscomp$1;");
   }
 
+  @Test
   public void testDecomposeFunctionExpressionInCall() {
     test(
         "(function(map){descriptions_=map})(\n" +
@@ -1792,16 +2019,19 @@ public class InlineFunctionsTest extends CompilerTestCase {
         );
   }
 
+  @Test
   public void testInlineConstructor1() {
     test("function f() {} function _g() {f.call(this)}",
          "function _g() {void 0}");
   }
 
+  @Test
   public void testInlineConstructor2() {
     test("function f() {} f.prototype.a = 0; function _g() {f.call(this)}",
          "function f() {} f.prototype.a = 0; function _g() {void 0}");
   }
 
+  @Test
   public void testInlineConstructor3() {
     test("function f() {x.call(this)} f.prototype.a = 0;" +
          "function _g() {f.call(this)}",
@@ -1809,6 +2039,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _g() {{x.call(this)}}");
   }
 
+  @Test
   public void testInlineConstructor4() {
     test("function f() {x.call(this)} f.prototype.a = 0;" +
          "function _g() {var t = f.call(this)}",
@@ -1816,83 +2047,99 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "function _g() {var t; {x.call(this); t = void 0}}");
   }
 
+  @Test
   public void testFunctionExpressionInlining1() {
     test("(function(){})()",
          "void 0");
   }
 
+  @Test
   public void testFunctionExpressionInlining2() {
     test("(function(){foo()})()",
          "{foo()}");
   }
 
+  @Test
   public void testFunctionExpressionInlining3() {
     test("var a = (function(){return foo()})()",
          "var a = foo()");
   }
 
+  @Test
   public void testFunctionExpressionInlining4() {
     test("var a; a = 1 + (function(){return foo()})()",
          "var a; a = 1 + foo()");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining1() {
     test("(function(){}).call(this)",
          "void 0");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining2() {
     test("(function(){foo(this)}).call(this)",
          "{foo(this)}");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining3() {
     test("var a = (function(){return foo(this)}).call(this)",
          "var a = foo(this)");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining4() {
     test("var a; a = 1 + (function(){return foo(this)}).call(this)",
          "var a; a = 1 + foo(this)");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining5() {
     test("a:(function(){return foo()})()",
          "a:foo()");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining6() {
     test("a:(function(){return foo()}).call(this)",
          "a:foo()");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining7() {
     test("a:(function(){})()",
          "a:void 0");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining8() {
     test("a:(function(){}).call(this)",
          "a:void 0");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining9() {
     // ... with unused recursive name.
     test("(function foo(){})()",
          "void 0");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining10() {
     // ... with unused recursive name.
     test("(function foo(){}).call(this)",
          "void 0");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining11a() {
     // Inline functions that return inner functions.
     test("((function(){return function(){foo()}})())();", "{foo()}");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining11b() {
     assumeMinimumCapture = false;
     // Can't inline functions that return inner functions and have local names.
@@ -1909,6 +2156,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testFunctionExpressionCallInlining11c() {
     // TODO(johnlenz): Can inline, not temps needed.
     assumeMinimumCapture = false;
@@ -1926,6 +2174,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining11d() {
     // TODO(johnlenz): Can inline into a function containing eval, if
     // no names are introduced.
@@ -1948,6 +2197,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testFunctionExpressionCallInlining11e() {
     // No, don't inline into a function containing eval,
     // if temps are introduced.
@@ -1968,77 +2218,100 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testFunctionExpressionCallInlining12() {
     // Can't inline functions that recurse.
     testSame("(function foo(){foo()})()");
   }
 
+  @Test
   public void testFunctionExpressionOmega() {
     // ... with unused recursive name.
-    test("(function (f){f(f)})(function(f){f(f)})",
-         "{var f$jscomp$inline_0=function(f$jscomp$1){f$jscomp$1(f$jscomp$1)};" +
-          "{{f$jscomp$inline_0(f$jscomp$inline_0)}}}");
+    test(
+        "(function (f){f(f)})(function(f){f(f)})",
+        lines(
+            "{",
+            "  var f$jscomp$inline_0 = function(f$jscomp$1) {",
+            "    f$jscomp$1(f$jscomp$1);",
+            "  };",
+            "  {",
+            "    {",
+            "       f$jscomp$inline_0(f$jscomp$inline_0);",
+            "    }",
+            "  }",
+            "}"));
   }
 
+  @Test
   public void testLocalFunctionInlining1() {
     test("function _f(){ function g() {} g() }",
          "function _f(){ void 0 }");
   }
 
+  @Test
   public void testLocalFunctionInlining2() {
     test("function _f(){ function g() {foo(); bar();} g() }",
          "function _f(){ {foo(); bar();} }");
   }
 
+  @Test
   public void testLocalFunctionInlining3() {
     test("function _f(){ function g() {foo(); bar();} g() }",
          "function _f(){ {foo(); bar();} }");
   }
 
+  @Test
   public void testLocalFunctionInlining4() {
     test("function _f(){ function g() {return 1} return g() }",
          "function _f(){ return 1 }");
   }
 
+  @Test
   public void testLocalFunctionInlining5() {
     testSame("function _f(){ function g() {this;} g() }");
   }
 
+  @Test
   public void testLocalFunctionInlining6() {
     testSame("function _f(){ function g() {this;} return g; }");
   }
 
+  @Test
   public void testLocalFunctionInliningOnly1() {
-    this.allowGlobalFunctionInlining = true;
+    this.inliningReach = Reach.ALL;
     test("function f(){} f()", "void 0;");
-    this.allowGlobalFunctionInlining = false;
+    this.inliningReach = Reach.LOCAL_ONLY;
     testSame("function f(){} f()");
   }
 
+  @Test
   public void testLocalFunctionInliningOnly2() {
-    this.allowGlobalFunctionInlining = false;
+    this.inliningReach = Reach.LOCAL_ONLY;
     testSame("function f(){} f()");
 
     test("function f(){ function g() {return 1} return g() }; f();",
          "function f(){ return 1 }; f();");
   }
 
+  @Test
   public void testLocalFunctionInliningOnly3() {
-    this.allowGlobalFunctionInlining = false;
+    this.inliningReach = Reach.LOCAL_ONLY;
     testSame("function f(){} f()");
 
     test("(function(){ function g() {return 1} return g() })();",
          "(function(){ return 1 })();");
   }
 
+  @Test
   public void testLocalFunctionInliningOnly4() {
-    this.allowGlobalFunctionInlining = false;
+    this.inliningReach = Reach.LOCAL_ONLY;
     testSame("function f(){} f()");
 
     test("(function(){ return (function() {return 1})() })();",
          "(function(){ return 1 })();");
   }
 
+  @Test
   public void testInlineWithThis1() {
     assumeStrictThis = false;
     // If no "this" is provided it might need to be coerced to the global
@@ -2053,6 +2326,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "{void 0;}");
   }
 
+  @Test
   public void testInlineWithThis2() {
     // "this" can always be replaced with "this"
     assumeStrictThis = false;
@@ -2062,6 +2336,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     test("function f(){} f.call(this);", "void 0");
   }
 
+  @Test
   public void testInlineWithThis3() {
     assumeStrictThis = false;
     // If no "this" is provided it might need to be coerced to the global
@@ -2073,6 +2348,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     test("function f(){} f.call([]);", "{}");
   }
 
+  @Test
   public void testInlineWithThis4() {
     assumeStrictThis = false;
     // If no "this" is provided it might need to be coerced to the global
@@ -2085,6 +2361,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "{var JSCompiler_inline_this_0=new g}");
   }
 
+  @Test
   public void testInlineWithThis5() {
     assumeStrictThis = false;
     // If no "this" is provided it might need to be coerced to the global
@@ -2097,6 +2374,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "{var JSCompiler_inline_this_0=g()}");
   }
 
+  @Test
   public void testInlineWithThis6() {
     assumeStrictThis = false;
     // If no "this" is provided it might need to be coerced to the global
@@ -2109,6 +2387,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          "{var JSCompiler_inline_this_0=new g;JSCompiler_inline_this_0}");
   }
 
+  @Test
   public void testInlineWithThis7() {
     assumeStrictThis = true;
     // In strict mode, "this" is never coerced so we can use the provided value.
@@ -2119,6 +2398,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
   }
 
   // http://en.wikipedia.org/wiki/Fixed_point_combinator#Y_combinator
+  @Test
   public void testFunctionExpressionYCombinator() {
     assumeMinimumCapture = false;
     testSame(
@@ -2190,11 +2470,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "factorial(5)");
   }
 
+  @Test
   public void testRenamePropertyFunction() {
     testSame("function JSCompiler_renameProperty(x) {return x} " +
              "JSCompiler_renameProperty('foo')");
   }
 
+  @Test
   public void testReplacePropertyFunction() {
     // baseline: an alias doesn't prevents declaration removal, but not
     // inlining.
@@ -2208,16 +2490,19 @@ public class InlineFunctionsTest extends CompilerTestCase {
              "new JSCompiler_ObjectPropertyString(window, f); f(1)");
   }
 
+  @Test
   public void testInlineWithClosureContainingThis() {
     test("(function (){return f(function(){return this})})();",
          "f(function(){return this})");
   }
 
+  @Test
   public void testIssue5159924a() {
     test(
-        LINE_JOINER.join(
-            "function f() { if (x()) return y(); }", "while(1) { var m = f() || z() }"),
-        LINE_JOINER.join(
+        lines(
+            "function f() { if (x()) return y(); }",
+            "while(1) { var m = f() || z() }"),
+        lines(
             "for(;1;) {",
             "  var JSCompiler_inline_result$jscomp$0;",
             "  {",
@@ -2233,10 +2518,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testIssue5159924b() {
     test(
-        LINE_JOINER.join("function f() { if (x()) return y(); }", "while(1) { var m = f(); }"),
-        LINE_JOINER.join(
+        lines(
+            "function f() { if (x()) return y(); }",
+            "while(1) { var m = f(); }"),
+        lines(
             "for(;1;) {",
             "  var m;",
             "  {",
@@ -2251,11 +2539,12 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineObject() {
     disableCompareAsTree();
     enableMarkNoSideEffects();
 
-    allowGlobalFunctionInlining = false;
+    this.inliningReach = Reach.LOCAL_ONLY;
     assumeStrictThis = true;
     assumeMinimumCapture = true;
 
@@ -2268,6 +2557,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "function inner(){(0,g.a)()}");
   }
 
+  @Test
   public void testBug4944818() {
     test(
         "var getDomServices_ = function(self) {\n" +
@@ -2305,10 +2595,12 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "}");
   }
 
+  // http://blickly.github.io/closure-compiler-issues/#423
+  @Test
   public void testIssue423() {
     assumeMinimumCapture = false;
     test(
-        LINE_JOINER.join(
+        lines(
             "(function($) {",
             "  $.fn.multicheck = function(options) {",
             "    initialize.call(this, options);",
@@ -2323,7 +2615,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "    $(this).data('checkboxes');",
             "  }",
             "})(jQuery)"),
-        LINE_JOINER.join(
+        lines(
             "(function($){",
             "  $.fn.multicheck=function(options$jscomp$1) {",
             "    {",
@@ -2336,10 +2628,12 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "})(jQuery)"));
   }
 
+  // http://blickly.github.io/closure-compiler-issues/#423
+  @Test
   public void testIssue423_minCap() {
     assumeMinimumCapture = true;
     test(
-        LINE_JOINER.join(
+        lines(
             "(function($) {",
             "  $.fn.multicheck = function(options) {",
             "    initialize.call(this, options);",
@@ -2354,7 +2648,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "    $(this).data('checkboxes');",
             "  }",
             "})(jQuery)"),
-        LINE_JOINER.join(
+        lines(
             "{",
             "  var $$jscomp$inline_0=jQuery;",
             "  $$jscomp$inline_0.fn.multicheck=function(options$jscomp$inline_4) {",
@@ -2369,6 +2663,8 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  // http://blickly.github.io/closure-compiler-issues/#728
+  @Test
   public void testIssue728() {
     String f = "var f = function() { return false; };";
     StringBuilder calls = new StringBuilder();
@@ -2381,6 +2677,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     test(f + calls, folded.toString());
   }
 
+  @Test
   public void testAnonymous1() {
     assumeMinimumCapture = false;
     test("(function(){var a=10;(function(){var b=a;a++;alert(b)})()})();",
@@ -2395,8 +2692,9 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "a$jscomp$inline_2++;alert(b$jscomp$inline_0)}}");
   }
 
+  @Test
   public void testAnonymous2() {
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "(function(){",
         "  eval();",
         "  (function(){",
@@ -2407,6 +2705,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "})();"));
   }
 
+  @Test
   public void testAnonymous3() {
     // Introducing a new value into is tricky
     assumeMinimumCapture = false;
@@ -2420,11 +2719,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "{(function(){arguments;})()}");
   }
 
-
+  @Test
   public void testLoopWithFunctionWithFunction() {
     assumeMinimumCapture = true;
     test(
-        LINE_JOINER.join(
+        lines(
             "function _testLocalVariableInLoop_() {",
             "  var result = 0;",
             "  function foo() {",
@@ -2440,7 +2739,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "  }",
             "  foo();",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "function _testLocalVariableInLoop_() {",
             "  var result = 0;",
             "  {",
@@ -2458,10 +2757,11 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testMethodWithFunctionWithFunction() {
     assumeMinimumCapture = true;
     test(
-        LINE_JOINER.join(
+        lines(
             "function _testLocalVariable_() {",
             "  var result = 0;",
             "  function foo() {",
@@ -2473,7 +2773,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "  }",
             "  foo();",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "function _testLocalVariable_(){",
             "  var result = 0;",
             "  {",
@@ -2488,6 +2788,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
   }
 
   // Inline a single reference function into deeper modules
+  @Test
   public void testCrossModuleInlining1() {
     test(createModuleChain(
              // m1
@@ -2506,6 +2807,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   // Inline a single reference function into shallow modules, only if it
   // is cheaper than the call itself.
+  @Test
   public void testCrossModuleInlining2() {
     testSame(createModuleChain(
                 // m1
@@ -2532,6 +2834,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
 
   // Inline a multi-reference functions into shallow modules, only if it
   // is cheaper than the call itself.
+  @Test
   public void testCrossModuleInlining3() {
     testSame(createModuleChain(
                 // m1
@@ -2562,6 +2865,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
          );
   }
 
+  @Test
   public void test6671158() throws Exception {
     CompilerTestCase tester = new InlineFunctionsTest() {
       @Override void maybeEnableInferConsts() {}
@@ -2592,6 +2896,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
     tester.tearDown();
   }
 
+  @Test
   public void test6671158b() {
     test(
         "function f() {return g()}" +
@@ -2615,18 +2920,22 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "    g())}");
   }
 
+  @Test
   public void test8609285a() {
    test(
        "function f(x){ for(x in y){} } f()",
        "{var x$jscomp$inline_0=void 0;for(x$jscomp$inline_0 in y);}");
   }
 
+  @Test
   public void test8609285b() {
     test(
         "function f(x){ for(var x in y){} } f()",
         "{var x$jscomp$inline_0=void 0;for(x$jscomp$inline_0 in y);}");
    }
 
+  // http://blickly.github.io/closure-compiler-issues/#1101
+  @Test
   public void testIssue1101() {
     test(
         "var x = (function (saved) {" +
@@ -2639,6 +2948,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testMaxFunSizeAfterInlining() {
     this.maxSizeAfterInlining = 1;
     test(// Always inline single-statement functions
@@ -2683,13 +2993,15 @@ public class InlineFunctionsTest extends CompilerTestCase {
         CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING;
   }
 
+  @Test
   public void testArrowFunctionUndefined() {
     test("var empty = () => {}; empty();", "void 0;");
   }
 
+  @Test
   public void testFunctionProperty() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function Foo() {",
             "  this.bar = 0;",
             "}",
@@ -2697,9 +3009,31 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "a.bar;"));
   }
 
+  @Test
+  public void testFunctionRestParam() {
+    test(
+        lines(
+            "var f = function(...args) { return args[0]; }",
+            "f(8);"),
+        "[8][0]");
+
+    test(
+        lines(
+            "var f = function(...args) { return args.length; }",
+            "f();"),
+        "[].length;");
+
+    test(
+        lines(
+            "var f = function(...args) { return args.length; }",
+            "f(3, 4);"),
+        "[3, 4].length;");
+  }
+
+  @Test
   public void testArrowFunctionRestParam() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo() {",
             "  var f = (...args) => args[0];",
             "  return f(8);",
@@ -2708,13 +3042,13 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "[8][0]");
 
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo() {",
             "  var f = (x, ...args) => x + args[0];",
             "  return f(1, 8);",
             "}",
             "foo();"),
-        LINE_JOINER.join(
+        lines(
             "{",
             "  var JSCompiler_inline_result$jscomp$inline_0;",
             "  {",
@@ -2725,7 +3059,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "}"));
 
     test(
-        LINE_JOINER.join(
+        lines(
             "function foo() {",
             "  var f = (...args) => args[0].bar;",
             "  return f({bar: 8});",
@@ -2734,358 +3068,288 @@ public class InlineFunctionsTest extends CompilerTestCase {
         "[{bar: 8}][0].bar");
   }
 
+  @Test
   public void testRestObjectPattern() {
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function countArgs(...{length}) {",
             "  return length;",
             "}",
-            "countArgs(1, 1, 1, 1, 1);"),
-        "[1, 1, 1, 1, 1].length;");
+            "countArgs(1, 1, 1, 1, 1);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function countArgs(x, ...{length}) {",
             "  return length;",
             "}",
-            "countArgs(1, 1, 1, 1, 1);"),
-        "{var length$jscomp$inline_1=[1,1,1,1].length;length$jscomp$inline_1}");
+            "countArgs(1, 1, 1, 1, 1);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function countArgs(x, ...{length: length}) {",
             "  return length;",
             "}",
-            "countArgs(1, 1, 1, 1, 1);"),
-        "{var length$jscomp$inline_1=[1,1,1,1].length;length$jscomp$inline_1}");
+            "countArgs(1, 1, 1, 1, 1);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f(...{'a': x}) { ",
             "  return x; ",
             "}",
-            "f(null,null,null,3,null);"),
-        "[null, null, null, 3, null]['a']");
+            "f(null,null,null,3,null);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f(...{3: x}) { ",
             "  return x; ",
             "}",
-            "f(null,null,null,3,null);"),
-        "[null, null, null, 3, null]['3']");
+            "f(null,null,null,3,null);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f(...{x: y}) { ",
             "  return y; ",
             "}",
-            "f(null,null,null,3,null);"),
-        "[null,null,null,3,null].x");
+            "f(null,null,null,3,null);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f(...{p: x, 3:y}) {",
             "  return y;",
             "}",
-            "f(null, null, null, 3, null);"),
-        "{var y$jscomp$inline_1=[null,null,null,3,null]['3'];y$jscomp$inline_1}");
+            "f(null, null, null, 3, null);"));
   }
 
+  @Test
   public void testObjectPatternParam() {
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({x}) {",
             "  return x+1;",
             "}",
-            "foo({x:5});"),
-        "({x:5}).x+1");
+            "foo({x:5});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({x:y}) {",
             "  return y+1;",
             "}",
-            "foo({x:5});"),
-        "({x:5}).x+1");
+            "foo({x:5});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({'x':y}) {",
             "  return y+1;",
             "}",
-            "foo({x:5});"),
-        "({x:5})['x']+1");
+            "foo({x:5});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({x}, {y}) {",
             "  return x+y;",
             "}",
-            "foo({x:5}, {y:6});"),
-        LINE_JOINER.join(
-            "{var x$jscomp$inline_0={x:5}.x;var y$jscomp$inline_1={y:6}.y;",
-            "x$jscomp$inline_0+y$jscomp$inline_1}"));
+            "foo({x:5}, {y:6});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({x}, {y}) {",
             "  return x+1;",
             "}",
-            "foo({x:5}, {y:6});"),
-        "{var x$jscomp$inline_0={x:5}.x;x$jscomp$inline_0+1}");
+            "foo({x:5}, {y:6});"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo({x: {y}}) {",
             "  return y + 1;",
             "}",
             "foo(obj);"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo({a: b, x: {y}}) {",
             "  return y + 1;",
             "}",
             "foo(obj);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({x}) {",
             "  return x;",
             "}",
             "class Foo {constructor() {this.x = 0;}}",
-            "f(new Foo());"),
-        LINE_JOINER.join(
-            "class Foo {constructor() {this.x = 0;}}",
-            "(new Foo()).x"));
+            "f(new Foo());"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({x}) {",
             "  alert(x);",
             "  alert(x)",
             "}",
             "class Foo {constructor() {this.x = 0;}}",
-            "f(new Foo());"),
-        LINE_JOINER.join(
-            "class Foo {constructor() {this.x = 0;}}",
-            "{",
-            "  var x$jscomp$inline_0=(new Foo).x;",
-            "  alert(x$jscomp$inline_0);",
-            "  alert(x$jscomp$inline_0);",
-            "}"));
+            "f(new Foo());"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({x}, {y}) {",
             "  alert(x);",
             "  alert(x);",
             "  return y;",
             "}",
             "class Foo {constructor() {this.x = 0;}}",
-            "f(new Foo(), {y:6});"),
-        LINE_JOINER.join(" class Foo{constructor(){this.x=0}}",
-            "{var x$jscomp$inline_0=(new Foo).x;var y$jscomp$inline_1={y:6}.y;",
-            "alert(x$jscomp$inline_0);alert(x$jscomp$inline_0);y$jscomp$inline_1}"));
+            "f(new Foo(), {y:6});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({x, y}) {",
             "  return x + y;",
             "}",
-            "f(obj);"),
-        "obj.x + obj.y");
+            "f(obj);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({x, y}, {z}) {",
             "  alert(z);",
             "  return x + y;",
             "}",
-            "f(obj, new Foo());"),
-        LINE_JOINER.join(
-            "{var x$jscomp$inline_0=obj.x;",
-            "var y$jscomp$inline_1=obj.y;",
-            "var z$jscomp$inline_2=(new Foo).z;",
-            "alert(z$jscomp$inline_2);",
-            "x$jscomp$inline_0+y$jscomp$inline_1}"));
+            "f(obj, new Foo());"));
 
-    test(
-        LINE_JOINER.join(
-          "function f({x, y}) {",
+    testSame(
+        lines("function f({x, y}) {",
             "  return x + y;",
             "}",
-            "f(getArg());"
-        ),
-        LINE_JOINER.join(
-            "{var x$jscomp$inline_0=getArg().x;",
-            "var y$jscomp$inline_1=getArg().y;",
-            "x$jscomp$inline_0+y$jscomp$inline_1}"));
+            "f(getArg());"));
 
-    test(
-        LINE_JOINER.join(
-            "function f({a, b, c}) {",
+    testSame(
+        lines("function f({a, b, c}) {",
             "  return b + c;",
             "}",
-            "f(x);"
-        ),
-        "x.b + x.c");
+            "f(x);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({3:x}) {",
             "  return x;",
             "}",
-            "f({3:1});"),
-        "({3:1})['3']");
+            "f({3:1});"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function f({x:{3:y}}) {",
             "  return y;",
             "}",
             "f({x:{3:1}});"));
 
-    test(
-      LINE_JOINER.join(
-          "function f({p: x, 3: y}) {",
-          "  return x;",
-          "}",
-          "f({p:1, 3:2});"),
-      LINE_JOINER.join(
-          "{var x$jscomp$inline_0 = {p:1,3:2}.p;",
-          "x$jscomp$inline_0}"));
+    testSame(
+        lines(
+            "function f({p: x, 3: y}) {",
+            "  return x;",
+            "}",
+            "f({p:1, 3:2});"));
 
-    test(
-      LINE_JOINER.join(
-          "function f({prop1, prop2}) {",
-          "  return prop1;",
-          "}",
-          "f({prop1:5, prop2:6});"),
-      LINE_JOINER.join(
-          "{var prop1$jscomp$inline_0={prop1:5,prop2:6}.prop1;",
-          "prop1$jscomp$inline_0}"));
+    testSame(
+        lines(
+            "function f({prop1, prop2}) {",
+            "  return prop1;",
+            "}",
+            "f({prop1:5, prop2:6});"));
 
-    test(
-       LINE_JOINER.join(
-           "function f({'foo bar':x}) {",
-           "  return x;",
-           "}",
-           "f({'foo bar': 1});"),
-       "({'foo bar':1})['foo bar']");
+    testSame(
+        lines(
+            "function f({'foo bar':x}) {",
+            "  return x;",
+            "}",
+            "f({'foo bar': 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({'foo_bar':x}) {",
             "  return x;",
             "}",
-            "f({'foo_bar': 1});"),
-        "({'foo_bar':1})['foo_bar']");
+            "f({'foo_bar': 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({123: x}) {",
             " return x;",
             "}",
-            "f({123: 1});"),
-            "({123: 1})['123'];");
+            "f({123: 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({'1foo': x}) {",
             "  return x;",
             "}",
-            "f({'1foo': 1});"),
-        "({'1foo': 1})['1foo'];");
+            "f({'1foo': 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({foo1 : x}) {",
             "  return x;",
             "}",
-            "f({foo1 : 1});"),
-        "({foo1 : 1}).foo1;");
+            "f({foo1 : 1});"));
 
-    test(
-      LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({'foo1': x}) {",
             "  return x;",
             "}",
-            "f({'foo1': 1});"),
-         "({'foo1': 1})['foo1'];");
+            "f({'foo1': 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({$foo : x}) {",
             "  return x;",
             "}",
-            "f({$foo : 1});"),
-        "({$foo : 1}).$foo;");
+            "f({$foo : 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({_foo : x}) {",
             "  return x;",
             "}",
-            "f({_foo : 1});"),
-        "({_foo : 1})._foo;");
+            "f({_foo : 1});"));
   }
 
+  @Test
   public void testDefaultObjectPatternParam() {
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({x} = {x:5}) {",
             "  return x+1;",
             "}",
-            "foo();"),
-        "({x:5}).x+1");
+            "foo();"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo({x} = {x:5}, {y} = {y:3}) {",
             "  return x+y;",
             "}",
-            "foo();"),
-        LINE_JOINER.join(
-            "{var x$jscomp$inline_0={x:5}.x;var y$jscomp$inline_1={y:3}.y;",
-            "x$jscomp$inline_0+y$jscomp$inline_1}"));
+            "foo();"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "let defaultObj = {x: 5};",
             "function foo({x} = defaultObj) {",
             "  return x;",
             "}",
-            "foo();"),
-        "let defaultObj = {x: 5}; defaultObj.x");
+            "foo();"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({a, b, c} = {a:1, b:2, c:3}) {",
             " return b+c;",
             "}",
-            "f();"
-        ),
-        LINE_JOINER.join(
-            "{var b$jscomp$inline_1={a:1,b:2,c:3}.b;",
-            "var c$jscomp$inline_2={a:1,b:2,c:3}.c;",
-            "b$jscomp$inline_1+c$jscomp$inline_2}"));
+            "f();"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function f({p:x, 3:y} = {p:1, 3:2}) {",
             " return x+y;",
             "}",
-            "f();"),
-        LINE_JOINER.join(
-            "{var x$jscomp$inline_0={p:1,3:2}.p;",
-            "var y$jscomp$inline_1={p:1,3:2}['3'];",
-            "x$jscomp$inline_0+y$jscomp$inline_1}"));
+            "f();"));
 
-  //Currently not being inlined because is too complicated to handle. Not an inherent limitation
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo(a, { b = '', c = '' } = {}) {",
             "  return a;",
             "}",
@@ -3093,112 +3357,188 @@ public class InlineFunctionsTest extends CompilerTestCase {
         ));
   }
 
+  @Test
+  public void testObjectPatternParamWithMultipleDestructuredNames() {
+    testSame(
+        lines(
+            "function f({x, y}) {",
+            "  return x + y;",
+            "}",
+            "alert(f({x: sideEffects1(), y: sideEffects2()}));"));
+  }
+
+  @Test
+  public void testArrayPatternParam() {
+    testSame("function f([x]) { return x; } alert(f([3]));");
+  }
+
+  @Test
+  public void testObjectPatternParamWithDefaults() {
+    testSame(
+        lines(
+            "function foo({x = 3}) {",
+            "  return x;",
+            "}",
+            "alert(foo({}));"));
+
+    testSame(
+        lines(
+            "function foo({x = 3}) {",
+            "  return x;",
+            "}",
+            "alert(foo({x: 3}));"
+        ));
+
+    testSame(
+        lines(
+            "function foo({x = 3}, y) {",
+            "  return y;",
+            "}",
+            "alert(foo({x: 3}, 4));"
+        ));
+
+    testSame(
+        lines(
+            "function foo({x = 3} = {}) {",
+            "  return x;",
+            "}",
+            "alert(foo());"
+        ));
+
+    testSame(
+        lines(
+            "function foo(x, ...{length = 5}) {",
+            "  return x * length;",
+            "}",
+            "alert(foo(3));"));
+  }
+
+  @Test
   public void testDefaultParam() {
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = 1) {",
             "  return a + b;",
             "}",
-            "foo(1);"),
-        "1+1");
+            "foo(1);"));
 
-    test(
-        LINE_JOINER.join(
-            "function foo(a, b = 1) {",
+    testSame(
+        lines("function foo(a, b = 1) {",
             "  return a + b;",
             "}",
-            "foo(1, 2);"),
-        "1+2");
+            "foo(1, 2);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a = 1, b = 2) {",
             "  return a + b;",
             "}",
-            "foo(3, 4);"),
-        "3+4");
+            "foo(3, 4);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = {foo: 5}) {",
             "  return a + b.foo;",
             "}",
-            "foo(3, {foo: 9});"),
-        "{ var b$jscomp$inline_1={foo:9}; 3 + b$jscomp$inline_1.foo; }");
+            "foo(3, {foo: 9});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = {'foo': 5}) {",
             "  return a + b['foo'];",
             "}",
-            "foo(3, {'foo': 9});"),
-        "{ var b$jscomp$inline_1={'foo':9}; 3 + b$jscomp$inline_1['foo']; }");
+            "foo(3, {'foo': 9});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = {foo: 5, bar: 6}) {",
             "  return a + b.foo + b.bar;",
             "}",
-            "foo(3, {foo: 1, bar: 2});"),
-        "{ var b$jscomp$inline_1={foo:1,bar:2};3+b$jscomp$inline_1.foo"
-            + "+b$jscomp$inline_1.bar }");
+            "foo(3, {foo: 1, bar: 2});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = {foo: 5}) {",
             "  return a + b.foo;",
             "}",
-            "foo(3);"),
-        "{ var b$jscomp$inline_1={foo:5};3+b$jscomp$inline_1.foo }");
+            "foo(3);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = {foo: 5, bar: 6}) {",
             "  return a + b.foo + b.bar;",
             "}",
-            "foo(3, {foo: 1});"),
-        "{ var b$jscomp$inline_1={foo:1};3+b$jscomp$inline_1.foo"
-            + "+b$jscomp$inline_1.bar }");
+            "foo(3, {foo: 1});"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = [1, 2]) {",
             "  return a + b[1];",
             "}",
-            "foo(3, [7, 8]);"),
-        "{ var b$jscomp$inline_1=[7,8];3+b$jscomp$inline_1[1] }");
+            "foo(3, [7, 8]);"));
 
-    test(
-        LINE_JOINER.join(
+    testSame(
+        lines(
             "function foo(a, b = []) {",
             "  return a + b[1];",
             "}",
-            "foo(3, [7, 8]);"),
-        "{ var b$jscomp$inline_1=[7,8];3+b$jscomp$inline_1[1] }");
+            "foo(3, [7, 8]);"));
   }
 
-  //TODO(b/64614552): Get the following tests to pass
-  public void disabled_testNestedDefaultParam() {
-    test(
-        LINE_JOINER.join(
+  @Test
+  public void testDefaultParam_argIsUndefined() {
+    testSame(
+        lines(
+            "function foo(a, b = 1) {",
+            "  return a + b;",
+            "}",
+            "foo(1, undefined);"));
+  }
+
+  @Test
+  public void testDefaultParam_argIsUnknown() {
+    testSame(
+        lines(
+            "function foo(a, b = 1) {",
+            "  return a + b;",
+            "}",
+            "foo(1, x);"));
+  }
+
+  @Test
+  public void testDefaultParam_withAssign() {
+    testSame(
+        lines(
+            "function foo(x = undefined) {",
+            "  if (!x) {",
+            "    x = 2;",
+            "  }",
+            "  return x;",
+            "}",
+            "foo(4);"));
+  }
+
+  @Test
+  public void testNestedDefaultParam() {
+    testSame(
+        lines(
             "function foo(a = b = 1) {",
             "  return a;",
             "}",
-            "foo();"),
-        "1");
+            "foo();"));
 
-    test(
-        LINE_JOINER.join(
-            "function foo(c = {a:(b = 1)}}) {",
+    testSame(
+        lines(
+            "function foo(c = {a:(b = 1)}) {",
             "  return c;",
             "}",
-            "foo();"),
-        "{a: 1}");
+            "foo();"));
   }
 
+  @Test
   public void testSpreadCall() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo(x, y) {",
             "  return x + y;",
             "}",
@@ -3206,7 +3546,7 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "foo(...args);"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo(x, y, z) {",
             "  return x + y + z;",
             "}",
@@ -3214,14 +3554,14 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "foo(2, ...args);"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo(x, y) {",
             "  return x + y;",
             "}",
             "foo(...[0, 1]);"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo(x, y) {",
             "  return x + y;",
             "}",
@@ -3229,21 +3569,33 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "foo(...args, ...[1]);"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function foo(...args) {",
             "  return args.length;",
             "}",
             "foo(...[0,1]);"));
+
+    testSame("var args = [0, 1]; (function foo(x, y) { return x + y; })(...args);");
+
+    testSame(
+        lines(
+            "var args = [0, 1];",
+            "(function foo(x, y, z) {",
+            "  return x + y + z;",
+            "})(2, ...args);"));
+
+    testSame("(function (x, y) {  return x + y; })(...[0, 1]);");
   }
 
+  @Test
   public void testGeneratorFunction() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function* foo() {}",
             "var bar = foo();"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function* foo() {",
             "  yield 'X';",
             "  return 'Y';",
@@ -3251,17 +3603,72 @@ public class InlineFunctionsTest extends CompilerTestCase {
             "var bar = foo();"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function* foo() {",
             "  yield 'X';",
             "}",
             "foo();"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function* foo() {",
             "  return 1;",
             "}",
             "foo();"));
+  }
+
+  @Test
+  public void testAsyncFunction() {
+    testSame(
+        lines(
+            "async function foo() {}",
+            "foo().then(result => { alert(result); } );"));
+
+    testSame(
+        lines(
+            "async function foo() {",
+            "  return 'Y';",
+            "}",
+            "foo().then(result => { alert(result); } );"));
+
+    // We could possibly inline here since the return statement already contains a promise.
+    testSame(
+        lines(
+            "async function foo() {",
+            " return new Promise((resolve, reject) => { resolve('Success'); } );",
+            "}",
+            "foo().then(result => { alert(result); } );"));
+  }
+
+  @Test
+  public void testFunctionReferencingLetInNonGlobalBlock() {
+    testSame(
+        lines(
+            "if (true) {",
+            "  let value = 1;",
+            "  var g = function() {",
+            "    return value + 1;",
+            "  }",
+            "}",
+            "alert(g(10));"));
+  }
+
+  @Test
+  public void testNotInliningFunctionWithSuper() {
+    // Super field accessor arrow functions like this one are used for transpilation of some
+    // features such as async functions and async generators. If inlined, it becomes a syntax error
+    // as the inner function has no super.
+    testSame(
+        lines(
+            "class A { m(){ return 1 } };",
+            "class B extends A {",
+            "  m() {",
+            "    const super$m = () => super.m;",
+            "    const jscomp$this = this;",
+            "    return function*() {",
+            "      yield super$m().call(jscomp$this);",
+            "    };",
+            "  }",
+            "}"));
   }
 }

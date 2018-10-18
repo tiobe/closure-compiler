@@ -18,6 +18,7 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.PolymerBehaviorExtractor.BehaviorDefinition;
 import com.google.javascript.jscomp.PolymerPass.MemberDefinition;
@@ -30,7 +31,9 @@ import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -39,22 +42,26 @@ import java.util.Map;
  * understood by the compiler.
  */
 final class PolymerClassRewriter {
-
+  private static final String VIRTUAL_FILE = "<PolymerClassRewriter.java>";
   private final AbstractCompiler compiler;
   private final int polymerVersion;
+  private final PolymerExportPolicy polymerExportPolicy;
   private final boolean propertyRenamingEnabled;
-  static final String POLYMER_ELEMENT_PROP_CONFIG = "Polymer.ElementProperties";
+  @VisibleForTesting
+  static final String POLYMER_ELEMENT_PROP_CONFIG = "PolymerElementProperties";
 
-  private Node polymerElementExterns;
+  private final Node polymerElementExterns;
 
   PolymerClassRewriter(
       AbstractCompiler compiler,
       Node polymerElementExterns,
       int polymerVersion,
+      PolymerExportPolicy polymerExportPolicy,
       boolean propertyRenamingEnabled) {
     this.compiler = compiler;
     this.polymerElementExterns = polymerElementExterns;
     this.polymerVersion = polymerVersion;
+    this.polymerExportPolicy = polymerExportPolicy;
     this.propertyRenamingEnabled = propertyRenamingEnabled;
   }
 
@@ -69,10 +76,6 @@ final class PolymerClassRewriter {
   void rewritePolymerCall(
       Node exprRoot, final PolymerClassDefinition cls, boolean isInGlobalScope) {
     Node objLit = checkNotNull(cls.descriptor);
-    if (hasShorthandAssignment(objLit)) {
-      compiler.report(JSError.make(objLit, PolymerPassErrors.POLYMER_SHORTHAND_NOT_SUPPORTED));
-      return;
-    }
 
     // Add {@code @lends} to the object literal.
     JSDocInfoBuilder objLitDoc = new JSDocInfoBuilder(true);
@@ -119,31 +122,28 @@ final class PolymerClassRewriter {
       block.addChildToBack(var);
     }
 
-    appendPropertiesToBlock(cls, block, cls.target.getQualifiedName() + ".prototype.");
+    appendPropertiesToBlock(cls.props, block, cls.target.getQualifiedName() + ".prototype.");
     appendBehaviorMembersToBlock(cls, block);
     ImmutableList<MemberDefinition> readOnlyProps = parseReadOnlyProperties(cls, block);
     ImmutableList<MemberDefinition> attributeReflectedProps =
         parseAttributeReflectedProperties(cls);
-    addInterfaceExterns(cls, readOnlyProps, attributeReflectedProps);
+    createExportsAndExterns(cls, readOnlyProps, attributeReflectedProps);
     removePropertyDocs(objLit, PolymerClassDefinition.DefinitionType.ObjectLiteral);
 
     Node statements = block.removeChildren();
     Node parent = exprRoot.getParent();
 
-    // For Polymer 1, If the call to Polymer() is not in the global scope and the assignment target
+    // If the call to Polymer() is not in the global scope and the assignment target
     // is not namespaced (which likely means it's exported to the global scope), put the type
     // declaration into the global scope at the start of the current script.
     //
     // This avoids unknown type warnings which are a result of the compiler's poor understanding of
-    // types declared inside IIFEs or any non-global scope. We should revisit this decision after
-    // moving to the new type inference system which should be able to infer these types better.
-    //
-    // Since Polymer 2 class mixins only function with NTI, we do not force Polymer 2 types to be
-    // global.
-    if (this.polymerVersion == 1 && !isInGlobalScope && !cls.target.isGetProp()) {
+    // types declared inside IIFEs or any non-global scope. We should revisit this decision as
+    // the typechecker's support for non-global types improves.
+    if (!isInGlobalScope && !cls.target.isGetProp()) {
       Node scriptNode = NodeUtil.getEnclosingScript(parent);
       scriptNode.addChildrenToFront(statements);
-      compiler.reportChangeToEnclosingScope(scriptNode);
+      compiler.reportChangeToChangeScope(scriptNode);
     } else {
       Node beforeRoot = exprRoot.getPrevious();
       if (beforeRoot == null) {
@@ -155,14 +155,16 @@ final class PolymerClassRewriter {
     }
     compiler.reportChangeToEnclosingScope(statements);
 
-    // Since behavior files might contain more language features than the class file, we need to
-    // update the feature sets.
-    FeatureSet newFeatures = cls.features;
-    if (newFeatures != null) {
+    // Since behavior files might contain language features that aren't present in the class file,
+    // we might need to update the FeatureSet.
+    if (cls.features != null) {
       Node scriptNode = NodeUtil.getEnclosingScript(parent);
       FeatureSet oldFeatures = (FeatureSet) scriptNode.getProp(Node.FEATURE_SET);
-      scriptNode.putProp(Node.FEATURE_SET, oldFeatures.union(newFeatures));
-      compiler.reportChangeToEnclosingScope(scriptNode);
+      FeatureSet newFeatures = oldFeatures.union(cls.features);
+      if (!newFeatures.equals(oldFeatures)) {
+        scriptNode.putProp(Node.FEATURE_SET, newFeatures);
+        compiler.reportChangeToChangeScope(scriptNode);
+      }
     }
 
     if (NodeUtil.isNameDeclaration(exprRoot)) {
@@ -208,20 +210,26 @@ final class PolymerClassRewriter {
     // For simplicity add everything into a block, before adding it to the AST.
     Node block = IR.block();
 
-    appendPropertiesToBlock(cls, block, cls.target.getQualifiedName() + ".prototype.");
+    // For each Polymer property we found in the "properties" configuration object, append a
+    // property declaration to the prototype (e.g. "/** @type {string} */ MyElement.prototype.foo").
+    appendPropertiesToBlock(cls.props, block, cls.target.getQualifiedName() + ".prototype.");
+
     ImmutableList<MemberDefinition> readOnlyProps = parseReadOnlyProperties(cls, block);
     ImmutableList<MemberDefinition> attributeReflectedProps =
         parseAttributeReflectedProperties(cls);
-    addInterfaceExterns(cls, readOnlyProps, attributeReflectedProps);
+    createExportsAndExterns(cls, readOnlyProps, attributeReflectedProps);
 
     // If an external interface is required, mark the class as implementing it
-    if (!readOnlyProps.isEmpty() || !attributeReflectedProps.isEmpty()) {
-      JSDocInfoBuilder classInfo = JSDocInfoBuilder.maybeCopyFrom(clazz.getJSDocInfo());
+    if (polymerExportPolicy == PolymerExportPolicy.EXPORT_ALL
+        || !readOnlyProps.isEmpty()
+        || !attributeReflectedProps.isEmpty()) {
+      Node jsDocInfoNode = NodeUtil.getBestJSDocInfoNode(clazz);
+      JSDocInfoBuilder classInfo = JSDocInfoBuilder.maybeCopyFrom(jsDocInfoNode.getJSDocInfo());
       String interfaceName = getInterfaceName(cls);
-      JSTypeExpression interfaceType = new JSTypeExpression(
-          new Node(Token.BANG, IR.string(interfaceName)), PolymerPass.VIRTUAL_FILE);
+      JSTypeExpression interfaceType =
+          new JSTypeExpression(new Node(Token.BANG, IR.string(interfaceName)), VIRTUAL_FILE);
       classInfo.recordImplementedInterface(interfaceType);
-      clazz.setJSDocInfo(classInfo.build());
+      jsDocInfoNode.setJSDocInfo(classInfo.build());
     }
 
     if (block.hasChildren()) {
@@ -231,18 +239,18 @@ final class PolymerClassRewriter {
       compiler.reportChangeToEnclosingScope(stmt);
     }
 
-    addReturnTypeIfMissing(cls, "is", new JSTypeExpression(IR.string("string"), ""));
+    addReturnTypeIfMissing(cls, "is", new JSTypeExpression(IR.string("string"), VIRTUAL_FILE));
 
     Node type = new Node(Token.BANG);
     Node array = IR.string("Array");
     type.addChildToBack(array);
     Node arrayTemplateType = new Node(Token.BLOCK, IR.string("string"));
     array.addChildToBack(arrayTemplateType);
-    addReturnTypeIfMissing(cls, "observers", new JSTypeExpression(type, ""));
+    addReturnTypeIfMissing(cls, "observers", new JSTypeExpression(type, VIRTUAL_FILE));
     addReturnTypeIfMissing(
         cls,
         "properties",
-        new JSTypeExpression(IR.string(POLYMER_ELEMENT_PROP_CONFIG), ""));
+        new JSTypeExpression(IR.string(POLYMER_ELEMENT_PROP_CONFIG), VIRTUAL_FILE));
 
     // If property renaming is enabled, wrap the properties object literal
     // in a reflection call so that the properties are renamed consistently
@@ -292,22 +300,22 @@ final class PolymerClassRewriter {
       Node value = keyNode.getLastChild();
       if (value != null && value.isFunction()) {
         JSDocInfoBuilder fnDoc = JSDocInfoBuilder.maybeCopyFrom(keyNode.getJSDocInfo());
-        fnDoc.recordThisType(new JSTypeExpression(
-            new Node(Token.BANG, IR.string(thisType)), PolymerPass.VIRTUAL_FILE));
+        fnDoc.recordThisType(
+            new JSTypeExpression(new Node(Token.BANG, IR.string(thisType)), VIRTUAL_FILE));
         keyNode.setJSDocInfo(fnDoc.build());
       }
     }
 
     // Add @this and @return to default property values.
     for (MemberDefinition property :
-        PolymerPassStaticUtils.extractProperties(objLit, defType, compiler)) {
+        PolymerPassStaticUtils.extractProperties(
+            objLit,
+            defType,
+            compiler,
+            /** constructor= */
+            null)) {
       if (!property.value.isObjectLit()) {
         continue;
-      }
-      if (hasShorthandAssignment(property.value)){
-        compiler.report(
-            JSError.make(property.value, PolymerPassErrors.POLYMER_SHORTHAND_NOT_SUPPORTED));
-        return;
       }
 
       Node defaultValue = NodeUtil.getFirstPropMatchingKey(property.value, "value");
@@ -316,8 +324,8 @@ final class PolymerClassRewriter {
       }
       Node defaultValueKey = defaultValue.getParent();
       JSDocInfoBuilder fnDoc = JSDocInfoBuilder.maybeCopyFrom(defaultValueKey.getJSDocInfo());
-      fnDoc.recordThisType(new JSTypeExpression(
-          new Node(Token.BANG, IR.string(thisType)), PolymerPass.VIRTUAL_FILE));
+      fnDoc.recordThisType(
+          new JSTypeExpression(new Node(Token.BANG, IR.string(thisType)), VIRTUAL_FILE));
       fnDoc.recordReturnType(PolymerPassStaticUtils.getTypeFromProperty(property, compiler));
       defaultValueKey.setJSDocInfo(fnDoc.build());
     }
@@ -375,25 +383,26 @@ final class PolymerClassRewriter {
     JSDocInfoBuilder constructorDoc = JSDocInfoBuilder.maybeCopyFrom(cls.constructor.info);
     constructorDoc.recordConstructor();
 
-    JSTypeExpression baseType = new JSTypeExpression(
-        new Node(Token.BANG, IR.string(PolymerPassStaticUtils.getPolymerElementType(cls))),
-        PolymerPass.VIRTUAL_FILE);
+    JSTypeExpression baseType =
+        new JSTypeExpression(
+            new Node(Token.BANG, IR.string(PolymerPassStaticUtils.getPolymerElementType(cls))),
+            VIRTUAL_FILE);
     constructorDoc.recordBaseType(baseType);
 
     String interfaceName = getInterfaceName(cls);
-    JSTypeExpression interfaceType = new JSTypeExpression(
-        new Node(Token.BANG, IR.string(interfaceName)), PolymerPass.VIRTUAL_FILE);
+    JSTypeExpression interfaceType =
+        new JSTypeExpression(new Node(Token.BANG, IR.string(interfaceName)), VIRTUAL_FILE);
     constructorDoc.recordImplementedInterface(interfaceType);
 
     return constructorDoc;
   }
 
   /**
-   * Appends all properties in the ClassDefinition to the prototype of the custom element.
+   * Appends all of the given properties to the given block.
    */
   private void appendPropertiesToBlock(
-      final PolymerClassDefinition cls, Node block, String basePath) {
-    for (MemberDefinition prop : cls.props) {
+      List<MemberDefinition> props, Node block, String basePath) {
+    for (MemberDefinition prop : props) {
       Node propertyNode = IR.exprResult(
           NodeUtil.newQName(compiler, basePath + prop.name.getString()));
 
@@ -416,11 +425,29 @@ final class PolymerClassRewriter {
     }
   }
 
+  /** Appends all of the given methods to the given block. */
+  private void appendMethodsToBlock(
+      final Collection<MemberDefinition> methods, Node block, String basePath) {
+    for (MemberDefinition method : methods) {
+      Node propertyNode =
+          IR.exprResult(NodeUtil.newQName(compiler, basePath + method.name.getString()));
+      propertyNode.useSourceInfoIfMissingFromForTree(method.name);
+      JSDocInfoBuilder info = JSDocInfoBuilder.maybeCopyFrom(method.info);
+      propertyNode.getFirstChild().setJSDocInfo(info.build());
+      block.addChildToBack(propertyNode);
+    }
+  }
+
   /** Remove all JSDocs from properties of a class definition */
   private void removePropertyDocs(
       final Node objLit, PolymerClassDefinition.DefinitionType defType) {
     for (MemberDefinition prop :
-        PolymerPassStaticUtils.extractProperties(objLit, defType, compiler)) {
+        PolymerPassStaticUtils.extractProperties(
+            objLit,
+            defType,
+            compiler,
+            /** constructor= */
+            null)) {
       prop.name.removeProp(Node.JSDOC_INFO_PROP);
     }
   }
@@ -511,7 +538,7 @@ final class PolymerClassRewriter {
 
     JSDocInfoBuilder info = new JSDocInfoBuilder(true);
     // This is overriding a generated function which was added to the interface in
-    // {@code addInterfaceExterns}.
+    // {@code createExportsAndExterns}.
     info.recordOverride();
     exprResNode.getFirstChild().setJSDocInfo(info.build());
 
@@ -519,12 +546,25 @@ final class PolymerClassRewriter {
   }
 
   /**
-   * Adds an interface for the given ClassDefinition to externs. This allows generated setter
-   * functions for read-only properties to avoid renaming altogether.
+   * Create exports and externs to protect element properties and methods from renaming and dead
+   * code removal.
    *
-   * @see https://www.polymer-project.org/0.8/docs/devguide/properties.html#read-only
+   * <p>Since Polymer templates, observers, and computed properties rely on string references to
+   * element properties and methods, and because we don't have a way to update those references
+   * reliably, we instead export or extern them.
+   *
+   * <p>For properties, we create a new interface called {@code Polymer<ElementName>Interface}, add
+   * all element properties to it, mark that the element class {@code @implements} this interface,
+   * and add the interface to the Closure externs. The specific set of properties we add to this
+   * interface is determined by the value of {@code polymerExportPolicy}.
+   *
+   * <p>For methods, when {@code polymerExportPolicy = EXPORT_ALL}, we instead generate {@code
+   * goog.exportProperty} calls. This is preferable to using the externs, since it can result in
+   * better minified code (since compiled code can still use the minified name), avoids unnecessary
+   * {@code missingOverride} checks, and avoids needing to keep the signatures of the element class
+   * and the generated interface synchronized (previously the source of a bug).
    */
-  private void addInterfaceExterns(
+  private void createExportsAndExterns(
       final PolymerClassDefinition cls,
       List<MemberDefinition> readOnlyProps,
       List<MemberDefinition> attributeReflectedProps) {
@@ -539,34 +579,60 @@ final class PolymerClassRewriter {
     info.recordInterface();
     varNode.setJSDocInfo(info.build());
     block.addChildToBack(varNode);
+    String interfaceBasePath = interfaceName + ".prototype.";
 
-    if (polymerVersion == 1) {
+    if (polymerExportPolicy == PolymerExportPolicy.EXPORT_ALL) {
+      // Properties from behaviors were added to our element definition earlier.
+      appendPropertiesToBlock(cls.props, block, interfaceBasePath);
+
+      // Methods from behaviors were not already added to our element definition, so we need to
+      // export those in addition to methods defined directly on the element. Note it's possible
+      // and valid for two behaviors, or a behavior and an element, to implement the same method,
+      // so we de-dupe by name. We're not checking that the signatures are compatible in the way
+      // that normal class inheritance would, but that's not easy to do since these aren't classes.
+      // Class mixins replace Polymer behaviors and are supported directly by Closure, so new code
+      // should use those instead.
+      LinkedHashMap<String, MemberDefinition> uniqueMethods = new LinkedHashMap<>();
+      if (cls.behaviors != null) {
+        for (BehaviorDefinition behavior : cls.behaviors) {
+          for (MemberDefinition method : behavior.functionsToCopy) {
+            uniqueMethods.put(method.name.getString(), method);
+          }
+        }
+      }
+      for (MemberDefinition method : cls.methods) {
+        uniqueMethods.put(method.name.getString(), method);
+      }
+
+      if (cls.defType == PolymerClassDefinition.DefinitionType.ES6Class) {
+        // Modern class-based elements get goog.exportProperty exports.
+        for (MemberDefinition method : uniqueMethods.values()) {
+          addExportPropertyCall(
+              cls.target.getQualifiedName() + ".prototype",
+              method.name.getString(),
+              cls.target.getQualifiedName() + ".prototype." + method.name.getString(),
+              method.value,
+              cls.definition);
+        }
+      } else {
+        // Legacy Polymer function calls still need the externs to be augmented. We can't make use
+        // of goog.exportProperty calls because our prototype is actually just a hallucination of
+        // the PolymerPass used for type checking via @lends, so the export won't have any effect.
+        appendMethodsToBlock(uniqueMethods.values(), block, interfaceBasePath);
+      }
+
+    } else if (polymerVersion == 1) {
       // For Polymer 1, all declared properties are non-renameable
-      appendPropertiesToBlock(cls, block, interfaceName + ".prototype.");
+      appendPropertiesToBlock(cls.props, block, interfaceBasePath);
     } else {
+      // For Polymer 2, only read-only properties and reflectToAttribute properties are
+      // non-renameable. Other properties follow the ALL_UNQUOTED renaming rules.
       List<MemberDefinition> interfaceProperties = new ArrayList<>();
       interfaceProperties.addAll(readOnlyProps);
       if (attributeReflectedProps != null) {
         interfaceProperties.addAll(attributeReflectedProps);
       }
-
-      // For Polymer 2, only read-only properties and reflectToAttribute properties are
-      // non-renameable. Other properties follow the ALL_UNQUOTED renaming rules.
-      PolymerClassDefinition tmpDef =
-          new PolymerClassDefinition(
-              cls.defType,
-              cls.definition,
-              cls.target,
-              cls.descriptor,
-              null,
-              null,
-              null,
-              interfaceProperties,
-              null,
-              null);
-
-      // disallow renaming of readonly properties
-      appendPropertiesToBlock(tmpDef, block, interfaceName + ".prototype.");
+      appendPropertiesToBlock(interfaceProperties, block, interfaceBasePath);
     }
 
     for (MemberDefinition prop : readOnlyProps) {
@@ -574,7 +640,7 @@ final class PolymerClassRewriter {
       String propName = prop.name.getString();
       String setterName = "_set" + propName.substring(0, 1).toUpperCase() + propName.substring(1);
       Node setterExprNode = IR.exprResult(
-          NodeUtil.newQName(compiler, interfaceName + ".prototype." + setterName));
+          NodeUtil.newQName(compiler, interfaceBasePath + setterName));
 
       JSDocInfoBuilder setterInfo = new JSDocInfoBuilder(true);
       JSTypeExpression propType = PolymerPassStaticUtils.getTypeFromProperty(prop, compiler);
@@ -596,21 +662,52 @@ final class PolymerClassRewriter {
     compiler.reportChangeToEnclosingScope(stmts);
   }
 
-  private static boolean hasShorthandAssignment(Node objLit) {
-    checkState(objLit.isObjectLit());
-    for (Node property : objLit.children()){
-      if (property.isStringKey() && !property.hasChildren()){
-        return true;
-      }
+  /**
+   * Insert a call to {@code goog.exportProperty} (or equivalent function depending on current
+   * coding convention).
+   *
+   * <p>Note this function is very similar to {@link GenerateExports#addExportPropertyCall}.
+   *
+   * @param object Object whose static property is being exported (e.g. @{code MyClass.prototype}).
+   * @param publicName Unobfuscated name to export (e.g. @{code "myMethod"}).
+   * @param symbol Object the name should point to (e.g. @{code MyClass.prototype.myMethod}).
+   * @param source The context node to use for source info.
+   * @param insertAfter The call will be inserted as the next sibling of this node (or as close as
+   *     possible).
+   */
+  private void addExportPropertyCall(
+      String object, String publicName, String symbol, Node source, Node insertAfter) {
+    CodingConvention convention = compiler.getCodingConvention();
+
+    // Generate the `goog.exportProperty(object, publicName, symbol);` call.
+    String exportPropertyFunction = convention.getExportPropertyFunction();
+    Node call =
+        IR.call(
+            NodeUtil.newQName(
+                compiler, exportPropertyFunction,
+                source, exportPropertyFunction),
+            NodeUtil.newQName(
+                compiler, object,
+                source, exportPropertyFunction),
+            IR.string(publicName),
+            NodeUtil.newQName(
+                compiler, symbol,
+                source, exportPropertyFunction));
+    Node expression = IR.exprResult(call).useSourceInfoIfMissingFromForTree(source);
+
+    // Walk up until we find a statement we can insert after.
+    while (!NodeUtil.isStatementBlock(insertAfter.getParent())) {
+      insertAfter = insertAfter.getParent();
     }
-    return false;
+    insertAfter.getParent().addChildAfter(expression, insertAfter);
+    compiler.reportChangeToEnclosingScope(expression);
   }
 
   /**
    * @return The name of the generated extern interface which the element implements.
    */
   private static String getInterfaceName(final PolymerClassDefinition cls) {
-    return "Polymer" + cls.target.getQualifiedName().replaceAll("\\.", "_") + "Interface";
+    return "Polymer" + cls.target.getQualifiedName().replace('.', '_') + "Interface";
   }
 
   /**

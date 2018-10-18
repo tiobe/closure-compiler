@@ -74,7 +74,7 @@ class UnreachableCodeElimination implements CompilerPass {
           }
           do {
             codeChanged = false;
-            NodeTraversal.traverseEs6(compiler, root, new EliminationPass(cfg));
+            NodeTraversal.traverse(compiler, root, new EliminationPass(cfg));
           } while (codeChanged);
         }
       });
@@ -182,7 +182,7 @@ class UnreachableCodeElimination implements CompilerPass {
 
     private Node computeFollowing(Node n) {
       Node next = ControlFlowAnalysis.computeFollowNode(n);
-      while (next != null && next.isNormalBlock()) {
+      while (next != null && next.isBlock()) {
         if (next.hasChildren()) {
           next = next.getFirstChild();
         } else {
@@ -194,7 +194,7 @@ class UnreachableCodeElimination implements CompilerPass {
 
     private void removeDeadExprStatementSafely(Node n) {
       Node parent = n.getParent();
-      if (n.isEmpty() || (n.isNormalBlock() && !n.hasChildren())) {
+      if (n.isEmpty() || (n.isBlock() && !n.hasChildren())) {
         // Not always trivial to remove, let FoldConstants work its magic later.
         return;
       }
@@ -205,15 +205,16 @@ class UnreachableCodeElimination implements CompilerPass {
       }
 
       switch (n.getToken()) {
-        // In the CFG, the only incoming edges of the DO node are from
-        // breaks/continues and the condition. The edge from the previous
-        // statement connects directly to the body of the DO.
-        //
-        // Removing an unreachable DO node is messy b/c it means we still have
-        // to execute one iteration of the body. If the DO's body has breaks in
-        // the middle, it can get even more tricky and code size might actually
-        // increase.
+          // In the CFG, the only incoming edges of the DO node are from
+          // breaks/continues and the condition. The edge from the previous
+          // statement connects directly to the body of the DO.
+          //
+          // Removing an unreachable DO node is messy b/c it means we still have
+          // to execute one iteration of the body. If the DO's body has breaks in
+          // the middle, it can get even more tricky and code size might actually
+          // increase.
         case DO:
+        case EXPORT:
           return;
 
         case BLOCK:
@@ -228,8 +229,7 @@ class UnreachableCodeElimination implements CompilerPass {
           Node tryNode = parent.getParent();
           NodeUtil.maybeAddFinally(tryNode);
           break;
-        case EXPORT:
-          return;
+
         default:
           break;
       }

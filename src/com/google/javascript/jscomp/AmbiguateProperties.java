@@ -31,16 +31,17 @@ import com.google.javascript.jscomp.graph.GraphColoring;
 import com.google.javascript.jscomp.graph.GraphColoring.GreedyGraphColoring;
 import com.google.javascript.jscomp.graph.GraphNode;
 import com.google.javascript.jscomp.graph.SubGraph;
-import com.google.javascript.rhino.FunctionTypeI;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.ObjectTypeI;
-import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.jstype.FunctionType;
+import com.google.javascript.rhino.jstype.JSType;
 import com.google.javascript.rhino.jstype.JSTypeNative;
+import com.google.javascript.rhino.jstype.ObjectType;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -84,10 +85,10 @@ class AmbiguateProperties implements CompilerPass {
   private final char[] reservedNonFirstCharacters;
 
   /** Map from property name to Property object */
-  private final Map<String, Property> propertyMap = new HashMap<>();
+  private final Map<String, Property> propertyMap = new LinkedHashMap<>();
 
   /** Property names that don't get renamed */
-  private final Set<String> externedNames;
+  private final ImmutableSet<String> externedNames;
 
   /** Names to which properties shouldn't be renamed, to avoid name conflicts */
   private final Set<String> quotedNames = new HashSet<>();
@@ -110,14 +111,11 @@ class AmbiguateProperties implements CompilerPass {
         }
       };
 
-  /** A map from TypeI to a unique representative Integer. */
-  private BiMap<TypeI, Integer> intForType = HashBiMap.create();
+  /** A map from JSType to a unique representative Integer. */
+  private final BiMap<JSType, Integer> intForType = HashBiMap.create();
 
-  /**
-   * A map from TypeI to JSTypeBitSet representing the types related
-   * to the type.
-   */
-  private Map<TypeI, JSTypeBitSet> relatedBitsets = new HashMap<>();
+  /** A map from JSType to JSTypeBitSet representing the types related to the type. */
+  private final Map<JSType, JSTypeBitSet> relatedBitsets = new HashMap<>();
 
   /** A set of types that invalidate properties from ambiguation. */
   private final InvalidatingTypes invalidatingTypes;
@@ -137,16 +135,17 @@ class AmbiguateProperties implements CompilerPass {
     this.reservedFirstCharacters = reservedFirstCharacters;
     this.reservedNonFirstCharacters = reservedNonFirstCharacters;
 
-    this.invalidatingTypes = new InvalidatingTypes.Builder(compiler.getTypeIRegistry())
-        // TODO(sdh): consider allowing ambiguation on properties of global this
-        // (we already reserve extern'd names, so this should be safe).
-        .disallowGlobalThis()
+    this.invalidatingTypes = new InvalidatingTypes.Builder(compiler.getTypeRegistry())
         .addTypesInvalidForPropertyRenaming()
         .addAllTypeMismatches(compiler.getTypeMismatches())
         .addAllTypeMismatches(compiler.getImplicitInterfaceUses())
         .build();
 
-    this.externedNames = compiler.getExternProperties();
+    this.externedNames =
+        ImmutableSet.<String>builder()
+            .add("prototype")
+            .addAll(compiler.getExternProperties())
+            .build();
   }
 
   static AmbiguateProperties makePassForTesting(
@@ -165,10 +164,10 @@ class AmbiguateProperties implements CompilerPass {
   }
 
   /** Returns an integer that uniquely identifies a JSType. */
-  private int getIntForType(TypeI type) {
+  private int getIntForType(JSType type) {
     // Templatized types don't exist at runtime, so collapse to raw type
     if (type != null && type.isGenericObjectType()) {
-      type = type.toMaybeObjectType().getPrototypeObject().getOwnerFunction().getInstanceType();
+      type = type.toMaybeObjectType().getRawType();
     }
     if (intForType.containsKey(type)) {
       return intForType.get(type).intValue();
@@ -182,7 +181,7 @@ class AmbiguateProperties implements CompilerPass {
   public void process(Node externs, Node root) {
     // Find all property references and record the types on which they occur.
     // Populate stringNodesToRename, propertyMap, quotedNames.
-    NodeTraversal.traverseEs6(compiler, root, new ProcessProperties());
+    NodeTraversal.traverse(compiler, root, new ProcessProperties());
 
     ImmutableSet.Builder<String> reservedNames = ImmutableSet.<String>builder()
         .addAll(externedNames)
@@ -242,7 +241,7 @@ class AmbiguateProperties implements CompilerPass {
     }
   }
 
-  private BitSet getRelatedTypesOnNonUnion(TypeI type) {
+  private BitSet getRelatedTypesOnNonUnion(JSType type) {
     // All of the types we encounter should have been added to the
     // relatedBitsets via computeRelatedTypes.
     if (relatedBitsets.containsKey(type)) {
@@ -277,11 +276,11 @@ class AmbiguateProperties implements CompilerPass {
    * functions, because the function type is invalidating (i.e. its properties
    * won't be ambiguated).
    */
-  private void computeRelatedTypes(TypeI type) {
+  private void computeRelatedTypes(JSType type) {
     if (type.isUnionType()) {
       type = type.restrictByNotNullOrUndefined();
       if (type.isUnionType()) {
-        for (TypeI alt : type.getUnionMembers()) {
+        for (JSType alt : type.getUnionMembers()) {
            computeRelatedTypes(alt);
         }
         return;
@@ -298,8 +297,8 @@ class AmbiguateProperties implements CompilerPass {
     related.set(getIntForType(type));
 
     // A prototype is related to its instance.
-    if (type.isPrototypeObject()) {
-      FunctionTypeI maybeCtor = type.toMaybeObjectType().getOwnerFunction();
+    if (type.isFunctionPrototypeType()) {
+      FunctionType maybeCtor = type.toMaybeObjectType().getOwnerFunction();
       if (maybeCtor.isConstructor() || maybeCtor.isInterface()) {
         addRelatedInstance(maybeCtor, related);
       }
@@ -307,9 +306,9 @@ class AmbiguateProperties implements CompilerPass {
     }
 
     // A class/interface is related to its subclasses/implementors.
-    FunctionTypeI constructor = type.toMaybeObjectType().getConstructor();
+    FunctionType constructor = type.toMaybeObjectType().getConstructor();
     if (constructor != null) {
-      for (FunctionTypeI subType : constructor.getDirectSubTypes()) {
+      for (FunctionType subType : constructor.getDirectSubTypes()) {
         addRelatedInstance(subType, related);
       }
     }
@@ -319,11 +318,11 @@ class AmbiguateProperties implements CompilerPass {
    * Adds the instance of the given constructor, its implicit prototype and all
    * its related types to the given bit set.
    */
-  private void addRelatedInstance(FunctionTypeI constructor, JSTypeBitSet related) {
+  private void addRelatedInstance(FunctionType constructor, JSTypeBitSet related) {
     checkArgument(constructor.hasInstanceType(),
         "Constructor %s without instance type.", constructor);
-    ObjectTypeI instanceType = constructor.getInstanceType();
-    related.set(getIntForType(instanceType.getPrototypeObject()));
+    ObjectType instanceType = constructor.getInstanceType();
+    related.set(getIntForType(instanceType.getImplicitPrototype()));
     computeRelatedTypes(instanceType);
     related.or(relatedBitsets.get(instanceType));
   }
@@ -338,6 +337,11 @@ class AmbiguateProperties implements CompilerPass {
     @Override
     public List<PropertyGraphNode> getNodes() {
       return nodes;
+    }
+
+    @Override
+    public int getNodeCount() {
+      return nodes.size();
     }
 
     @Override
@@ -431,7 +435,7 @@ class AmbiguateProperties implements CompilerPass {
       switch (n.getToken()) {
         case GETPROP: {
           Node propNode = n.getSecondChild();
-          TypeI type = getTypeI(n.getFirstChild());
+          JSType type = getJSType(n.getFirstChild());
           maybeMarkCandidate(propNode, type);
           return;
         }
@@ -461,10 +465,10 @@ class AmbiguateProperties implements CompilerPass {
               return;
             }
 
-            maybeMarkCandidate(propName, getTypeI(n.getSecondChild()));
+            maybeMarkCandidate(propName, getJSType(n.getSecondChild()));
           } else if (NodeUtil.isObjectDefinePropertiesDefinition(n)) {
             Node typeObj = n.getSecondChild();
-            TypeI type = getTypeI(typeObj);
+            JSType type = getJSType(typeObj);
             Node objectLiteral = typeObj.getNext();
 
             if (!objectLiteral.isObjectLit()) {
@@ -490,7 +494,7 @@ class AmbiguateProperties implements CompilerPass {
 
           // The children of an OBJECTLIT node are keys, where the values
           // are the children of the keys.
-          TypeI type = getTypeI(n);
+          JSType type = getJSType(n);
           for (Node key = n.getFirstChild(); key != null; key = key.getNext()) {
             // We only want keys that were unquoted.
             // Keys are STRING, GET, SET
@@ -523,7 +527,7 @@ class AmbiguateProperties implements CompilerPass {
      *
      * @param n The STRING node for a property
      */
-    private void maybeMarkCandidate(Node n, TypeI type) {
+    private void maybeMarkCandidate(Node n, JSType type) {
       String name = n.getString();
       if (!externedNames.contains(name)) {
         stringNodesToRename.add(n);
@@ -531,7 +535,7 @@ class AmbiguateProperties implements CompilerPass {
       }
     }
 
-    private Property recordProperty(String name, TypeI type) {
+    private Property recordProperty(String name, JSType type) {
       Property prop = getProperty(name);
       prop.addType(type);
       return prop;
@@ -551,18 +555,18 @@ class AmbiguateProperties implements CompilerPass {
    * This method gets the JSType from the Node argument and verifies that it is
    * present.
    */
-  private TypeI getTypeI(Node n) {
+  private JSType getJSType(Node n) {
     if (n == null) {
-      return compiler.getTypeIRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
+      return compiler.getTypeRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
     }
 
-    TypeI type = n.getTypeI();
+    JSType type = n.getJSType();
     if (type == null) {
       // TODO(user): This branch indicates a compiler bug, not worthy of
       // halting the compilation but we should log this and analyze to track
       // down why it happens. This is not critical and will be resolved over
       // time as the type checker is extended.
-      return compiler.getTypeIRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
+      return compiler.getTypeRegistry().getNativeType(JSTypeNative.UNKNOWN_TYPE);
     } else {
       return type;
     }
@@ -586,7 +590,7 @@ class AmbiguateProperties implements CompilerPass {
     }
 
     /** Add this type to this property, calculating */
-    void addType(TypeI newType) {
+    void addType(JSType newType) {
       if (skipAmbiguating) {
         return;
       }
@@ -596,7 +600,7 @@ class AmbiguateProperties implements CompilerPass {
       if (newType.isUnionType()) {
         newType = newType.restrictByNotNullOrUndefined();
         if (newType.isUnionType()) {
-          for (TypeI alt : newType.getUnionMembers()) {
+          for (JSType alt : newType.getUnionMembers()) {
             addNonUnionType(alt);
           }
           return;
@@ -605,12 +609,11 @@ class AmbiguateProperties implements CompilerPass {
       addNonUnionType(newType);
     }
 
-    private void addNonUnionType(TypeI newType) {
+    private void addNonUnionType(JSType newType) {
       if (skipAmbiguating || invalidatingTypes.isInvalidating(newType)) {
         skipAmbiguating = true;
         return;
       }
-
       if (!relatedTypes.get(getIntForType(newType))) {
         computeRelatedTypes(newType);
         relatedTypes.or(getRelatedTypesOnNonUnion(newType));

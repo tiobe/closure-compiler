@@ -108,6 +108,7 @@ public final class LightweightMessageFormatter extends AbstractMessageFormatter 
     boldLine.append(error.description.replace("\n", " ").replace("\r", ""));
 
     b.append(maybeEmbolden(boldLine.toString()));
+
     return b.toString();
   }
 
@@ -126,9 +127,13 @@ public final class LightweightMessageFormatter extends AbstractMessageFormatter 
 
   /**
    * Formats a region by appending line numbers in front, e.g.
-   * <pre>   9| if (foo) {
+   *
+   * <pre>
+   *    9| if (foo) {
    *   10|   alert('bar');
-   *   11| }</pre>
+   *   11| }
+   * </pre>
+   *
    * and return line excerpt without any modification.
    */
   static class LineNumberingFormatter implements ExcerptFormatter {

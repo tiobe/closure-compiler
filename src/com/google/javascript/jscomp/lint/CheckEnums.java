@@ -52,7 +52,7 @@ public final class CheckEnums extends AbstractPostOrderCallback implements Compi
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
@@ -78,7 +78,7 @@ public final class CheckEnums extends AbstractPostOrderCallback implements Compi
       return;
     }
 
-    if (node.isStringKey() && !node.hasChildren()) {
+    if (node.isStringKey() && node.isShorthandProperty()) {
       t.report(node, SHORTHAND_ASSIGNMENT_IN_ENUM);
     }
 
@@ -108,4 +108,3 @@ public final class CheckEnums extends AbstractPostOrderCallback implements Compi
     }
   }
 }
-

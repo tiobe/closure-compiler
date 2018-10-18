@@ -95,7 +95,7 @@ class PhaseOptimizer implements CompilerPass {
           PassNames.INLINE_VARIABLES,
           PassNames.DEAD_ASSIGNMENT_ELIMINATION,
           PassNames.COLLAPSE_OBJECT_LITERALS,
-          PassNames.REMOVE_UNUSED_VARS,
+          PassNames.REMOVE_UNUSED_CODE,
           PassNames.REMOVE_UNUSED_PROTOTYPE_PROPERTIES,
           PassNames.REMOVE_UNUSED_CLASS_PROPERTIES,
           PassNames.PEEPHOLE_OPTIMIZATIONS,
@@ -150,22 +150,19 @@ class PhaseOptimizer implements CompilerPass {
    */
   void consume(List<PassFactory> factories) {
     Loop currentLoop = new Loop();
-    boolean isCurrentLoopPopulated = false;
     for (PassFactory factory : factories) {
       if (factory.isOneTimePass()) {
-        if (isCurrentLoopPopulated) {
+        if (currentLoop.isPopulated()) {
           passes.add(currentLoop);
           currentLoop = new Loop();
-          isCurrentLoopPopulated = false;
         }
         addOneTimePass(factory);
       } else {
         currentLoop.addLoopedPass(factory);
-        isCurrentLoopPopulated = true;
       }
     }
 
-    if (isCurrentLoopPopulated) {
+    if (currentLoop.isPopulated()) {
       passes.add(currentLoop);
     }
   }
@@ -227,6 +224,9 @@ class PhaseOptimizer implements CompilerPass {
     // reference to it is retained in PhaseOptimizer:
     //   factory.create(compiler).process(externs, root);
     for (CompilerPass pass : passes) {
+      if (Thread.interrupted()) {
+        throw new RuntimeException(new InterruptedException());
+      }
       pass.process(externs, root);
       if (hasHaltingErrors()) {
         return;
@@ -238,8 +238,7 @@ class PhaseOptimizer implements CompilerPass {
     if (printAstHashcodes) {
       String hashCodeMsg = "AST hashCode after " + passName + ": "
           + compiler.toSource(root).hashCode();
-      System.err.println(hashCodeMsg);
-      compiler.addToDebugLog(hashCodeMsg);
+      logger.info(hashCodeMsg);
     }
   }
 
@@ -277,7 +276,12 @@ class PhaseOptimizer implements CompilerPass {
 
     @Override
     public void process(Node externs, Node root) {
-      if (!factory.featureSet().contains(compiler.getFeatureSet())) {
+      if (compiler.getOptions().shouldSkipUnsupportedPasses()
+          && !factory.featureSet().contains(compiler.getFeatureSet())) {
+        // NOTE: this warning ONLY appears in code using the Google-internal runner.
+        // Both CommandLineRunner.java and gwt/client/GwtRunner.java explicitly set the logging
+        // level to Level.OFF to avoid seeing this warning.
+        // See https://github.com/google/closure-compiler/pull/2998 for why.
         logger.warning("Skipping pass " + name);
         logger.info(
             "pass supports: " + factory.featureSet()
@@ -294,7 +298,7 @@ class PhaseOptimizer implements CompilerPass {
       if (tracker != null) {
         tracker.recordPassStart(name, factory.isOneTimePass());
       }
-      tracer = new Tracer("JSCompiler");
+      tracer = new Tracer("Compiler", name);
 
       compiler.beforePass(name);
 
@@ -402,8 +406,6 @@ class PhaseOptimizer implements CompilerPass {
       // Set up function-change tracking
       scopeHandler = new ScopedChangeHandler();
       compiler.addChangeHandler(scopeHandler);
-
-      compiler.setChangeScope(null);
 
       // lastRuns is initialized before each loop. This way, when a pass is run
       // in the 2nd loop for the 1st time, it looks at all scopes.
@@ -536,6 +538,10 @@ class PhaseOptimizer implements CompilerPass {
 
       myPasses.removeAll(optimalPasses);
       myPasses.addAll(optimalPasses);
+    }
+
+    boolean isPopulated() {
+      return !myPasses.isEmpty();
     }
 
     private boolean isCodeRemovalLoop() {

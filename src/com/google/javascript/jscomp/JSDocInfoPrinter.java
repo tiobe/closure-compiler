@@ -49,6 +49,7 @@ public final class JSDocInfoPrinter {
     List<String> parts = new ArrayList<>();
 
     // order:
+    //   externs|typeSummary
     //   export|public|private|package|protected
     //   abstract
     //   lends
@@ -67,12 +68,19 @@ public final class JSDocInfoPrinter {
     //   override
     //   type|define|typedef|enum
     //   implicitCast
+    //   nocollapse
     //   suppress
     //   deprecated
     //   polymer
     //   polymerBehavior
     //   mixinFunction
     parts.add("/**");
+
+    if (info.isExterns()) {
+      parts.add("@externs");
+    } else if (info.isTypeSummary()) {
+      parts.add("@typeSummary");
+    }
 
     if (info.isExport()) {
       parts.add("@export");
@@ -89,7 +97,7 @@ public final class JSDocInfoPrinter {
       parts.add("@lends {" + info.getLendsName() + "}");
     }
 
-    if (info.isConstant() && !info.isDefine() && !info.isFinal()) {
+    if (info.hasConstAnnotation() && !info.isDefine()) {
       parts.add("@const");
     }
 
@@ -210,11 +218,15 @@ public final class JSDocInfoPrinter {
       parts.add("@implicitCast");
     }
 
+    if (info.isNoCollapse()) {
+      parts.add("@nocollapse");
+    }
+
     Set<String> suppressions = info.getSuppressions();
     if (!suppressions.isEmpty()) {
       // Print suppressions in sorted order to avoid non-deterministic output.
       String[] arr = suppressions.toArray(new String[0]);
-      Arrays.sort(arr, Ordering.<String>natural());
+      Arrays.sort(arr, Ordering.natural());
       parts.add("@suppress {" + Joiner.on(',').join(arr) + "}");
       multiline = true;
     }
@@ -345,6 +357,9 @@ public final class JSDocInfoPrinter {
       sb.append("}");
     } else if (typeNode.isVoid()) {
       sb.append("void");
+    } else if (typeNode.isTypeOf()) {
+      sb.append("typeof ");
+      appendTypeNode(sb, typeNode.getFirstChild());
     } else {
       if (typeNode.hasChildren()) {
         sb.append(typeNode.getString())

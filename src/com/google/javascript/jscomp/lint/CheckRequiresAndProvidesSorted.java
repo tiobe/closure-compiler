@@ -18,11 +18,8 @@ package com.google.javascript.jscomp.lint;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.base.Function;
 import com.google.common.collect.Ordering;
 import com.google.javascript.jscomp.AbstractCompiler;
-import com.google.javascript.jscomp.CodePrinter;
-import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.HotSwapCompilerPass;
 import com.google.javascript.jscomp.JSError;
@@ -71,65 +68,58 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
-  public static final Function<Node, String> getSortKey =
-      new Function<Node, String>() {
-        @Override
-        public String apply(Node n) {
-          String key = null;
-          boolean isForwardDeclare = false;
-          if (NodeUtil.isNameDeclaration(n)) {
-            if (n.getFirstChild().isName()) {
-              // Case 1:
-              //   var x = goog.require('w.x');
-              // or
-              //   var x = goog.forwardDeclare('w.x');
-              key = n.getFirstChild().getString();
-              if (n.getFirstFirstChild()
-                  .getFirstChild()
-                  .matchesQualifiedName("goog.forwardDeclare")) {
-                isForwardDeclare = true;
-              }
-            } else if (n.getFirstChild().isDestructuringLhs()) {
-              // Case 2: var {y} = goog.require('w.x');
-              // All case 2 nodes should come after all case 1 nodes. ('{' sorts after a-z)
-              Node pattern = n.getFirstFirstChild();
-              checkState(pattern.isObjectPattern(), pattern);
-              Node call = n.getFirstChild().getLastChild();
-              checkState(call.isCall(), call);
-              checkState(
-                  call.getFirstChild().matchesQualifiedName("goog.require"), call.getFirstChild());
-              if (!pattern.hasChildren()) {
-                key = "{";
-              } else {
-                key = "{" + pattern.getFirstChild().getString();
-              }
-            }
-          } else if (n.isExprResult()) {
-            // Case 3, one of:
-            //   goog.provide('a.b.c');
-            //   goog.require('a.b.c');
-            //   goog.forwardDeclare('a.b.c');
-            // All case 3 nodes should come after case 1 and 2 nodes, so prepend
-            // '|' which sorts after '{'
-            key = "|" + n.getFirstChild().getLastChild().getString();
-            if (n.getFirstFirstChild().matchesQualifiedName("goog.forwardDeclare")) {
+  public static final String getSortKey(Node n) {
+    String key = null;
+    boolean isForwardDeclare = false;
+    if (NodeUtil.isNameDeclaration(n)) {
+      if (n.getFirstChild().isName()) {
+        // Case 1:
+        //   var x = goog.require('w.x');
+        // or
+        //   var x = goog.forwardDeclare('w.x');
+        key = n.getFirstChild().getString();
+        if (n.getFirstFirstChild().getFirstChild().matchesQualifiedName("goog.forwardDeclare")) {
               isForwardDeclare = true;
             }
-          } else {
-            throw new IllegalArgumentException("Unexpected node " + n);
-          }
-          // Make sure all forwardDeclares come after all requires.
-          return (isForwardDeclare ? "z" : "a") + checkNotNull(key);
+      } else if (n.getFirstChild().isDestructuringLhs()) {
+        // Case 2: var {y} = goog.require('w.x');
+        // All case 2 nodes should come after all case 1 nodes. ('{' sorts after a-z)
+        Node pattern = n.getFirstFirstChild();
+        checkState(pattern.isObjectPattern(), pattern);
+        Node call = n.getFirstChild().getLastChild();
+        checkState(call.isCall(), call);
+        checkState(call.getFirstChild().matchesQualifiedName("goog.require"), call.getFirstChild());
+        if (!pattern.hasChildren()) {
+          key = "{";
+        } else {
+          key = "{" + pattern.getFirstChild().getString();
         }
-      };
+      }
+    } else if (n.isExprResult()) {
+      // Case 3, one of:
+      //   goog.provide('a.b.c');
+      //   goog.require('a.b.c');
+      //   goog.forwardDeclare('a.b.c');
+      // All case 3 nodes should come after case 1 and 2 nodes, so prepend
+      // '|' which sorts after '{'
+      key = "|" + n.getFirstChild().getLastChild().getString();
+      if (n.getFirstFirstChild().matchesQualifiedName("goog.forwardDeclare")) {
+        isForwardDeclare = true;
+      }
+    } else {
+      throw new IllegalArgumentException("Unexpected node " + n);
+    }
+    // Make sure all forwardDeclares come after all requires.
+    return (isForwardDeclare ? "z" : "a") + checkNotNull(key);
+  }
 
   private static final String getNamespace(Node requireStatement) {
     if (requireStatement.isExprResult()) {
@@ -147,7 +137,8 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
     throw new IllegalArgumentException("Unexpected node " + requireStatement);
   }
 
-  private final Ordering<Node> alphabetical = Ordering.natural().onResultOf(getSortKey);
+  private final Ordering<Node> alphabetical =
+      Ordering.natural().onResultOf(CheckRequiresAndProvidesSorted::getSortKey);
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
@@ -202,14 +193,8 @@ public final class CheckRequiresAndProvidesSorted extends AbstractShallowCallbac
   private void reportIfOutOfOrder(List<Node> requiresOrProvides, DiagnosticType warning) {
     if (!alphabetical.isOrdered(requiresOrProvides)) {
       StringBuilder correctOrder = new StringBuilder();
-      for (Node require : alphabetical.sortedCopy(requiresOrProvides)) {
-        CodePrinter.Builder builder = new CodePrinter.Builder(require);
-        CompilerOptions options = new CompilerOptions();
-        options.setPrettyPrint(true);
-        options.setPreferSingleQuotes(true);
-        options.setPreserveTypeAnnotations(true);
-        builder.setCompilerOptions(options);
-        correctOrder.append(builder.build());
+      for (Node n : alphabetical.sortedCopy(requiresOrProvides)) {
+        correctOrder.append(compiler.toSource(n));
       }
       compiler.report(
           JSError.make(requiresOrProvides.get(0), warning, correctOrder.toString()));

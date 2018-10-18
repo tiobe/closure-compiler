@@ -27,12 +27,8 @@
 
 // START ES6 RETROFIT CODE
 // symbol, Symbol and Symbol.iterator are actually ES6 types but some
-// Some types require them to be part of their definition (such as Array).
+// base types require them to be part of their definition (such as Array).
 
-
-// TODO(johnlenz): symbol should be a primitive type.
-/** @typedef {?} */
-var symbol;
 
 /**
  * @param {string=} opt_description
@@ -107,7 +103,7 @@ Iterable.prototype[Symbol.iterator] = function() {};
 function Iterator() {}
 
 /**
- * @param {VALUE=} value
+ * @param {?=} opt_value
  * @return {!IIterableResult<VALUE>}
  */
 Iterator.prototype.next;
@@ -144,6 +140,7 @@ IArrayLike.prototype.length;
 /**
  * @constructor
  * @implements {IArrayLike<T>}
+ * @implements {Iterable<?>}
  * @template T
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions_and_function_scope/arguments
  */
@@ -171,10 +168,12 @@ Arguments.prototype.caller;
 Arguments.prototype.length;
 
 /**
- * Not actually a global variable, but we need it in order for the current type
- * checker to typecheck the "arguments" variable in a function correctly.
- * TODO(tbreisacher): When the old type checker is gone, delete this and add
- * an 'arguments' variable of type Array<string> in the d8 externs.
+ * Not actually a global variable, when running in a browser environment. But
+ * we need it in order for the type checker to typecheck the "arguments"
+ * variable in a function correctly.
+ *
+ * TODO(tbreisacher): There should be a separate 'arguments' variable of type
+ * `Array<string>`, in the d8 externs.
  *
  * @type {!Arguments}
  * @see http://developer.mozilla.org/en/Core_JavaScript_1.5_Reference/Functions_and_function_scope/arguments
@@ -281,9 +280,9 @@ function isNaN(num) {}
 function parseFloat(num) {}
 
 /**
- * Parse an integer. Use of {@code parseInt} without {@code base} is strictly
+ * Parse an integer. Use of `parseInt` without `base` is strictly
  * banned in Google. If you really want to parse octal or hex based on the
- * leader, then pass {@code undefined} as the base.
+ * leader, then pass `undefined` as the base.
  *
  * @param {*} num
  * @param {number|undefined} base
@@ -458,32 +457,12 @@ Object.prototype.toSource = function() {};
 Object.prototype.toString = function() {};
 
 /**
- * Removes a watchpoint set with the {@see Object.prototype.watch} method.
- * Mozilla-only.
- * @param {string} prop The name of a property of the object.
- * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/unwatch
- * @return {undefined}
- */
-Object.prototype.unwatch = function(prop) {};
-
-/**
- * Returns the object's {@code this} value.
+ * Returns the object's `this` value.
  * @return {*}
  * @nosideeffects
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/valueOf
  */
 Object.prototype.valueOf = function() {};
-
-/**
- * Sets a watchpoint method.
- * Mozilla-only.
- * @param {string} prop The name of a property of the object.
- * @param {Function} handler A function to call.
- * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/watch
- * @return {undefined}
- */
-Object.prototype.watch = function(prop, handler) {};
-
 
 /**
  * @constructor
@@ -608,11 +587,12 @@ Array.prototype.join = function(opt_separator) {};
  */
 Array.prototype.pop = function() {};
 
+// TODO(bradfordcsmith): remove "undefined" from the var_args of push
 /**
  * Mutates an array by appending the given elements and returning the new
  * length of the array.
  *
- * @param {...T} var_args
+ * @param {...(T|undefined)} var_args
  * @return {number} The new length of the array.
  * @this {IArrayLike<T>}
  * @template T
@@ -2068,9 +2048,7 @@ RegExp.prototype.compile = function(pattern, opt_flags) {};
 
 /**
  * @param {*} str The string to search.
- * @return {Array<string>} This should really return an Array with a few
- *     special properties, but we do not have a good way to model this in
- *     our type system. Also see String.prototype.match.
+ * @return {?RegExpResult}
  * @see http://msdn.microsoft.com/en-us/library/z908hy33(VS.85).aspx
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/exec
  */
@@ -2090,6 +2068,34 @@ RegExp.prototype.test = function(str) {};
  * @override
  */
 RegExp.prototype.toString = function() {};
+
+/**
+ * @constructor
+ * @extends {Array<string>}
+ */
+var RegExpResult = function() {};
+
+
+/** @type {number} */
+RegExpResult.prototype.index;
+
+
+/** @type {string} */
+RegExpResult.prototype.input;
+
+
+/** @type {number} */
+RegExpResult.prototype.length;
+
+
+/**
+ * Not actually part of ES3; was added in 2018.
+ * https://github.com/tc39/proposal-regexp-named-groups
+ *
+ * @type {!Object<string, string>}
+ */
+RegExpResult.prototype.groups;
+
 
 // Constructor properties:
 
@@ -2199,6 +2205,13 @@ RegExp.prototype.ignoreCase;
 RegExp.prototype.lastIndex;
 
 /**
+ * Whether or not the regular expression uses lastIndex.
+ * @type {boolean}
+ * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/sticky
+ */
+RegExp.prototype.sticky;
+
+/**
  * Whether or not to search in strings across multiple lines.
  * @type {boolean}
  * @see http://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/multiline
@@ -2212,6 +2225,12 @@ RegExp.prototype.multiline;
  */
 RegExp.prototype.source;
 
+/**
+ * The flags the regex was created with.
+ * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/flags
+ */
+RegExp.prototype.flags;
 
 /**
  * @constructor
@@ -2371,31 +2390,3 @@ function URIError(opt_message, opt_file, opt_line) {}
  * @type {function(new:?, string, string=)}
  */
 function ActiveXObject(progId, opt_location) {}
-
-/**
- * @return {string}
- * @nosideeffects
- * @see http://msdn.microsoft.com/en-us/library/9k34bww2(VS.80).aspx
- */
-function ScriptEngine() {}
-
-/**
- * @return {number}
- * @nosideeffects
- * @see http://msdn.microsoft.com/en-us/library/yf25ky07(VS.80).aspx
- */
-function ScriptEngineMajorVersion() {}
-
-/**
- * @return {number}
- * @nosideeffects
- * @see http://msdn.microsoft.com/en-us/library/wx3812cz(VS.80).aspx
- */
-function ScriptEngineMinorVersion() {}
-
-/**
- * @return {number}
- * @nosideeffects
- * @see http://msdn.microsoft.com/en-us/library/e98hsk2f(VS.80).aspx
- */
-function ScriptEngineBuildVersion() {}

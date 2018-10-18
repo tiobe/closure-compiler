@@ -79,11 +79,6 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
           "JSC_GOOG_CLASS_ES6_COMPUTED_PROP_NAMES_NOT_SUPPORTED",
           "Computed property names not supported in goog.defineClass.");
 
-  static final DiagnosticType GOOG_CLASS_ES6_SHORTHAND_ASSIGNMENT_NOT_SUPPORTED =
-      DiagnosticType.error(
-          "JSC_GOOG_CLASS_ES6_SHORTHAND_ASSIGNMENT_NOT_SUPPORTED",
-          "Shorthand assignments not supported in goog.defineClass.");
-
   static final DiagnosticType GOOG_CLASS_ES6_ARROW_FUNCTION_NOT_SUPPORTED =
       DiagnosticType.error(
           "JSC_GOOG_CLASS_ES6_ARROW_FUNCTION_NOT_SUPPORTED",
@@ -108,7 +103,7 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   @Override
@@ -351,12 +346,6 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
             GOOG_CLASS_ES6_COMPUTED_PROP_NAMES_NOT_SUPPORTED));
         return false;
       }
-      if (key.isStringKey() && !key.hasChildren()) {
-        // report using shorthand assignment
-        compiler.report(JSError.make(objlit,
-            GOOG_CLASS_ES6_SHORTHAND_ASSIGNMENT_NOT_SUPPORTED));
-        return false;
-      }
       if (key.isStringKey()
           && key.hasChildren()
           && key.getFirstChild().isArrowFunction()){
@@ -454,8 +443,10 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
     }
 
     for (MemberDefinition def : cls.staticProps) {
-      // remove the original jsdoc info if it was attached to the value.
-      def.value.setJSDocInfo(null);
+      if (!def.value.isCast()) {
+        // remove the original jsdoc info if it was attached to the value.
+        def.value.setJSDocInfo(null);
+      }
 
       // example: ctr.prop = value
       block.addChildToBack(
@@ -507,17 +498,14 @@ class ClosureRewriteClass extends AbstractPostOrderCallback
       Node argList = cls.classModifier.getSecondChild();
       Node arg = argList.getFirstChild();
       final String argName = arg.getString();
-      NodeTraversal.traverseEs6(
+      NodeTraversal.traversePostOrder(
           compiler,
           cls.classModifier.getLastChild(),
-          new AbstractPostOrderCallback() {
-            @Override
-            public void visit(NodeTraversal t, Node n, Node parent) {
-              if (n.isName() && n.getString().equals(argName)) {
-                Node newName = cls.name.cloneTree();
-                parent.replaceChild(n, newName);
-                compiler.reportChangeToEnclosingScope(newName);
-              }
+          (NodeTraversal unused, Node n, Node parent) -> {
+            if (n.isName() && n.getString().equals(argName)) {
+              Node newName = cls.name.cloneTree();
+              parent.replaceChild(n, newName);
+              compiler.reportChangeToEnclosingScope(newName);
             }
           });
 

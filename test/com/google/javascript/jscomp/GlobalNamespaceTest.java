@@ -20,52 +20,57 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.javascript.jscomp.GlobalNamespace.Name;
 import com.google.javascript.jscomp.GlobalNamespace.Ref;
-
 import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link GlobalNamespace}.
  *
  * @author nicksantos@google.com (Nick Santos)
  */
+@RunWith(JUnit4.class)
 public final class GlobalNamespaceTest extends TestCase {
 
+  @Test
   public void testRemoveDeclaration1() {
-    Name n = new Name("a", null, false);
+    Name n = Name.createForTesting("a");
     Ref set1 = createNodelessRef(Ref.Type.SET_FROM_GLOBAL);
     Ref set2 = createNodelessRef(Ref.Type.SET_FROM_GLOBAL);
 
     n.addRef(set1);
     n.addRef(set2);
 
-    assertEquals(set1, n.getDeclaration());
-    assertEquals(2, n.globalSets);
+    assertThat(n.getDeclaration()).isEqualTo(set1);
+    assertThat(n.getGlobalSets()).isEqualTo(2);
     assertThat(n.getRefs()).hasSize(2);
 
     n.removeRef(set1);
 
-    assertEquals(set2, n.getDeclaration());
-    assertEquals(1, n.globalSets);
+    assertThat(n.getDeclaration()).isEqualTo(set2);
+    assertThat(n.getGlobalSets()).isEqualTo(1);
     assertThat(n.getRefs()).hasSize(1);
   }
 
+  @Test
   public void testRemoveDeclaration2() {
-    Name n = new Name("a", null, false);
+    Name n = Name.createForTesting("a");
     Ref set1 = createNodelessRef(Ref.Type.SET_FROM_GLOBAL);
     Ref set2 = createNodelessRef(Ref.Type.SET_FROM_LOCAL);
 
     n.addRef(set1);
     n.addRef(set2);
 
-    assertEquals(set1, n.getDeclaration());
-    assertEquals(1, n.globalSets);
-    assertEquals(1, n.localSets);
+    assertThat(n.getDeclaration()).isEqualTo(set1);
+    assertThat(n.getGlobalSets()).isEqualTo(1);
+    assertThat(n.getLocalSets()).isEqualTo(1);
     assertThat(n.getRefs()).hasSize(2);
 
     n.removeRef(set1);
 
-    assertNull(n.getDeclaration());
-    assertEquals(0, n.globalSets);
+    assertThat(n.getDeclaration()).isNull();
+    assertThat(n.getGlobalSets()).isEqualTo(0);
   }
 
   private Ref createNodelessRef(Ref.Type type) {

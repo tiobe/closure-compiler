@@ -41,7 +41,7 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   @Override
@@ -53,11 +53,8 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
         }
         break;
       case STRING_KEY:
-        if (n.hasChildren()
-            && n.getFirstChild().isName()
-            && n.getFirstChild().getString().equals(n.getString())) {
-          n.removeFirstChild();
-          compiler.reportChangeToEnclosingScope(n);
+        if (n.getFirstChild().isName() && n.getFirstChild().getString().equals(n.getString())) {
+          n.setShorthandProperty(true);
         }
         break;
       default:
@@ -70,7 +67,7 @@ class SubstituteEs6Syntax extends AbstractPostOrderCallback implements HotSwapCo
    */
   private void maybeSimplifyArrowFunctionBody(Node arrowFunction, Node body) {
     checkArgument(arrowFunction.isArrowFunction());
-    if (!body.isNormalBlock() || !body.hasOneChild() || !body.getFirstChild().isReturn()) {
+    if (!body.isBlock() || !body.hasOneChild() || !body.getFirstChild().isReturn()) {
       return;
     }
     Node returnValue = body.getFirstChild().removeFirstChild();

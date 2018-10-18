@@ -23,8 +23,8 @@ import com.google.javascript.jscomp.NodeTraversal.ScopedCallback;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
-import java.util.LinkedList;
 import java.util.List;
 
 /**
@@ -90,7 +90,7 @@ class OptimizeArgumentsArray implements CompilerPass, ScopedCallback {
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, checkNotNull(root), this);
+    NodeTraversal.traverse(compiler, checkNotNull(root), this);
   }
 
   @Override
@@ -109,7 +109,7 @@ class OptimizeArgumentsArray implements CompilerPass, ScopedCallback {
     if (currentArgumentsAccess != null) {
       argumentsAccessStack.push(currentArgumentsAccess);
     }
-    currentArgumentsAccess = new LinkedList<>();
+    currentArgumentsAccess = new ArrayList<>();
   }
 
   @Override

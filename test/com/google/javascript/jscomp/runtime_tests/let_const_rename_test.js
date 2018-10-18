@@ -234,6 +234,17 @@ function testDoWhileCapturedLet() {
   assertEquals(5, arr[5]());
 }
 
+function testDoWhileFold() {
+  let x = 1;
+  (function () {
+    do {
+      let x = 2;
+      assertEquals(2, x);
+    } while (x = 10, false);
+  })();
+  assertEquals(10, x);
+}
+
 function testMutatedLoopCapturedLet() {
   const arr = [];
   for (let i = 0; i < 10; i++) {
@@ -311,4 +322,97 @@ function testLabeledLoop() {
     continue label;
   }
   assertArrayEquals([0, 1, 2], [arr[0](), arr[1](), arr[2]()]);
+}
+
+function testRenamingDoesNotBreakObjectShorthand() {
+  let x = 2;
+  {
+    let x = 4;
+    assertObjectEquals({x: 4}, {x});
+  }
+  assertObjectEquals({x: 2}, {x});
+}
+
+function testContinueDoesNotBreakClosures() {
+  // github issue #2779
+  var closures = [];
+  var x = 0;
+  while (x < 5) {
+    const y = x;
+    closures.push(function() {
+      return y;
+    });
+    x++;
+    continue;  // does this skip the update for the y variable?
+  }
+  var results = [];
+  for (let i = 0; i < closures.length; ++i) {
+    results[i] = closures[i]();
+  }
+  assertArrayEquals([0, 1, 2, 3, 4], results);
+}
+
+function testNestedContinueDoesNotBreakClosures() {
+  // github issue #2779
+  const inputWords = ['abc', 'def', 'ghi', 'jkl'];
+  const wordClosures = [];
+  const letterClosures = [];
+  OUTER: while (inputWords.length > 0) {
+    const word = inputWords.shift();
+    for (const letter of word) {
+      if (letter == 'a') {
+        continue;  // skip letter a
+      } else if (letter == 'h') {
+        continue OUTER;  // skip word containing 'i'
+      } else {
+        letterClosures.push(() => letter);
+      }
+    }
+    wordClosures.push(() => word);
+  }
+  const words = [];
+  for (const wordFunc of wordClosures) {
+    words.push(wordFunc());
+  }
+  // 'ghi' was skipped because it contained 'h'
+  assertArrayEquals(['abc', 'def', 'jkl'], words);
+
+  let letters = '';
+  for (const letterFunc of letterClosures) {
+    letters += letterFunc();
+  }
+  // a skipped explicitly
+  // h skipped explicitly
+  // i skipped because it was after h and in the same word
+  assertEquals('bcdefgjkl', letters);
+}
+
+function testLetWithSameName_multivariateDeclaration() {
+  // See https://github.com/google/closure-compiler/issues/2969
+  {
+    let x = 1, y = 2;
+    assertEquals(1, x);
+    assertEquals(2, y);
+  }
+  {
+    let x = 3, y = 4;
+    assertEquals(3, x);
+    assertEquals(4, y);
+  }
+}
+
+function testLetInLoopClosure_multivariateDeclaration() {
+  for (let i = 0; i < 3; i++) {
+    let x, y;
+    // Verify that x and y are always undefined here, even though they are
+    // reassigned later in the loop.
+    assertUndefined(x);
+    assertUndefined(y);
+    function f() {
+      x = y = 3;
+    }
+    f();
+    assertEquals(3, x);
+    assertEquals(3, y);
+  }
 }

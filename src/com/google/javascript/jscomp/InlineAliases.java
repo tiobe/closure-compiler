@@ -17,7 +17,7 @@
 package com.google.javascript.jscomp;
 
 import com.google.common.base.Predicates;
-import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfo.Visibility;
 import com.google.javascript.rhino.Node;
@@ -55,16 +55,25 @@ final class InlineAliases implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-    namespace = new GlobalNamespace(compiler, root);
-    NodeTraversal.traverseEs6(compiler, root, new AliasesCollector());
-    NodeTraversal.traverseEs6(compiler, root, new AliasesInliner());
+    namespace = new GlobalNamespace(compiler, externs, root);
+    NodeTraversal.traverseRoots(compiler, new AliasesCollector(), externs, root);
+    NodeTraversal.traverseRoots(compiler, new AliasesInliner(), externs, root);
   }
 
-  private class AliasesCollector extends AbstractPostOrderCallback {
+  private abstract static class ExternsSkippingCallback implements Callback {
+    @Override
+    public final boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
+      return !n.isScript() || !n.isFromExterns() || NodeUtil.isFromTypeSummary(n);
+    }
+  }
+
+  private class AliasesCollector extends ExternsSkippingCallback {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
         case VAR:
+        case CONST:
+        case LET:
           if (n.hasOneChild() && t.inGlobalScope()) {
             visitAliasDefinition(n.getFirstChild(), NodeUtil.getBestJSDocInfo(n.getFirstChild()));
           }
@@ -85,7 +94,7 @@ final class InlineAliases implements CompilerPass {
      * the rhs will have already been substituted by the time we record the new alias.
      */
     private void visitAliasDefinition(Node lhs, JSDocInfo info) {
-      if (info != null && info.hasConstAnnotation() && !info.hasTypeInformation()
+      if (isDeclaredConst(lhs, info) && (info == null || !info.hasTypeInformation())
           && lhs.isQualifiedName()) {
         Node rhs = NodeUtil.getRValueOfLValue(lhs);
         if (rhs != null && rhs.isQualifiedName()) {
@@ -102,6 +111,13 @@ final class InlineAliases implements CompilerPass {
       }
     }
 
+    private boolean isDeclaredConst(Node lhs, JSDocInfo info) {
+      if (info != null && info.hasConstAnnotation()) {
+        return true;
+      }
+      return lhs.getParent().isConst();
+    }
+
     private boolean isPrivate(Node nameNode) {
       if (nameNode.isQualifiedName()
           && compiler.getCodingConvention().isPrivate(nameNode.getQualifiedName())) {
@@ -112,7 +128,7 @@ final class InlineAliases implements CompilerPass {
     }
   }
 
-  private class AliasesInliner extends AbstractPostOrderCallback {
+  private class AliasesInliner extends ExternsSkippingCallback {
     @Override
     public void visit(NodeTraversal t, Node n, Node parent) {
       switch (n.getToken()) {
@@ -130,9 +146,11 @@ final class InlineAliases implements CompilerPass {
               return;
             }
 
-            Node newNode =
-                NodeUtil.newQName(compiler, resolveAlias(n.getQualifiedName(), n))
-                    .useSourceInfoFromForTree(n);
+            Node newNode = NodeUtil.newQName(compiler, resolveAlias(n.getQualifiedName(), n));
+
+            // If n is get_prop like "obj.foo" then newNode should use only location of foo, not
+            // obj.foo.
+            newNode.useSourceInfoFromForTree(n.isGetProp() ? n.getLastChild() : n);
             parent.replaceChild(n, newNode);
             t.reportCodeChange();
           }
@@ -169,7 +187,7 @@ final class InlineAliases implements CompilerPass {
         return;
       }
       for (Node typeNode : info.getTypeNodes()) {
-        NodeUtil.visitPreOrder(typeNode, fixJsdocTypeNodes, Predicates.<Node>alwaysTrue());
+        NodeUtil.visitPreOrder(typeNode, fixJsdocTypeNodes, Predicates.alwaysTrue());
       }
     }
 

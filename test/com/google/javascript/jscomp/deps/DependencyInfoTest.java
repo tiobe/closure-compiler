@@ -17,43 +17,41 @@
 package com.google.javascript.jscomp.deps;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.jscomp.deps.DependencyInfo.Require.googRequireSymbol;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-
-import junit.framework.TestCase;
-
 import java.io.IOException;
+import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /** Tests for {@link DependencyInfo}. */
+@RunWith(JUnit4.class)
 public final class DependencyInfoTest extends TestCase {
 
+  @Test
   public void testWriteAddDependency() throws IOException {
     StringBuilder sb = new StringBuilder();
     DependencyInfo.Util.writeAddDependency(
         sb,
-        new SimpleDependencyInfo(
-            "../some/relative/path.js",
-            "/unused/absolute/path.js",
-            ImmutableList.of("provided.symbol", "other.provide"),
-            ImmutableList.of("required.symbol", "other.require"),
-            ImmutableMap.of("module", "goog", "lang", "es6")));
+        SimpleDependencyInfo.builder("../some/relative/path.js", "/unused/absolute/path.js")
+            .setProvides(ImmutableList.of("provided.symbol", "other.provide"))
+            .setRequires(googRequireSymbol("required.symbol"), googRequireSymbol("other.require"))
+            .setLoadFlags(ImmutableMap.of("module", "goog", "lang", "es6"))
+            .build());
     assertThat(sb.toString())
         .isEqualTo(
             "goog.addDependency('../some/relative/path.js', ['provided.symbol', 'other.provide'], "
                 + "['required.symbol', 'other.require'], {'module': 'goog', 'lang': 'es6'});\n");
   }
 
+  @Test
   public void testWriteAddDependency_emptyArguments() throws IOException {
     StringBuilder sb = new StringBuilder();
     DependencyInfo.Util.writeAddDependency(
-        sb,
-        new SimpleDependencyInfo(
-            "path.js",
-            "unused.js",
-            ImmutableList.<String>of(),
-            ImmutableList.<String>of(),
-            ImmutableMap.<String, String>of()));
+        sb, SimpleDependencyInfo.builder("path.js", "unused.js").build());
     assertThat(sb.toString()).isEqualTo("goog.addDependency('path.js', [], []);\n");
   }
 }

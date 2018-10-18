@@ -32,7 +32,7 @@ import com.google.javascript.jscomp.Result;
 import com.google.javascript.jscomp.SourceFile;
 import com.google.javascript.jscomp.SourceMap;
 import com.google.javascript.jscomp.SourceMap.Format;
-import com.google.javascript.jscomp.SourceMap.LocationMapping;
+import com.google.javascript.jscomp.SourceMap.PrefixLocationMapping;
 import com.google.javascript.jscomp.WarningLevel;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -41,10 +41,10 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.nio.charset.Charset;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
@@ -115,12 +115,12 @@ public final class CompileTask
     this.forceRecompile = false;
     this.angularPass = false;
     this.replacePropertiesPrefix = "closure.define.";
-    this.defineParams = new LinkedList<>();
-    this.entryPointParams = new LinkedList<>();
-    this.externFileLists = new LinkedList<>();
-    this.sourceFileLists = new LinkedList<>();
-    this.sourcePaths = new LinkedList<>();
-    this.warnings = new LinkedList<>();
+    this.defineParams = new ArrayList<>();
+    this.entryPointParams = new ArrayList<>();
+    this.externFileLists = new ArrayList<>();
+    this.sourceFileLists = new ArrayList<>();
+    this.sourcePaths = new ArrayList<>();
+    this.warnings = new ArrayList<>();
   }
 
   private static CompilerOptions.LanguageMode parseLanguageMode(String value) {
@@ -476,7 +476,7 @@ public final class CompileTask
 
     if (!Strings.isNullOrEmpty(sourceMapLocationMapping)) {
       String[] tokens = sourceMapLocationMapping.split("\\|", -1);
-      LocationMapping lm = new LocationMapping(tokens[0], tokens[1]);
+      PrefixLocationMapping lm = new PrefixLocationMapping(tokens[0], tokens[1]);
       options.setSourceMapLocationMappings(Arrays.asList(lm));
     }
 
@@ -533,7 +533,7 @@ public final class CompileTask
    * replacements.
    */
   private void convertEntryPointParameters(CompilerOptions options) {
-    List<String> entryPoints = new LinkedList<>();
+    List<String> entryPoints = new ArrayList<>();
     for (Parameter p : entryPointParams) {
       String key = p.getName();
       entryPoints.add(key);
@@ -618,7 +618,7 @@ public final class CompileTask
   }
 
   private List<SourceFile> findExternFiles(CompilerOptions options) {
-    List<SourceFile> files = new LinkedList<>();
+    List<SourceFile> files = new ArrayList<>();
     files.addAll(getBuiltinExterns(options));
 
     for (FileList list : this.externFileLists) {
@@ -629,7 +629,7 @@ public final class CompileTask
   }
 
   private List<SourceFile> findSourceFiles() {
-    List<SourceFile> files = new LinkedList<>();
+    List<SourceFile> files = new ArrayList<>();
 
     for (FileList list : this.sourceFileLists) {
       files.addAll(findJavaScriptFiles(list));
@@ -647,16 +647,13 @@ public final class CompileTask
    * the compiler expects.
    */
   private List<SourceFile> findJavaScriptFiles(ResourceCollection rc) {
-    List<SourceFile> files = new LinkedList<>();
+    List<SourceFile> files = new ArrayList<>();
     Iterator<Resource> iter = rc.iterator();
     while (iter.hasNext()) {
       FileResource fr = (FileResource) iter.next();
       // Construct path to file, relative to current working directory.
-      File file = Paths.get("")
-          .toAbsolutePath()
-          .relativize(fr.getFile().toPath())
-          .toFile();
-      files.add(SourceFile.fromFile(file, Charset.forName(encoding)));
+      java.nio.file.Path path = Paths.get("").toAbsolutePath().relativize(fr.getFile().toPath());
+      files.add(SourceFile.fromPath(path, Charset.forName(encoding)));
     }
     return files;
   }

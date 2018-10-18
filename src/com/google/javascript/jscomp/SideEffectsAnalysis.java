@@ -68,7 +68,7 @@ import java.util.Set;
     }
   };
 
-  private AbstractCompiler compiler;
+  private final AbstractCompiler compiler;
 
   /** The location abstraction used to calculate the effects of code */
   private LocationAbstraction locationAbstraction;
@@ -511,8 +511,8 @@ import java.util.Set;
    */
   private static class LocationSummary {
 
-    private EffectLocation modSet;
-    private EffectLocation refSet;
+    private final EffectLocation modSet;
+    private final EffectLocation refSet;
 
     public LocationSummary(EffectLocation modSet, EffectLocation refSet) {
       this.modSet = modSet;
@@ -581,19 +581,7 @@ import java.util.Set;
      */
     abstract LocationSummary calculateLocationSummary(Node node);
 
-    /**
-     * Returns an abstraction-specific EffectLocation representing
-     * no location.
-     *
-     * <p>The bottom location joined with any location should return
-     * that location.
-     */
-    abstract EffectLocation getBottomLocation();
-
-    /**
-     * Calculates the abstraction-specific side effects
-     * for the node.
-     */
+    /** Calculates the abstraction-specific side effects for the node. */
     public LocationSummary calculateLocationSummary(Set<Node> nodes) {
       EffectLocation modAccumulator = getBottomLocation();
       EffectLocation refAccumulator = getBottomLocation();
@@ -607,6 +595,13 @@ import java.util.Set;
 
       return new LocationSummary(modAccumulator, refAccumulator);
     }
+
+    /**
+     * Returns an abstraction-specific EffectLocation representing no location.
+     *
+     * <p>The bottom location joined with any location should return that location.
+     */
+    abstract EffectLocation getBottomLocation();
   }
   /**
    * A very imprecise location abstraction in which there are only two abstract
@@ -774,7 +769,7 @@ import java.util.Set;
     private Set<Node> findStorageLocationReferences(Node root) {
       final Set<Node> references = new HashSet<>();
 
-      NodeTraversal.traverseEs6(compiler, root, new AbstractShallowCallback() {
+      NodeTraversal.traverse(compiler, root, new AbstractShallowCallback() {
         @Override
         public void visit(NodeTraversal t, Node n, Node parent) {
           if (NodeUtil.isGet(n)
@@ -933,7 +928,7 @@ import java.util.Set;
    */
   private static class VariableUseDeclarationMap {
 
-    private AbstractCompiler compiler;
+    private final AbstractCompiler compiler;
 
     // Maps a using name to its declaring name
     private Map<Node, Node> referencesByNameNode;

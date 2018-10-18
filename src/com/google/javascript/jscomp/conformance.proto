@@ -25,8 +25,8 @@ message ConformanceConfig {
 }
 
 // A specification of code requirements
+// NEXT ID: 15
 message Requirement {
-
   // Required: The message to report when a requirement is violated. This should
   // reference a document describing the reasoning for the requirement
   // and contacts.
@@ -39,6 +39,25 @@ message Requirement {
   // Optional: A list of source paths regexs that are exempt from the
   // requirement.
   repeated string whitelist_regexp = 3;
+
+  message WhitelistEntry {
+    enum Reason {
+      UNSPECIFIED = 0;
+      LEGACY = 1;
+      OUT_OF_SCOPE = 2;
+      MANUALLY_REVIEWED = 3;
+    }
+
+    optional Reason reason = 1;
+
+    // A list of source path prefixes.
+    repeated string prefix = 2;
+
+    // A list of regexes matching sources to be ignored
+    repeated string regexp = 3;
+  }
+
+  repeated WhitelistEntry whitelist_entry = 14;
 
   // Optional: A list of source paths that will be checked for the requirement
   // (the opposite of whitelist).
@@ -60,6 +79,8 @@ message Requirement {
     //  - A global name like "eval" or "goog"
     //  - A namespaced value or type:  namespace.Banned
     //  - A 'static' property:  "namespace.Foo.banned"
+    // TODO(b/112325992): If namespace.Banned is a goog.module that does not
+    // call goog.module.declareNamespace, the rule will not match.
     BANNED_NAME = 3;
 
     // A banned instance property, for example:
@@ -114,11 +135,35 @@ message Requirement {
     BANNED_NAME_CALL = 12;
   }
 
+  enum TypeMatchingStrategy {
+    UNKNOWN = 0;
+
+    // Matches type or any subtype. Matches types with different
+    // nullability/voidability. Allows loose matches.
+    LOOSE = 1;
+
+    // Matches type or any subtype. Does not match types with different
+    // nullability/voidability. Allows loose matches.
+    STRICT_NULLABILITY = 2;
+
+    // Matches type or any subtype. Does not match types with different
+    // nullability/voidability. Does not allow loose matches.
+    SUBTYPES = 3;
+
+    // Does not match subtypes. Does not match types with different
+    // nullability/voidability. Does not allow loose matches.
+    EXACT = 4;
+  }
+
   // Required: The type of requirement.
   optional Type type = 6;
 
   // The value banned, optional for "custom" requirements.
   repeated string value = 7;
+
+  // Strategy to use for matching types in the value parameter (e.g. for
+  // BANNED_CODE_PATTERN checks).
+  optional TypeMatchingStrategy type_matching_strategy = 13 [default = LOOSE];
 
   // For "custom" requirements, the Java class used to enforce the requirement.
   // Ignored otherwise.
@@ -143,6 +188,21 @@ message Requirement {
   // there can also be false negatives (an actual violation that is not
   // reported).
   optional bool report_loose_type_violations = 11 [default = true];
+
+  // With what severity to report the issue by default.
+  enum Severity {
+    // Currently treated the same as WARNING.
+    UNSPECIFIED = 0;
+    // Allows the build to continue. Can be turned into an error by setting the
+    // jscomp_error=conformanceConfig flag.
+    WARNING = 1;
+    // The build fails if we are confident this is an error.
+    // This causes an error even on possible violations, e.g. when the type
+    // system is ambiguous.
+    ERROR = 2;
+  }
+
+  optional Severity severity = 12 [default = WARNING];
 
   // CUSTOM requirements may use extensions, each extension should use
   // a CL number as a unique identifier.

@@ -20,8 +20,9 @@ import static com.google.common.base.Ascii.toLowerCase;
 import static com.google.common.base.Ascii.toUpperCase;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_DESTRUCTURING_FORWARD_DECLARE;
+import static com.google.javascript.jscomp.ClosurePrimitiveErrors.MODULE_USES_GOOG_MODULE_GET;
 
-import com.google.common.base.Predicates;
 import com.google.javascript.jscomp.NodeTraversal.AbstractModuleCallback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
@@ -40,34 +41,31 @@ import java.util.Set;
 public final class ClosureCheckModule extends AbstractModuleCallback
     implements HotSwapCompilerPass {
   static final DiagnosticType AT_EXPORT_IN_GOOG_MODULE =
-      DiagnosticType.error(
-          "JSC_AT_EXPORT_IN_GOOG_MODULE",
-          "@export has no effect here");
+      DiagnosticType.error("JSC_AT_EXPORT_IN_GOOG_MODULE", "@export has no effect here");
 
   static final DiagnosticType AT_EXPORT_IN_NON_LEGACY_GOOG_MODULE =
       DiagnosticType.error(
           "JSC_AT_EXPORT_IN_NON_LEGACY_GOOG_MODULE",
           "@export is not allowed here in a non-legacy goog.module."
-          + " Consider using goog.exportSymbol instead.");
+              + " Consider using goog.exportSymbol instead.");
 
   static final DiagnosticType GOOG_MODULE_IN_NON_MODULE =
       DiagnosticType.error(
           "JSC_GOOG_MODULE_IN_NON_MODULE",
           "goog.module() call must be the first statement in a module.");
 
-  static final DiagnosticType GOOG_MODULE_REFERENCES_THIS = DiagnosticType.error(
-      "JSC_GOOG_MODULE_REFERENCES_THIS",
-      "The body of a goog.module cannot reference 'this'.");
+  static final DiagnosticType DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE =
+      DiagnosticType.error(
+          "JSC_DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE",
+          "goog.module.declareLegacyNamespace may only be called in a goog.module.");
 
-  static final DiagnosticType GOOG_MODULE_USES_THROW = DiagnosticType.error(
-      "JSC_GOOG_MODULE_USES_THROW",
-      "The body of a goog.module cannot use 'throw'.");
+  static final DiagnosticType GOOG_MODULE_REFERENCES_THIS =
+      DiagnosticType.error(
+          "JSC_GOOG_MODULE_REFERENCES_THIS", "The body of a goog.module cannot reference 'this'.");
 
-  static final DiagnosticType GOOG_MODULE_USES_GOOG_MODULE_GET = DiagnosticType.error(
-      "JSC_GOOG_MODULE_USES_GOOG_MODULE_GET",
-      "It's illegal to use a 'goog.module.get' at the module top-level."
-      + " Did you mean to use goog.require instead?");
-
+  static final DiagnosticType GOOG_MODULE_USES_THROW =
+      DiagnosticType.error(
+          "JSC_GOOG_MODULE_USES_THROW", "The body of a goog.module cannot use 'throw'.");
   static final DiagnosticType DUPLICATE_NAME_SHORT_REQUIRE =
       DiagnosticType.error(
           "JSC_DUPLICATE_NAME_SHORT_REQUIRE",
@@ -77,11 +75,6 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       DiagnosticType.error(
           "JSC_INVALID_DESTRUCTURING_REQUIRE",
           "Destructuring goog.require must be a simple object pattern.");
-
-  static final DiagnosticType INVALID_DESTRUCTURING_FORWARD_DECLARE =
-      DiagnosticType.error(
-          "JSC_INVALID_DESTRUCTURING_FORWARD_DECLARE",
-          "Cannot destructure a forward-declared type");
 
   static final DiagnosticType LET_GOOG_REQUIRE =
       DiagnosticType.disabled(
@@ -152,15 +145,15 @@ public final class ClosureCheckModule extends AbstractModuleCallback
 
   static final DiagnosticType REQUIRE_NOT_AT_TOP_LEVEL =
       DiagnosticType.error(
-          "JSC_REQUIRE_NOT_AT_TOP_LEVEL",
-          "goog.require() must be called at file scope.");
+          "JSC_REQUIRE_NOT_AT_TOP_LEVEL", "goog.require() must be called at file scope.");
 
   private final AbstractCompiler compiler;
 
   private static class ModuleInfo {
     // Name of the module in question (i.e. the argument to goog.module)
     private final String name;
-    // Mapping from fully qualified goog.required names to the import LHS node
+    // Mapping from fully qualified goog.required names to the import LHS node.
+    // For standalone goog.require()s the value is the EXPR_RESULT node.
     private final Map<String, Node> importsByLongRequiredName = new HashMap<>();
     // Module-local short names for goog.required symbols.
     private final Set<String> shortImportNames = new HashSet<>();
@@ -180,12 +173,12 @@ public final class ClosureCheckModule extends AbstractModuleCallback
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   @Override
@@ -216,6 +209,8 @@ public final class ClosureCheckModule extends AbstractModuleCallback
     if (currentModule == null) {
       if (NodeUtil.isCallTo(n, "goog.module")) {
         t.report(n, GOOG_MODULE_IN_NON_MODULE);
+      } else if (NodeUtil.isGoogModuleDeclareLegacyNamespaceCall(n)) {
+        t.report(n, DECLARE_LEGACY_NAMESPACE_IN_NON_MODULE);
       }
       return;
     }
@@ -235,15 +230,16 @@ public final class ClosureCheckModule extends AbstractModuleCallback
             || callee.matchesQualifiedName("goog.forwardDeclare")) {
           checkRequireCall(t, n, parent);
         } else if (callee.matchesQualifiedName("goog.module.get") && t.inModuleHoistScope()) {
-          t.report(n, GOOG_MODULE_USES_GOOG_MODULE_GET);
+          t.report(n, MODULE_USES_GOOG_MODULE_GET);
         }
         break;
-      case ASSIGN: {
-        if (isExportLhs(n.getFirstChild())) {
-          checkModuleExport(t, n, parent);
+      case ASSIGN:
+        {
+          if (isExportLhs(n.getFirstChild())) {
+            checkModuleExport(t, n, parent);
+          }
+          break;
         }
-        break;
-      }
       case CLASS:
       case FUNCTION:
         if (!NodeUtil.isStatement(n)) {
@@ -253,7 +249,8 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       case VAR:
       case LET:
       case CONST:
-        if (t.inModuleHoistScope() && (n.isClass() || NodeUtil.getEnclosingClass(n) == null)
+        if (t.inModuleHoistScope()
+            && (n.isClass() || NodeUtil.getEnclosingClass(n) == null)
             && NodeUtil.getEnclosingType(n, Token.OBJECTLIT) == null) {
           JSDocInfo jsdoc = NodeUtil.getBestJSDocInfo(n);
           if (jsdoc != null && jsdoc.isExport()) {
@@ -287,8 +284,9 @@ public final class ClosureCheckModule extends AbstractModuleCallback
           } else if (importLhs.isDestructuringLhs()) {
             if (parent.isGetProp()) {
               String shortName =
-                  parent.getQualifiedName().substring(
-                      parent.getQualifiedName().lastIndexOf(".") + 1);
+                  parent
+                      .getQualifiedName()
+                      .substring(parent.getQualifiedName().lastIndexOf('.') + 1);
               Node objPattern = importLhs.getFirstChild();
               checkState(objPattern.isObjectPattern(), objPattern);
               for (Node strKey : objPattern.children()) {
@@ -356,14 +354,13 @@ public final class ClosureCheckModule extends AbstractModuleCallback
                 }
               }
               if (type.contains(".")) {
-                type = type.substring(0, type.lastIndexOf("."));
+                type = type.substring(0, type.lastIndexOf('.'));
               } else {
                 return;
               }
             }
           }
-        },
-        Predicates.<Node>alwaysTrue());
+        });
   }
 
   /** Is this the LHS of a goog.module export? i.e. Either "exports" or "exports.name" */
@@ -384,7 +381,7 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       t.report(n, EXPORT_NOT_A_MODULE_LEVEL_STATEMENT);
     }
     if (lhs.isName()) {
-      if  (currentModule.defaultExportNode != null) {
+      if (currentModule.defaultExportNode != null) {
         // Multiple exports
         int previousLine = currentModule.defaultExportNode.getLineno();
         t.report(n, EXPORT_REPEATED_ERROR, String.valueOf(previousLine));
@@ -416,7 +413,10 @@ public final class ClosureCheckModule extends AbstractModuleCallback
     }
     switch (parent.getToken()) {
       case EXPR_RESULT:
-        currentModule.importsByLongRequiredName.put(extractFirstArgumentName(callNode), parent);
+        String key = extractFirstArgumentName(callNode);
+        if (!currentModule.importsByLongRequiredName.containsKey(key)) {
+          currentModule.importsByLongRequiredName.put(key, parent);
+        }
         return;
       case NAME:
       case DESTRUCTURING_LHS:
@@ -450,10 +450,10 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       checkShortName(t, lhs, callNode.getLastChild().getString());
     }
     currentModule.importsByLongRequiredName.put(extractFirstArgumentName(callNode), lhs);
-    for (Node nameNode : NodeUtil.getLhsNodesOfDeclaration(declaration)) {
+    for (Node nameNode : NodeUtil.findLhsNodesInNode(declaration)) {
       String name = nameNode.getString();
       if (!currentModule.shortImportNames.add(name)) {
-         t.report(nameNode, DUPLICATE_NAME_SHORT_REQUIRE, name);
+        t.report(nameNode, DUPLICATE_NAME_SHORT_REQUIRE, name);
       }
     }
   }
@@ -482,12 +482,12 @@ public final class ClosureCheckModule extends AbstractModuleCallback
       return false;
     }
     for (Node stringKey : objectPattern.children()) {
-       if (!stringKey.isStringKey()) {
-         return false;
-       }
-       if (stringKey.hasChildren() && !stringKey.getFirstChild().isName()) {
-         return false;
-       }
+      if (!stringKey.isStringKey()) {
+        return false;
+      }
+      if (stringKey.hasChildren() && !stringKey.getFirstChild().isName()) {
+        return false;
+      }
     }
     return true;
   }

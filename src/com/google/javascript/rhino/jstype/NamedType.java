@@ -40,6 +40,7 @@
 package com.google.javascript.rhino.jstype;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
@@ -81,8 +82,14 @@ import javax.annotation.Nullable;
  * much that has to be changed.<p>
  *
  */
-public class NamedType extends ProxyObjectType {
+public final class NamedType extends ProxyObjectType {
   private static final long serialVersionUID = 1L;
+
+  static int nominalHashCode(ObjectType type) {
+    checkState(type.hasReferenceName());
+    String name = checkNotNull(type.getReferenceName());
+    return name.hashCode();
+  }
 
   private final String reference;
   private final String sourceName;
@@ -101,33 +108,39 @@ public class NamedType extends ProxyObjectType {
 
   /**
    * Template types defined on a named, not yet resolved type, or {@code null} if none. These are
-   * ignored during resolution, for backwards compatibility with existing usage.
-   * This field is not used for JSCompiler's type checking; it is only needed by Clutz.
+   * ignored during resolution, for backwards compatibility with existing usage. This field is not
+   * used for JSCompiler's type checking; it is only needed by Clutz.
    */
-  @Nullable private ImmutableList<JSType> templateTypes;
+  @Nullable private final ImmutableList<JSType> templateTypes;
 
-  /**
-   * Create a named type based on the reference.
-   */
-  NamedType(JSTypeRegistry registry, String reference,
-      String sourceName, int lineno, int charno) {
-    super(registry, registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE));
+  @Nullable private StaticTypedScope resolutionScope;
 
-    checkNotNull(reference);
-    this.reference = reference;
-    this.sourceName = sourceName;
-    this.lineno = lineno;
-    this.charno = charno;
+  /** Create a named type based on the reference. */
+  NamedType(
+      StaticTypedScope scope,
+      JSTypeRegistry registry,
+      String reference,
+      String sourceName,
+      int lineno,
+      int charno) {
+    this(scope, registry, reference, sourceName, lineno, charno, null);
   }
 
   NamedType(
+      StaticTypedScope scope,
       JSTypeRegistry registry,
       String reference,
       String sourceName,
       int lineno,
       int charno,
       ImmutableList<JSType> templateTypes) {
-    this(registry, reference, sourceName, lineno, charno);
+    super(registry, registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE));
+    checkNotNull(reference);
+    this.resolutionScope = scope;
+    this.reference = reference;
+    this.sourceName = sourceName;
+    this.lineno = lineno;
+    this.charno = charno;
     this.templateTypes = templateTypes;
   }
 
@@ -179,12 +192,12 @@ public class NamedType extends ProxyObjectType {
 
   @Override
   StringBuilder appendTo(StringBuilder sb, boolean forAnnotations) {
-    return sb.append(this.reference);
-  }
-
-  @Override
-  public boolean hasReferenceName() {
-    return true;
+    JSType type = this.getReferencedType();
+    if (!isResolved() || type.isNoResolvedType()) {
+      return sb.append(this.reference);
+    } else {
+      return type.appendTo(sb, forAnnotations);
+    }
   }
 
   @Override
@@ -198,40 +211,60 @@ public class NamedType extends ProxyObjectType {
   }
 
   @Override
-  public int hashCode() {
-    return reference.hashCode();
+  int recursionUnsafeHashCode() {
+    // Recall that equality on `NamedType` uses only the name until successful resolution, then
+    // delegates to the resolved type.
+    return isSuccessfullyResolved() ? super.recursionUnsafeHashCode() : nominalHashCode(this);
   }
 
   /**
    * Resolve the referenced type within the enclosing scope.
    */
   @Override
-  JSType resolveInternal(ErrorReporter t, StaticTypedScope<JSType> enclosing) {
+  JSType resolveInternal(ErrorReporter reporter) {
+    if (!getReferencedType().isUnknownType()) {
+      // In some cases (e.g. typeof(ns) when the actual type is just a literal object), a NamedType
+      // is created solely for the purpose of naming an already-known type. When that happens,
+      // there's nothing to look up, so just resolve the referenced type.
+      return super.resolveInternal(reporter);
+    }
+
     // TODO(user): Investigate whether it is really necessary to keep two
     // different mechanisms for resolving named types, and if so, which order
     // makes more sense. Now, resolution via registry is first in order to
     // avoid triggering the warnings built into the resolution via properties.
-    boolean resolved = resolveViaRegistry(t);
+    boolean resolved = resolveViaRegistry(reporter);
+    if (!resolved) {
+      resolveViaProperties(reporter);
+    }
+
     if (detectInheritanceCycle()) {
-      handleTypeCycle(t);
+      handleTypeCycle(reporter);
     }
+    super.resolveInternal(reporter);
+    finishPropertyContinuations();
 
-    if (resolved) {
-      super.resolveInternal(t, enclosing);
-      finishPropertyContinuations();
-      return getReferencedType();
-    }
+    JSType result = getReferencedType();
+    if (isSuccessfullyResolved()) {
+      int numKeys = result.getTemplateTypeMap().numUnfilledTemplateKeys();
+      if (result.isObjectType()
+          && (templateTypes != null && !templateTypes.isEmpty())
+          && numKeys > 0) {
+        ImmutableList<JSType> typeArgs = this.templateTypes;
 
-    resolveViaProperties(t, enclosing);
-    if (detectInheritanceCycle()) {
-      handleTypeCycle(t);
-    }
+        // Ignore any extraneous type args
+        // TODO(johnlenz): report an error
+        if (numKeys < this.templateTypes.size()) {
+          typeArgs = typeArgs.subList(0, numKeys);
+        }
 
-    super.resolveInternal(t, enclosing);
-    if (isResolved()) {
-      finishPropertyContinuations();
+        result = registry.createTemplatizedType(result.toMaybeObjectType(), typeArgs);
+        setReferencedType(result);
+      }
+
+      resolutionScope = null;
     }
-    return getReferencedType();
+    return result;
   }
 
   /**
@@ -239,7 +272,7 @@ public class NamedType extends ProxyObjectType {
    * @return True if we resolved successfully.
    */
   private boolean resolveViaRegistry(ErrorReporter reporter) {
-    JSType type = registry.getType(reference);
+    JSType type = registry.getType(resolutionScope, reference);
     if (type != null) {
       setReferencedAndResolvedType(type, reporter);
       return true;
@@ -248,13 +281,11 @@ public class NamedType extends ProxyObjectType {
   }
 
   /**
-   * Resolves a named type by looking up its first component in the scope, and
-   * subsequent components as properties. The scope must have been fully
-   * parsed and a symbol table constructed.
+   * Resolves a named type by looking up its first component in the scope, and subsequent components
+   * as properties. The scope must have been fully parsed and a symbol table constructed.
    */
-  private void resolveViaProperties(ErrorReporter reporter,
-                                    StaticTypedScope<JSType> enclosing) {
-    JSType value = lookupViaProperties(reporter, enclosing);
+  private void resolveViaProperties(ErrorReporter reporter) {
+    JSType value = lookupViaProperties();
     // last component of the chain
     if (value != null && value.isFunctionType() &&
         (value.isConstructor() || value.isInterface())) {
@@ -284,16 +315,17 @@ public class NamedType extends ProxyObjectType {
    * parsed and a symbol table constructed.
    * @return The type of the symbol, or null if the type could not be found.
    */
-  private JSType lookupViaProperties(ErrorReporter reporter,
-      StaticTypedScope<JSType> enclosing) {
+  private JSType lookupViaProperties() {
     String[] componentNames = reference.split("\\.", -1);
     if (componentNames[0].length() == 0) {
       return null;
     }
-    StaticTypedSlot<JSType> slot = enclosing.getSlot(componentNames[0]);
+
+    StaticTypedSlot slot = resolutionScope.getSlot(componentNames[0]);
     if (slot == null) {
       return null;
     }
+
     // If the first component has a type of 'Unknown', then any type
     // names using it should be regarded as silently 'Unknown' rather than be
     // noisy about it.
@@ -301,23 +333,19 @@ public class NamedType extends ProxyObjectType {
     if (slotType == null || slotType.isAllType() || slotType.isNoType()) {
       return null;
     }
-    JSType value = getTypedefType(reporter, slot);
-    if (value == null) {
-      return null;
-    }
 
     // resolving component by component
     for (int i = 1; i < componentNames.length; i++) {
-      ObjectType parentClass = ObjectType.cast(value);
-      if (parentClass == null) {
+      ObjectType parentObj = ObjectType.cast(slotType);
+      if (parentObj == null) {
         return null;
       }
       if (componentNames[i].length() == 0) {
         return null;
       }
-      value = parentClass.getPropertyType(componentNames[i]);
+      slotType = parentObj.getPropertyType(componentNames[i]);
     }
-    return value;
+    return slotType;
   }
 
   private void setReferencedAndResolvedType(
@@ -331,37 +359,37 @@ public class NamedType extends ProxyObjectType {
     setResolvedTypeInternal(getReferencedType());
   }
 
-  private void handleTypeCycle(ErrorReporter t) {
+  private void handleTypeCycle(ErrorReporter reporter) {
     setReferencedType(
         registry.getNativeObjectType(JSTypeNative.UNKNOWN_TYPE));
-    warning(t, "Cycle detected in inheritance chain of type " + reference);
+    warning(reporter, "Cycle detected in inheritance chain of type " + reference);
     setResolvedTypeInternal(getReferencedType());
   }
 
-  private void checkEnumElementCycle(ErrorReporter t) {
+  private void checkEnumElementCycle(ErrorReporter reporter) {
     JSType referencedType = getReferencedType();
-    if (referencedType instanceof EnumElementType &&
-        ((EnumElementType) referencedType).getPrimitiveType() == this) {
-      handleTypeCycle(t);
+    if (referencedType instanceof EnumElementType
+        && areIdentical(this, ((EnumElementType) referencedType).getPrimitiveType())) {
+      handleTypeCycle(reporter);
     }
   }
 
-  private void checkProtoCycle(ErrorReporter t) {
+  private void checkProtoCycle(ErrorReporter reporter) {
     JSType referencedType = getReferencedType();
-    if (referencedType == this) {
-      handleTypeCycle(t);
+    if (areIdentical(referencedType, this)) {
+      handleTypeCycle(reporter);
     }
   }
 
   // Warns about this type being unresolved iff it's not a forward-declared
   // type name.
   private void handleUnresolvedType(
-      ErrorReporter t, boolean ignoreForwardReferencedTypes) {
+      ErrorReporter reporter, boolean ignoreForwardReferencedTypes) {
     boolean isForwardDeclared =
         ignoreForwardReferencedTypes && registry.isForwardDeclaredType(reference);
     if (!isForwardDeclared) {
       String msg = "Bad type annotation. Unknown type " + reference;
-      warning(t, msg);
+      warning(reporter, msg);
     } else {
       setReferencedType(new NoResolvedType(registry, getReferenceName(), getTemplateTypes()));
       if (validator != null) {
@@ -370,15 +398,6 @@ public class NamedType extends ProxyObjectType {
     }
 
     setResolvedTypeInternal(getReferencedType());
-  }
-
-  private JSType getTypedefType(ErrorReporter t, StaticTypedSlot<JSType> slot) {
-    JSType type = slot.getType();
-    if (type != null) {
-      return type;
-    }
-    handleUnresolvedType(t, true);
-    return null;
   }
 
   @Override

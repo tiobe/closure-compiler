@@ -18,22 +18,20 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.deps.DependencyInfo;
 import com.google.javascript.jscomp.deps.ModuleLoader;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
-import java.util.Collection;
 import java.util.Map;
 import java.util.TreeMap;
 
-/**
- * A DependencyInfo class that determines load flags by parsing the AST just-in-time.
- */
-public class LazyParsedDependencyInfo implements DependencyInfo {
+/** A DependencyInfo class that determines load flags by parsing the AST just-in-time. */
+public class LazyParsedDependencyInfo extends DependencyInfo.Base {
 
   private final DependencyInfo delegate;
-  private final JsAst ast;
+  private JsAst ast;
   private final transient AbstractCompiler compiler;
 
   private ImmutableMap<String, String> loadFlags;
@@ -62,6 +60,9 @@ public class LazyParsedDependencyInfo implements DependencyInfo {
         loadFlagsBuilder.put("lang", version);
       }
       loadFlags = ImmutableMap.copyOf(loadFlagsBuilder);
+
+      // Don't preserve the full AST longer than necessary.  It can consume a lot of memory.
+      ast = null;
     }
     return loadFlags;
   }
@@ -77,17 +78,17 @@ public class LazyParsedDependencyInfo implements DependencyInfo {
   }
 
   @Override
-  public Collection<String> getRequires() {
+  public ImmutableList<Require> getRequires() {
     return delegate.getRequires();
   }
 
   @Override
-  public Collection<String> getProvides() {
-    return delegate.getProvides();
+  public ImmutableList<String> getWeakRequires() {
+    return delegate.getWeakRequires();
   }
 
   @Override
-  public boolean isModule() {
-    return "goog".equals(getLoadFlags().get("module"));
+  public ImmutableList<String> getProvides() {
+    return delegate.getProvides();
   }
 }

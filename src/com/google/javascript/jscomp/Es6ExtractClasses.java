@@ -17,18 +17,22 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.javascript.jscomp.Es6ToEs3Util.CANNOT_CONVERT;
 
 import com.google.javascript.jscomp.ExpressionDecomposer.DecompositionType;
 import com.google.javascript.jscomp.deps.ModuleNames;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import com.google.javascript.rhino.jstype.JSType;
+import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.Set;
 
 /**
@@ -54,6 +58,7 @@ public final class Es6ExtractClasses
   private final AbstractCompiler compiler;
   private final ExpressionDecomposer expressionDecomposer;
   private int classDeclVarCounter = 0;
+  private static final FeatureSet features = FeatureSet.BARE_MINIMUM.with(Feature.CLASSES);
 
   Es6ExtractClasses(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -62,23 +67,28 @@ public final class Es6ExtractClasses
         compiler,
         compiler.getUniqueNameIdSupplier(),
         consts,
-        Scope.createGlobalScope(new Node(Token.SCRIPT)));
+        Scope.createGlobalScope(new Node(Token.SCRIPT)),
+        compiler.getOptions().allowMethodCallDecomposing());
   }
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, root, this, new SelfReferenceRewriter());
+    TranspilationPasses.processTranspile(
+        compiler, externs, features, this, new SelfReferenceRewriter());
+    TranspilationPasses.processTranspile(
+        compiler, root, features, this, new SelfReferenceRewriter());
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, this, new SelfReferenceRewriter());
+    TranspilationPasses.hotSwapTranspile(
+        compiler, scriptRoot, features, this, new SelfReferenceRewriter());
   }
 
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     if (n.isClass() && shouldExtractClass(n, parent)) {
-      extractClass(n, parent);
+      extractClass(t, n, parent);
     }
   }
 
@@ -93,7 +103,7 @@ public final class Es6ExtractClasses
       }
     }
 
-    private Deque<ClassDescription> classStack = new LinkedList<>();
+    private final Deque<ClassDescription> classStack = new ArrayDeque<>();
 
     private boolean needsInnerNameRewriting(Node classNode, Node parent) {
       checkArgument(classNode.isClass());
@@ -131,7 +141,10 @@ public final class Es6ExtractClasses
         if (nameNode != klass.nameNode && nameNode.matchesQualifiedName(klass.nameNode)) {
           Var var = t.getScope().getVar(nameNode.getString());
           if (var != null && var.getNameNode() == klass.nameNode) {
-            Node newNameNode = IR.name(klass.outerName).useSourceInfoFrom(nameNode);
+            Node newNameNode =
+                IR.name(klass.outerName)
+                    .setJSType(nameNode.getJSType())
+                    .useSourceInfoFrom(nameNode);
             parent.replaceChild(nameNode, newNameNode);
             compiler.reportChangeToEnclosingScope(newNameNode);
             return;
@@ -167,18 +180,73 @@ public final class Es6ExtractClasses
     return true;
   }
 
-  private void extractClass(Node classNode, Node parent) {
+  private void extractClass(NodeTraversal t, Node classNode, Node parent) {
     String name = ModuleNames.fileToJsIdentifier(classNode.getStaticSourceFile().getName())
         + CLASS_DECL_VAR
         + (classDeclVarCounter++);
     JSDocInfo info = NodeUtil.getBestJSDocInfo(classNode);
 
     Node statement = NodeUtil.getEnclosingStatement(parent);
-    parent.replaceChild(classNode, IR.name(name));
-    Node classDeclaration = IR.constNode(IR.name(name), classNode)
-        .useSourceInfoIfMissingFromForTree(classNode);
+    JSType classType = classNode.getJSType();
+    checkState(!compiler.hasTypeCheckingRun() || classType != null);
+    // class name node used as LHS in newly created assignment
+    Node classNameLhs = IR.name(name).setJSType(classType);
+    // class name node that replaces the class literal in the original statement
+    Node classNameRhs = classNameLhs.cloneTree();
+    parent.replaceChild(classNode, classNameRhs);
+    Node classDeclaration =
+        IR.constNode(classNameLhs, classNode).useSourceInfoIfMissingFromForTree(classNode);
+    NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CONST_DECLARATIONS);
     classDeclaration.setJSDocInfo(JSDocInfoBuilder.maybeCopyFrom(info).build());
     statement.getParent().addChildBefore(classDeclaration, statement);
+
+    // If the original statement was a variable declaration or qualified name assignment like
+    // like these:
+    // var ClassName = class {...
+    // OR
+    // some.qname.ClassName = class {...
+    //
+    // We will have changed the original statement to
+    //
+    // var ClassName = generatedName;
+    // OR
+    // some.qname.ClassName = generatedName;
+    //
+    // This is creating a type alias for a class, but since there's no literal class on the RHS,
+    // it doesn't look like one. Add at-constructor JSDoc to make it clear that this is happening.
+    //
+    // This was added to fix a specific problem where the original definition was for an abstract
+    // class, so its JSDoc included at-abstract.
+    // This caused ClosureCodeRemoval to think this rewritten assignment was a removable abstract
+    // method definition instead of the definition of an abstract class.
+    //
+    // TODO(b/117292942): Make ClosureCodeRemoval smarter so this hack isn't necessary to
+    // prevent incorrect removal of assignments.
+    if (NodeUtil.isNameDeclaration(statement)
+        && statement.hasOneChild()
+        && statement.getOnlyChild() == parent) {
+      // var ClassName = generatedName;
+      addAtConstructor(statement);
+    } else if (statement.isExprResult()) {
+      Node expr = statement.getOnlyChild();
+      if (expr.isAssign()
+          && expr.getFirstChild().isQualifiedName()
+          && expr.getSecondChild() == classNameRhs) {
+        // some.qname.ClassName = generatedName;
+        addAtConstructor(expr);
+      }
+    }
     compiler.reportChangeToEnclosingScope(classDeclaration);
+  }
+
+  /**
+   * Add at-constructor to the JSDoc of the given node.
+   *
+   * @param node
+   */
+  private void addAtConstructor(Node node) {
+    JSDocInfoBuilder builder = JSDocInfoBuilder.maybeCopyFrom(node.getJSDocInfo());
+    builder.recordConstructor();
+    node.setJSDocInfo(builder.build());
   }
 }

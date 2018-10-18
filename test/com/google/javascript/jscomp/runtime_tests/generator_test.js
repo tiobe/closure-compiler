@@ -111,12 +111,12 @@ function testGeneratorForOf() {
 
 function testGeneratorForIn() {
   function *f() {
-    var o = {a: 5, b: 6};
+    var o = {"": "empty", a: 5, b: 6};
     for (var n in o) {
       yield o[n];
     }
   }
-  var expected = [5, 6];
+  var expected = ["empty", 5, 6];
   var actual = [];
   for (var v of f()) {
     actual.push(v);
@@ -551,6 +551,19 @@ function testGeneratorNested() {
   compareToExpected(yieldArgumentsception, [1, 2], 1, 2);
 }
 
+function testGeneratorNestedUnnamed() {
+  function *yieldArgumentsception() {
+    var innerGen = function *() {
+      yield 2;
+    };
+
+    yield 1;
+    yield * innerGen();
+  }
+
+  compareToExpected(yieldArgumentsception, [1, 2], 1, 2);
+}
+
 function testYieldInput() {
   function *stringBuilder() {
     var message = "";
@@ -698,6 +711,11 @@ function testGeneratorBlockScoped() {
   assertUndefined(f);
 }
 
+
+/**
+ * @suppress {uselessCode} The warning is accurate, but we're just testing
+ * that useless code is correctly transpiled and don't care.
+ */
 function testTryCatchNoYield() {
   var reached = false;
   var reached2 = false;
@@ -719,12 +737,16 @@ function testTryCatchNoYield() {
 }
 
 function testLabels() {
+  /**
+   * @suppress {uselessCode} The warning is accurate, but we're just testing
+   * that useless code is correctly transpiled and don't care.
+   */
   function*labeledBreakContinue() {
     l1:
     for (var i = 0; i < 3; i++) {
       l2:
       for (var j = 0; j < 3; j++) {
-        for (var k = 0; k < 3; k++) {
+        for (var k = 0; k < 3; k++) { // k++ is unreachable
           yield i + 3*j + 5*k;
           if (k == 1) {
             break l2;
@@ -764,11 +786,15 @@ function testGeneratorMethodThis() {
 }
 
 function testTryCatchSimpleYield() {
+  /**
+   * @suppress {uselessCode} The warning is accurate, but we're just testing
+   * that useless code is correctly transpiled and don't care.
+   */
   function *tryCatch() {
     try {
       yield 1;
       throw 2;
-      yield 3;
+      yield 3; // unreachable
     } catch (err) {
       yield 4;
     }
@@ -952,17 +978,9 @@ function testFinally() {
   checkThrows(uncaughtThrowInTry, 1);
 }
 
-function testGeneratorThrow() {
+function testGeneratorThrow_simple() {
   function *simple() {
     yield 1;
-  }
-
-  function *tryCatch() {
-    try {
-      yield 1;
-    } catch (e) {
-      yield e;
-    }
   }
 
   var iter = simple();
@@ -975,9 +993,19 @@ function testGeneratorThrow() {
   } catch (e) {
     assertEquals(42, e);
   }
+}
 
-  iter = tryCatch();
-  first = iter.next();
+function testGeneratorThrow_tryCatch() {
+  function *tryCatch() {
+    try {
+      yield 1;
+    } catch (e) {
+      yield e;
+    }
+  }
+
+  var iter = tryCatch();
+  var first = iter.next();
   assertEquals(1, first.value);
   assertFalse(first.done);
   var second = iter.throw(2);
@@ -988,11 +1016,8 @@ function testGeneratorThrow() {
 
 /**
  * Make sure thrown exception is correctly rethrown after finally block.
- *
- * TODO(bradfordcsmith): fix this
- * https://github.com/google/closure-compiler/issues/2504
  */
-function disabled_testGeneratorThrowWithYieldInFinallyBlock() {
+function testGeneratorThrowWithYieldInFinallyBlock() {
   const expectedError = new Error('error');
 
   function *f() {

@@ -19,13 +19,16 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
+import static com.google.javascript.jscomp.ClosurePrimitiveErrors.INVALID_CLOSURE_CALL_ERROR;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.parsing.JsDocInfoParser;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.JSDocInfo;
+import com.google.javascript.rhino.JSDocInfoBuilder;
 import com.google.javascript.rhino.JSTypeExpression;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -40,14 +43,13 @@ import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
- * Replaces goog.provide calls, removes goog.require calls, verifies that
- * goog.require has a corresponding goog.provide and some closure specific
+ * Replaces goog.provide calls, removes goog.{require,requireType} calls, verifies that each
+ * goog.{require,requireType} has a corresponding goog.provide, and performs some Closure-pecific
  * simplifications.
  *
  * @author chrisn@google.com (Chris Nokleberg)
  */
-class ProcessClosurePrimitives extends AbstractPostOrderCallback
-    implements HotSwapCompilerPass {
+class ProcessClosurePrimitives extends AbstractPostOrderCallback implements HotSwapCompilerPass {
 
   static final DiagnosticType NULL_ARGUMENT_ERROR = DiagnosticType.error(
       "JSC_NULL_ARGUMENT_ERROR",
@@ -57,9 +59,9 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       "JSC_EXPECTED_OBJECTLIT_ERROR",
       "method \"{0}\" expected an object literal argument");
 
-  static final DiagnosticType EXPECTED_STRING_ERROR = DiagnosticType.error(
-      "JSC_EXPECTED_STRING_ERROR",
-      "method \"{0}\" expected an object string argument");
+  static final DiagnosticType EXPECTED_STRING_ERROR =
+      DiagnosticType.error(
+          "JSC_EXPECTED_STRING_ERROR", "method \"{0}\" expected a string argument");
 
   static final DiagnosticType INVALID_ARGUMENT_ERROR = DiagnosticType.error(
       "JSC_INVALID_ARGUMENT_ERROR",
@@ -73,9 +75,11 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       "JSC_TOO_MANY_ARGUMENTS_ERROR",
       "method \"{0}\" called with more than one argument");
 
-  static final DiagnosticType DUPLICATE_NAMESPACE_ERROR = DiagnosticType.error(
-      "JSC_DUPLICATE_NAMESPACE_ERROR",
-      "namespace \"{0}\" cannot be provided twice");
+  static final DiagnosticType DUPLICATE_NAMESPACE_ERROR =
+      DiagnosticType.error(
+          "JSC_DUPLICATE_NAMESPACE_ERROR",
+          "namespace \"{0}\" cannot be provided twice\n" //
+              + "Originally provided at {1}");
 
   static final DiagnosticType WEAK_NAMESPACE_TYPE = DiagnosticType.warning(
       "JSC_WEAK_NAMESPACE_TYPE",
@@ -117,10 +121,6 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
           "namespace \"{0}\" is required in module {2} but provided in module {1}."
               + " Is module {2} missing a dependency on module {1}?");
 
-  static final DiagnosticType INVALID_CLOSURE_CALL_ERROR = DiagnosticType.error(
-      "JSC_INVALID_CLOSURE_CALL_ERROR",
-      "Closure dependency methods(goog.provide, goog.require, etc) must be called at file scope.");
-
   static final DiagnosticType NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR =
       DiagnosticType.error(
           "JSC_NON_STRING_PASSED_TO_SET_CSS_NAME_MAPPING_ERROR",
@@ -150,9 +150,9 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       "JSC_USE_OF_GOOG_BASE",
       "goog.base is not compatible with ES5 strict mode.\n"
       + "Please use an alternative.\n"
-      + "For EcmaScript classes use the super keyword, for traditional Closure classes\n"
+      + "For EcmaScript classes use the super keyword. For traditional Closure classes,\n"
       + "use the class specific base method instead. For example, for the constructor MyClass:\n"
-      + "   MyClass.base(this, 'constructor')");
+      + "   MyClass.base(this, ''constructor'')");
 
   /** The root Closure namespace */
   static final String GOOG = "goog";
@@ -195,7 +195,7 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseRootsEs6(compiler, this, externs, root);
+    NodeTraversal.traverseRoots(compiler, this, externs, root);
 
     for (Node n : defineCalls) {
       replaceGoogDefines(n);
@@ -207,17 +207,7 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
 
     if (requiresLevel.isOn()) {
       for (UnrecognizedRequire r : unrecognizedRequires) {
-        DiagnosticType error;
-        ProvidedName expectedName = providedNames.get(r.namespace);
-        if (expectedName != null && expectedName.firstNode != null) {
-          // The namespace ended up getting provided after it was required.
-          error = LATE_PROVIDE_ERROR;
-        } else {
-          error = MISSING_PROVIDE_ERROR;
-        }
-
-        compiler.report(JSError.make(
-            r.requireNode, requiresLevel, error, r.namespace));
+        checkForLateOrMissingProvide(r);
       }
     }
 
@@ -228,6 +218,23 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
     for (Node liveNode : maybeTemporarilyLiveNodes) {
       compiler.reportChangeToEnclosingScope(liveNode);
     }
+  }
+
+  private void checkForLateOrMissingProvide(UnrecognizedRequire r) {
+    // Both goog.require and goog.requireType must have a matching goog.provide.
+    // However, goog.require must match an earlier goog.provide, while goog.requireType is allowed
+    // to match a later goog.provide.
+    DiagnosticType error;
+    ProvidedName expectedName = providedNames.get(r.namespace);
+    if (expectedName != null && expectedName.firstNode != null) {
+      if (r.isRequireType) {
+        return;
+      }
+      error = LATE_PROVIDE_ERROR;
+    } else {
+      error = MISSING_PROVIDE_ERROR;
+    }
+    compiler.report(JSError.make(r.requireNode, requiresLevel, error, r.namespace));
   }
 
   private Node getAnyValueOfType(JSDocInfo jsdoc) {
@@ -295,6 +302,7 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
                 }
                 break;
               case "require":
+              case "requireType":
                 if (validPrimitiveCall(t, n)) {
                   processRequireCall(t, n, parent);
                 }
@@ -371,7 +379,7 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       case FUNCTION:
         // If this is a declaration of a provided named function, this is an
         // error. Hoisted functions will explode if they're provided.
-        if (t.inGlobalHoistScope() && !NodeUtil.isFunctionExpression(n)) {
+        if (t.inGlobalHoistScope() && NodeUtil.isFunctionDeclaration(n)) {
           String name = n.getFirstChild().getString();
           ProvidedName pn = providedNames.get(name);
           if (pn != null) {
@@ -384,7 +392,8 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
         if (n.getFirstChild().isName()
             && !parent.isCall()
             && !parent.isAssign()
-            && n.matchesQualifiedName("goog.base")) {
+            && n.matchesQualifiedName("goog.base")
+            && !n.getSourceFileName().endsWith("goog.js")) {
           reportBadGoogBaseUse(t, n, "May only be called directly.");
         }
         break;
@@ -438,27 +447,29 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
     }
   }
 
-  /**
-   * Handles a goog.require call.
-   */
+  /** Handles a goog.require or goog.requireType call. */
   private void processRequireCall(NodeTraversal t, Node n, Node parent) {
     Node left = n.getFirstChild();
     Node arg = left.getNext();
+    String method = left.getFirstChild().getNext().getString();
     if (verifyLastArgumentIsString(t, left, arg)) {
       String ns = arg.getString();
       ProvidedName provided = providedNames.get(ns);
       if (provided == null || !provided.isExplicitlyProvided()) {
-        unrecognizedRequires.add(new UnrecognizedRequire(n, ns));
+        unrecognizedRequires.add(new UnrecognizedRequire(n, ns, method.equals("requireType")));
       } else {
         JSModule providedModule = provided.explicitModule;
 
         if (!provided.isFromExterns()) {
+          // TODO(tbreisacher): Report an error if there's a goog.provide in an @externs file.
           checkNotNull(providedModule, n);
 
           JSModule module = t.getModule();
-          if (moduleGraph != null
-              && module != providedModule
-              && !moduleGraph.dependsOn(module, providedModule)) {
+          // A cross-chunk goog.require must match a goog.provide in an earlier chunk. However, a
+          // cross-chunk goog.requireType is allowed to match a goog.provide in a later chunk.
+          if (module != providedModule
+              && !moduleGraph.dependsOn(module, providedModule)
+              && !method.equals("requireType")) {
             compiler.report(
                 t.makeError(n, XMODULE_REQUIRE_ERROR, ns,
                     providedModule.getName(),
@@ -499,8 +510,8 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
         if (!previouslyProvided.isExplicitlyProvided()) {
           previouslyProvided.addProvide(parent, t.getModule(), true);
         } else {
-          compiler.report(
-              t.makeError(n, DUPLICATE_NAMESPACE_ERROR, ns));
+          String explicitSourceName = previouslyProvided.explicitNode.getSourceFileName();
+          compiler.report(t.makeError(n, DUPLICATE_NAMESPACE_ERROR, ns, explicitSourceName));
         }
       } else {
         registerAnyProvidedPrefixes(ns, parent, t.getModule());
@@ -1171,8 +1182,8 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
     if (typeDeclaration != null) {
       compiler.forwardDeclareType(typeDeclaration);
       // Forward declaration was recorded and we can remove the call.
-      compiler.reportChangeToEnclosingScope(parent);
-      parent.detach();
+      Node toRemove = parent.isExprResult() ? parent : parent.getParent();
+      NodeUtil.deleteNode(toRemove, compiler);
     }
   }
 
@@ -1302,6 +1313,9 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
     private Node explicitNode = null;
     private JSModule explicitModule = null;
 
+    // There are child namespaces of this one.
+    private boolean hasAChildNamespace = false;
+
     // The candidate definition.
     private Node candidateDefinition = null;
 
@@ -1326,10 +1340,14 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
      */
     void addProvide(Node node, JSModule module, boolean explicit) {
       if (explicit) {
+        // goog.provide('name.space');
         checkState(explicitNode == null);
         checkArgument(node.isExprResult());
         explicitNode = node;
         explicitModule = module;
+      } else {
+        // goog.provide('name.space.some.child');
+        hasAChildNamespace = true;
       }
       updateMinimumModule(module);
     }
@@ -1363,7 +1381,7 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
     private void updateMinimumModule(JSModule newModule) {
       if (minimumModule == null) {
         minimumModule = newModule;
-      } else if (moduleGraph != null) {
+      } else if (moduleGraph.getModuleCount() > 1) {
         minimumModule = moduleGraph.getDeepestCommonDependencyInclusive(
             minimumModule, newModule);
       } else {
@@ -1416,56 +1434,48 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
 
         // Does this need a VAR keyword?
         replacementNode = candidateDefinition;
-        if (candidateDefinition.isExprResult()
-            && !candidateDefinition.getFirstChild().isQualifiedName()) {
-          candidateDefinition.putBooleanProp(Node.IS_NAMESPACE, true);
-          Node assignNode = candidateDefinition.getFirstChild();
-          Node nameNode = assignNode.getFirstChild();
-          if (nameNode.isName()) {
-            // Need to convert this assign to a var declaration.
-            Node valueNode = nameNode.getNext();
-            assignNode.removeChild(nameNode);
-            assignNode.removeChild(valueNode);
-            nameNode.addChildToFront(valueNode);
-            Node varNode = IR.var(nameNode);
-            varNode.useSourceInfoFrom(candidateDefinition);
-            candidateDefinition.replaceWith(varNode);
-            varNode.setJSDocInfo(assignNode.getJSDocInfo());
-            compiler.reportChangeToEnclosingScope(varNode);
-            replacementNode = varNode;
+        if (candidateDefinition.isExprResult()) {
+          Node exprNode = candidateDefinition.getOnlyChild();
+          if (exprNode.isAssign()) {
+            // namespace = value;
+            candidateDefinition.putBooleanProp(Node.IS_NAMESPACE, true);
+            Node nameNode = exprNode.getFirstChild();
+            if (nameNode.isName()) {
+              // Need to convert this assign to a var declaration.
+              Node valueNode = nameNode.getNext();
+              exprNode.removeChild(nameNode);
+              exprNode.removeChild(valueNode);
+              nameNode.addChildToFront(valueNode);
+              Node varNode = IR.var(nameNode);
+              varNode.useSourceInfoFrom(candidateDefinition);
+              candidateDefinition.replaceWith(varNode);
+              varNode.setJSDocInfo(exprNode.getJSDocInfo());
+              compiler.reportChangeToEnclosingScope(varNode);
+              replacementNode = varNode;
+            }
+          } else {
+            // /** @typedef {something} */ name.space.Type;
+            checkState(exprNode.isQualifiedName(), exprNode);
+            // If this namespace has child namespaces, we still need to add an object to hang them
+            // on to avoid creating broken code.
+            // We must cast the type of the literal to unknown, because the type checker doesn't
+            // expect the namespace to have a value.
+            if (hasAChildNamespace) {
+              replaceWith(createDeclarationNode(
+                  IR.cast(IR.objectlit(), createUnknownTypeJsDocInfo())));
+            }
           }
         }
       } else {
         // Handle the case where there's not a duplicate definition.
-        replacementNode = createDeclarationNode();
-        if (firstModule == minimumModule) {
-          firstNode.getParent().addChildBefore(replacementNode, firstNode);
-        } else {
-          // In this case, the name was implicitly provided by two independent
-          // modules. We need to move this code up to a common module.
-          int indexOfDot = namespace.lastIndexOf('.');
-          if (indexOfDot == -1) {
-            // Any old place is fine.
-            compiler.getNodeForCodeInsertion(minimumModule)
-                .addChildToBack(replacementNode);
-          } else {
-            // Add it after the parent namespace.
-            ProvidedName parentName =
-                providedNames.get(namespace.substring(0, indexOfDot));
-            checkNotNull(parentName);
-            checkNotNull(parentName.replacementNode);
-            parentName.replacementNode.getParent().addChildAfter(
-                replacementNode, parentName.replacementNode);
-          }
-        }
-        compiler.reportChangeToEnclosingScope(replacementNode);
+        replaceWith(createDeclarationNode(IR.objectlit()));
       }
       if (explicitNode != null) {
         if (preserveGoogProvidesAndRequires && explicitNode.hasChildren()) {
           return;
         }
-        /**
-         * If 'explicitNode' was added earlier in this pass then don't bother to report it's removal
+        /*
+         * If 'explicitNode' was added earlier in this pass then don't bother to report its removal
          * right here as a change (since the original AST state is being restored). Also remove
          * 'explicitNode' from the list of "possibly live" nodes so that it does not get reported as
          * a change at the end of the pass.
@@ -1477,15 +1487,40 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       }
     }
 
+    private void replaceWith(Node replacement) {
+      replacementNode = replacement;
+      if (firstModule == minimumModule) {
+        firstNode.getParent().addChildBefore(replacementNode, firstNode);
+      } else {
+        // In this case, the name was implicitly provided by two independent
+        // modules. We need to move this code up to a common module.
+        int indexOfDot = namespace.lastIndexOf('.');
+        if (indexOfDot == -1) {
+          // Any old place is fine.
+          compiler.getNodeForCodeInsertion(minimumModule)
+              .addChildToBack(replacementNode);
+        } else {
+          // Add it after the parent namespace.
+          ProvidedName parentName =
+              providedNames.get(namespace.substring(0, indexOfDot));
+          checkNotNull(parentName);
+          checkNotNull(parentName.replacementNode);
+          parentName.replacementNode.getParent().addChildAfter(
+              replacementNode, parentName.replacementNode);
+        }
+      }
+      compiler.reportChangeToEnclosingScope(replacementNode);
+    }
+
     /**
      * Create the declaration node for this name, without inserting it
      * into the AST.
      */
-    private Node createDeclarationNode() {
+    private Node createDeclarationNode(Node value) {
       if (namespace.indexOf('.') == -1) {
-        return makeVarDeclNode();
+        return makeVarDeclNode(value);
       } else {
-        return makeAssignmentExprNode();
+        return makeAssignmentExprNode(value);
       }
     }
 
@@ -1493,9 +1528,9 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
      * Creates a simple namespace variable declaration
      * (e.g. <code>var foo = {};</code>).
      */
-    private Node makeVarDeclNode() {
+    private Node makeVarDeclNode(Node value) {
       Node name = IR.name(namespace);
-      name.addChildToFront(createNamespaceLiteral());
+      name.addChildToFront(value);
 
       Node decl = IR.var(name);
       decl.putBooleanProp(Node.IS_NAMESPACE, true);
@@ -1512,22 +1547,18 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       return decl;
     }
 
-    private Node createNamespaceLiteral() {
-      return IR.objectlit();
-    }
-
     /**
      * Creates a dotted namespace assignment expression
      * (e.g. <code>foo.bar = {};</code>).
      */
-    private Node makeAssignmentExprNode() {
+    private Node makeAssignmentExprNode(Node value) {
       Node decl = IR.exprResult(
           IR.assign(
               NodeUtil.newQName(
                   compiler, namespace,
                   firstNode /* real source info will be filled in below */,
                   namespace),
-              createNamespaceLiteral()));
+              value));
       decl.putBooleanProp(Node.IS_NAMESPACE, true);
       if (candidateDefinition == null) {
         decl.getFirstChild().setJSDocInfo(NodeUtil.createConstantJsDoc());
@@ -1571,6 +1602,14 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
     }
   }
 
+  private JSDocInfo createUnknownTypeJsDocInfo() {
+    JSDocInfoBuilder castToUnknownBuilder = new JSDocInfoBuilder(true);
+    castToUnknownBuilder.recordType(
+        new JSTypeExpression(
+            JsDocInfoParser.parseTypeString("?"), "<ProcessClosurePrimitives.java>"));
+    return castToUnknownBuilder.build();
+  }
+
   /**
    * @return Whether the node is namespace placeholder.
    */
@@ -1588,9 +1627,14 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
       value = name.getFirstChild();
     }
 
-    return value != null
-      && value.isObjectLit()
-      && !value.hasChildren();
+    if (value == null) {
+      return false;
+    }
+    if (value.isCast()) {
+      // There may be a cast to unknown type wrapped around the value.
+      value = value.getOnlyChild();
+    }
+    return value.isObjectLit() && !value.hasChildren();
   }
 
   /**
@@ -1652,10 +1696,12 @@ class ProcessClosurePrimitives extends AbstractPostOrderCallback
   private static class UnrecognizedRequire {
     final Node requireNode;
     final String namespace;
+    final boolean isRequireType;
 
-    UnrecognizedRequire(Node requireNode, String namespace) {
+    UnrecognizedRequire(Node requireNode, String namespace, boolean isRequireType) {
       this.requireNode = requireNode;
       this.namespace = namespace;
+      this.isRequireType = isRequireType;
     }
   }
 }

@@ -246,6 +246,58 @@ MediaTrackSettings.prototype.torch
 
 /**
  * @interface
+ * @see https://w3c.github.io/mediacapture-main/#media-track-supported-constraints
+ */
+function MediaTrackSupportedConstraints() {}
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.width;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.height;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.aspectRatio;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.frameRate;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.facingMode;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.volume;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.sampleRate;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.sampleSize;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.echoCancellation;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.autoGainControl;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.noiseSuppression;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.latency;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.channelCount;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.deviceId;
+
+/** @type {boolean|undefined} */
+MediaTrackSupportedConstraints.prototype.groupId;
+
+
+/**
+ * @interface
  * @extends {EventTarget}
  * @see https://www.w3.org/TR/mediacapture-streams/#mediastreamtrack
  */
@@ -621,12 +673,121 @@ RTCRtpReceiver.prototype.track;
  */
 RTCRtpReceiver.prototype.getContributingSources = function() {};
 
+/**
+ * @return {!Array<!RTCRtpContributingSource>}
+ */
+RTCRtpReceiver.prototype.getSynchronizationSources = function() {};
+
+/**
+ * @see https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiverinit
+ * @record
+ */
+function RTCRtpTransceiverInit() {}
+
+/**
+ * The direction of the `RTCRtpTransceiver`. Defaults to "sendrecv".
+ * @type {?RTCRtpTransceiverDirection|undefined}
+ */
+RTCRtpTransceiverInit.prototype.direction;
+
+/**
+ * The streams to add to the tranceiver's sender.
+ * @type {?Array<!MediaStream>|undefined}
+ */
+RTCRtpTransceiverInit.prototype.streams;
+
+/**
+ * @type {?Array<!RTCRtpEncodingParameters>|undefined}
+ */
+RTCRtpTransceiverInit.prototype.sendEncodings;
+
+/**
+ * @see https://www.w3.org/TR/webrtc/#dom-rtcrtpencodingparameters
+ * @record
+ */
+function RTCRtpEncodingParameters() {}
+
+/**
+ * @type {?number|undefined}
+ */
+RTCRtpEncodingParameters.prototype.codecPayloadType;
+
+/**
+ * Possible values are "disabled" and "enabled".
+ * @type {?string|undefined}
+ */
+RTCRtpEncodingParameters.prototype.dtx;
+
+/**
+ * @type {?boolean|undefined}
+ */
+RTCRtpEncodingParameters.prototype.active;
+
+/**
+ * Possible values are "very-low", "low" (default), "medium", and "high".
+ * @type {?string|undefined}
+ */
+RTCRtpEncodingParameters.prototype.priority;
+
+/**
+ * @type {?number|undefined}
+ */
+RTCRtpEncodingParameters.prototype.ptime;
+
+/**
+ * @type {?number|undefined}
+ */
+RTCRtpEncodingParameters.prototype.maxBitrate;
+
+/**
+ * @type {?number|undefined}
+ */
+RTCRtpEncodingParameters.prototype.maxFramerate;
+
+/**
+ * @type {?string|number}
+ */
+RTCRtpEncodingParameters.prototype.rid;
+
+/**
+ * @type {?number|number}
+ */
+RTCRtpEncodingParameters.prototype.scaleResolutionDownBy;
 
 /**
  * @interface
  * @see https://www.w3.org/TR/webrtc/#rtcrtptransceiver-interface
  */
 function RTCRtpTransceiver() {}
+
+/**
+ * @const {?string}
+ */
+RTCRtpTransceiver.prototype.mid;
+
+/**
+ * @const {boolean}
+ */
+RTCRtpTransceiver.prototype.stopped;
+
+/**
+ * @const {!RTCRtpTransceiverDirection}
+ */
+RTCRtpTransceiver.prototype.direction;
+
+/**
+ * @const {?RTCRtpTransceiverDirection}
+ */
+RTCRtpTransceiver.prototype.currentDirection;
+
+/**
+ * @param {!RTCRtpTransceiverDirection} direction
+ */
+RTCRtpTransceiver.prototype.setDirection = function(direction) {};
+
+/**
+ */
+RTCRtpTransceiver.prototype.stop = function() {};
 
 /**
  * @const {?RTCRtpSender}
@@ -1188,6 +1349,13 @@ RTCTrackEvent.prototype.transceiver;
 var MediaDeviceKind;
 
 /**
+ * Possible values are "sendrecv", "sendonly", "recvonly", and "inactive".
+ * @typedef {string}
+ * @see https://www.w3.org/TR/webrtc/#dom-rtcrtptransceiverdirection
+ */
+var RTCRtpTransceiverDirection;
+
+/**
  * @interface
  */
 function MediaDeviceInfo() {}
@@ -1222,6 +1390,12 @@ MediaDevices.prototype.enumerateDevices = function() {};
  * @return {!Promise<!MediaStream>}
  */
 MediaDevices.prototype.getUserMedia = function(constraints) {}
+
+/**
+ * @see https://w3c.github.io/mediacapture-main/#dom-mediadevices-getsupportedconstraints
+ * @return {!MediaTrackSupportedConstraints}
+ */
+MediaDevices.prototype.getSupportedConstraints = function()  {}
 
 /** @const {!MediaDevices} */
 Navigator.prototype.mediaDevices;
@@ -1471,9 +1645,10 @@ RTCStatsReport.prototype.id;
 // Mozilla.
 // See https://www.w3.org/TR/webrtc/#rtcstatsreport-object for definition.
 /**
- * @param {function(this:SCOPE, Object)} callback
+ * @param {function(this:SCOPE, Object, string, MAP)} callback
  * @param {SCOPE=} opt_thisObj The value of "this" inside callback function.
- * @template SCOPE
+ * @this {MAP}
+ * @template MAP,SCOPE
  * @readonly
  */
 RTCStatsReport.prototype.forEach = function(callback, opt_thisObj) {};
@@ -1486,7 +1661,7 @@ RTCStatsReport.prototype.forEach = function(callback, opt_thisObj) {};
 RTCStatsReport.prototype.get = function(key) {};
 
 /**
- * @return {!Iterator<string>}
+ * @return {!IteratorIterable<string>}
  * @readonly
  */
 RTCStatsReport.prototype.keys = function() {};
@@ -1766,7 +1941,7 @@ RTCPeerConnection.prototype.createAnswer =
  * @param {!RTCSessionDescription} description
  * @param {!RTCVoidCallback=} successCallback
  * @param {!RTCPeerConnectionErrorCallback=} errorCallback
- * @return {!Promise<!RTCSessionDescription>|undefined}
+ * @return {!Promise<!RTCSessionDescription>}
  */
 RTCPeerConnection.prototype.setLocalDescription = function(description,
     successCallback, errorCallback) {};
@@ -1775,7 +1950,7 @@ RTCPeerConnection.prototype.setLocalDescription = function(description,
  * @param {!RTCSessionDescription} description
  * @param {!RTCVoidCallback=} successCallback
  * @param {!RTCPeerConnectionErrorCallback=} errorCallback
- * @return {!Promise<!RTCSessionDescription>|undefined}
+ * @return {!Promise<!RTCSessionDescription>}
  */
 RTCPeerConnection.prototype.setRemoteDescription = function(description,
     successCallback, errorCallback) {};
@@ -1880,6 +2055,30 @@ RTCPeerConnection.prototype.removeStream = function(stream) {};
  */
 RTCPeerConnection.prototype.addTrack = function(track, stream, var_args) {};
 
+/**
+ * @param {!MediaStreamTrack|string} trackOrKind
+ * @param {?RTCRtpTransceiverInit=} init
+ * @return {!RTCRtpTransceiver}
+ */
+RTCPeerConnection.prototype.addTransceiver = function(trackOrKind, init) {};
+
+/**
+ * Returns the list of transceivers are currently attached to this peer.
+ *
+ * @return {!Array<!RTCRtpTransceiver>}
+ */
+RTCPeerConnection.prototype.getTransceivers = function() {};
+
+/**
+ * @return {!RTCConfiguration}
+ */
+RTCPeerConnection.prototype.getConfiguration = function() {};
+
+/**
+ * @param {!RTCConfiguration} configuration
+ * @return {undefined}
+ */
+RTCPeerConnection.prototype.setConfiguration = function(configuration) {};
 
 /**
  * @param {!RTCRtpSender} sender

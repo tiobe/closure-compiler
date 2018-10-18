@@ -18,11 +18,15 @@ package com.google.javascript.jscomp;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
-import com.google.common.base.Optional;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import javax.annotation.Nullable;
 
 /**
  * Converts async functions to valid ES6 generator functions code.
@@ -34,79 +38,92 @@ import java.util.Deque;
  *
  * <pre> {@code
  * function foo(a, b) {
- *   let $jscomp$async$arguments = arguments;
  *   let $jscomp$async$this = this;
- *   function* $jscomp$async$generator() {
- *     // original body of foo() with:
- *     // - await (x) replaced with yield (x)
- *     // - arguments replaced with $jscomp$async$arguments
- *     // - this replaced with $jscomp$async$this
- *   }
- *   return $jscomp.executeAsyncGenerator($jscomp$async$generator());
+ *   let $jscomp$async$arguments = arguments;
+ *   let $jscomp$async$super$get$x = () => super.x;
+ *   return $jscomp.asyncExecutePromiseGeneratorFunction(
+ *       function* () {
+ *         // original body of foo() with:
+ *         // - await (x) replaced with yield (x)
+ *         // - arguments replaced with $jscomp$async$arguments
+ *         // - this replaced with $jscomp$async$this
+ *         // - super.x replaced with $jscomp$async$super$get$x()
+ *         // - super.x(5) replaced with $jscomp$async$super$get$x().call($jscomp$async$this, 5)
+ *       });
  * }}</pre>
  */
 public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotSwapCompilerPass {
 
-  private static final String ASYNC_GENERATOR_NAME = "$jscomp$async$generator";
   private static final String ASYNC_ARGUMENTS = "$jscomp$async$arguments";
   private static final String ASYNC_THIS = "$jscomp$async$this";
+  private static final String ASYNC_SUPER_PROP_GETTER_PREFIX = "$jscomp$async$super$get$";
+
 
   /**
    * Keeps track of whether we're examining nodes within an async function & what changes are needed
    * for the function currently in context.
    */
   private static final class LexicalContext {
-    final Optional<Node> function; // absent for top level
-    final LexicalContext thisAndArgumentsContext;
+    @Nullable final Node function;
+    @Nullable final LexicalContext asyncThisAndArgumentsContext;
+    final Set<String> replacedSuperProperties = new LinkedHashSet<>();
     boolean mustAddAsyncThisVariable = false;
     boolean mustAddAsyncArgumentsVariable = false;
 
-    /** Creates root-level context. */
     LexicalContext() {
-      this.function = Optional.absent();
-      this.thisAndArgumentsContext = this;
+      function = null;
+      asyncThisAndArgumentsContext = null;
     }
 
     LexicalContext(LexicalContext outer, Node function) {
-      this.function = Optional.of(function);
-      // An arrow function shares 'this' and 'arguments' with its outer scope.
-      this.thisAndArgumentsContext =
-          function.isArrowFunction() ? outer.thisAndArgumentsContext : this;
+      this.function = function;
+
+      if (function.isAsyncFunction()) {
+        if (function.isArrowFunction()) {
+          // An async arrow function context points to outer.asyncThisAndArgumentsContext
+          // if non-null, otherwise to itself.
+          asyncThisAndArgumentsContext = outer.asyncThisAndArgumentsContext == null
+              ? this : outer.asyncThisAndArgumentsContext;
+        } else {
+          // An async non-arrow function context always points to itself
+          asyncThisAndArgumentsContext = this;
+        }
+      } else {
+        if (function.isArrowFunction()) {
+          // A non-async arrow function context always points to outer.asyncThisAndArgumentsContext
+          asyncThisAndArgumentsContext = outer.asyncThisAndArgumentsContext;
+        } else {
+          // A non-async, non-arrow function has no async context.
+          asyncThisAndArgumentsContext = null;
+        }
+      }
     }
 
     boolean isAsyncContext() {
-      return function.isPresent() && function.get().isAsyncFunction();
+      return function.isAsyncFunction();
     }
 
     boolean mustReplaceThisAndArguments() {
-      return isAsyncContext() || thisAndArgumentsContext.isAsyncContext();
+      return asyncThisAndArgumentsContext != null;
     }
 
     void recordAsyncThisReplacementWasDone() {
-      if (thisAndArgumentsContext.isAsyncContext()) {
-        thisAndArgumentsContext.mustAddAsyncThisVariable = true;
-      } else {
-        // The current context is an async arrow function within a non-async function,
-        // so it must define its own replacement variable.
-        checkState(isAsyncContext());
-        mustAddAsyncThisVariable = true;
-      }
+      asyncThisAndArgumentsContext.mustAddAsyncThisVariable = true;
+    }
+
+    void recordAsyncSuperReplacementWasDone(String superFunctionName) {
+      asyncThisAndArgumentsContext.replacedSuperProperties.add(superFunctionName);
     }
 
     void recordAsyncArgumentsReplacementWasDone() {
-      if (thisAndArgumentsContext.isAsyncContext()) {
-        thisAndArgumentsContext.mustAddAsyncArgumentsVariable = true;
-      } else {
-        // The current context is an async arrow function within a non-async function,
-        // so it must define its own replacement variable.
-        checkState(isAsyncContext());
-        mustAddAsyncArgumentsVariable = true;
-      }
+      asyncThisAndArgumentsContext.mustAddAsyncArgumentsVariable = true;
     }
   }
 
   private final Deque<LexicalContext> contextStack;
   private final AbstractCompiler compiler;
+  private static final FeatureSet transpiledFeatures =
+      FeatureSet.BARE_MINIMUM.with(Feature.ASYNC_FUNCTIONS);
 
   public RewriteAsyncFunctions(AbstractCompiler compiler) {
     checkNotNull(compiler);
@@ -117,12 +134,15 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, root, this);
+    TranspilationPasses.processTranspile(compiler, externs, transpiledFeatures, this);
+    TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
+    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, this);
+    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, transpiledFeatures, this);
+    TranspilationPasses.maybeMarkFeaturesAsTranspiledAway(compiler, transpiledFeatures);
   }
 
   @Override
@@ -130,7 +150,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     if (n.isFunction()) {
       contextStack.addFirst(new LexicalContext(contextStack.getFirst(), n));
       if (n.isAsyncFunction()) {
-        compiler.ensureLibraryInjected("es6/execute_async_generator", /* force */ false);
+        compiler.ensureLibraryInjected("es6/execute_async_generator", /* force= */ false);
       }
     }
     return true;
@@ -139,19 +159,16 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     LexicalContext context = contextStack.getFirst();
-
-    if (n.isFunction()) {
-      checkState(
-          context.function.isPresent() && context.function.get() == n,
-          "unexpected function context:\nexpected: %s\nactual: %s",
-          n,
-          context.function);
-      contextStack.removeFirst();
-    }
     switch (n.getToken()) {
       case FUNCTION:
+        checkState(
+            context.function == n,
+            "unexpected function context:\nexpected: %s\nactual: %s",
+            n,
+            context.function);
+        checkState(contextStack.removeFirst() == context);
         if (context.isAsyncContext()) {
-          convertAsyncFunction(context);
+          convertAsyncFunction(t, context);
         }
         break;
 
@@ -159,13 +176,41 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
         if (context.mustReplaceThisAndArguments() && n.matchesQualifiedName("arguments")) {
           n.setString(ASYNC_ARGUMENTS);
           context.recordAsyncArgumentsReplacementWasDone();
+          compiler.reportChangeToChangeScope(context.function);
         }
         break;
 
       case THIS:
         if (context.mustReplaceThisAndArguments()) {
-          parent.replaceChild(n, IR.name(ASYNC_THIS).useSourceInfoIfMissingFrom(n));
+          parent.replaceChild(n, IR.name(ASYNC_THIS));
           context.recordAsyncThisReplacementWasDone();
+          compiler.reportChangeToChangeScope(context.function);
+        }
+        break;
+
+      case SUPER:
+        if (context.mustReplaceThisAndArguments()) {
+          if (!parent.isGetProp()) {
+            compiler.report(
+                JSError.make(parent, Es6ToEs3Util.CANNOT_CONVERT_YET, "super expression"));
+          }
+
+          Node medhodName = n.getNext();
+          String superPropertyName = ASYNC_SUPER_PROP_GETTER_PREFIX + medhodName.getString();
+
+          // super.x   =>   $super$get$x()
+          Node getPropReplacement = NodeUtil.newCallNode(IR.name(superPropertyName));
+          Node grandparent = parent.getParent();
+          if (grandparent.isCall() && grandparent.getFirstChild() == parent) {
+            // super.x(...)   =>   super.x.call($this, ...)
+            getPropReplacement = IR.getprop(getPropReplacement, IR.string("call"));
+            grandparent.addChildAfter(IR.name(ASYNC_THIS).useSourceInfoFrom(parent), parent);
+            context.recordAsyncThisReplacementWasDone();
+          }
+          getPropReplacement.useSourceInfoFromForTree(parent);
+          grandparent.replaceChild(parent, getPropReplacement);
+          context.recordAsyncSuperReplacementWasDone(medhodName.getString());
+          compiler.reportChangeToChangeScope(context.function);
         }
         break;
 
@@ -173,7 +218,7 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
         checkState(context.isAsyncContext(), "await found within non-async function body");
         checkState(n.hasOneChild(), "await should have 1 operand, but has %s", n.getChildCount());
         // Awaits become yields in the converted async function's inner generator function.
-        parent.replaceChild(n, IR.yield(n.removeFirstChild()).useSourceInfoIfMissingFrom(n));
+        parent.replaceChild(n, IR.yield(n.removeFirstChild()));
         break;
 
       default:
@@ -181,42 +226,51 @@ public final class RewriteAsyncFunctions implements NodeTraversal.Callback, HotS
     }
   }
 
-  private void convertAsyncFunction(LexicalContext functionContext) {
-    Node originalFunction = functionContext.function.get();
+  private void convertAsyncFunction(NodeTraversal t, LexicalContext functionContext) {
+    Node originalFunction = checkNotNull(functionContext.function);
     originalFunction.setIsAsyncFunction(false);
     Node originalBody = originalFunction.getLastChild();
-    Node newBody = IR.block().useSourceInfoIfMissingFrom(originalBody);
+    Node newBody = IR.block();
     originalFunction.replaceChild(originalBody, newBody);
 
     if (functionContext.mustAddAsyncThisVariable) {
+      // const this$ = this;
       newBody.addChildToBack(IR.constNode(IR.name(ASYNC_THIS), IR.thisNode()));
+      NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CONST_DECLARATIONS);
     }
     if (functionContext.mustAddAsyncArgumentsVariable) {
+      // const arguments$ = arguments;
       newBody.addChildToBack(IR.constNode(IR.name(ASYNC_ARGUMENTS), IR.name("arguments")));
+      NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CONST_DECLARATIONS);
+    }
+    for (String replacedMethodName : functionContext.replacedSuperProperties) {
+      // const super$get$x = () => super.x;
+      Node arrowFunction = IR.arrowFunction(
+          IR.name(""), IR.paramList(), IR.getprop(IR.superNode(), IR.string(replacedMethodName)));
+      compiler.reportChangeToChangeScope(arrowFunction);
+      NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.ARROW_FUNCTIONS);
+
+      String superReplacementName = ASYNC_SUPER_PROP_GETTER_PREFIX + replacedMethodName;
+      newBody.addChildToBack(IR.constNode(IR.name(superReplacementName), arrowFunction));
+      NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.CONST_DECLARATIONS);
     }
 
     // Normalize arrow function short body to block body
-    if (!originalBody.isNormalBlock()) {
-      originalBody = IR.block(IR.returnNode(originalBody)).useSourceInfoFromForTree(originalBody);
+    if (!originalBody.isBlock()) {
+      originalBody = IR.block(IR.returnNode(originalBody).useSourceInfoFrom(originalBody))
+          .useSourceInfoFrom(originalBody);
     }
     // NOTE: visit() will already have made appropriate replacements in originalBody so it may
     // be used as the generator function body.
-    Node newFunctionName = IR.name(ASYNC_GENERATOR_NAME);
-    Node originalName = originalFunction.getFirstChild();
-    // Use the source info from the function name. Without this line, we would use the source info
-    // from originalBody for the name node near the end of this method.
-    newFunctionName.useSourceInfoIfMissingFromForTree(originalName);
-    Node generatorFunction = IR.function(newFunctionName, IR.paramList(), originalBody);
-    compiler.reportChangeToChangeScope(generatorFunction);
+    Node generatorFunction = IR.function(IR.name(""), IR.paramList(), originalBody);
     generatorFunction.setIsGeneratorFunction(true);
-    // function* $jscomp$async$generator() { ... }
-    newBody.addChildToBack(generatorFunction);
+    compiler.reportChangeToChangeScope(generatorFunction);
+    NodeUtil.addFeatureToScript(t.getCurrentFile(), Feature.GENERATORS);
 
-    // return $jscomp.executeAsyncGenerator($jscomp$async$generator());
-    Node executeAsyncGenerator = IR.getprop(IR.name("$jscomp"), IR.string("executeAsyncGenerator"));
-    newBody.addChildToBack(
-        IR.returnNode(
-            IR.call(executeAsyncGenerator, NodeUtil.newCallNode(IR.name(ASYNC_GENERATOR_NAME)))));
+    // return $jscomp.asyncExecutePromiseGeneratorFunction(function* () { ... });
+    newBody.addChildToBack(IR.returnNode(IR.call(
+        IR.getprop(IR.name("$jscomp"), IR.string("asyncExecutePromiseGeneratorFunction")),
+        generatorFunction)));
 
     newBody.useSourceInfoIfMissingFromForTree(originalBody);
     compiler.reportChangeToEnclosingScope(newBody);

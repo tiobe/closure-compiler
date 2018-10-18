@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import com.google.javascript.jscomp.CompilerOptions.PropertyCollapseLevel;
 import com.google.javascript.jscomp.CompilerOptions.Reach;
 
 /**
@@ -125,7 +126,6 @@ public enum CompilationLevel {
     options.setRenamingPolicy(VariableRenamingPolicy.LOCAL, PropertyRenamingPolicy.OFF);
     options.shadowVariables = true;
     options.setInlineVariables(Reach.LOCAL_ONLY);
-    options.setFlowSensitiveInlineVariables(true);
     options.setInlineFunctions(Reach.LOCAL_ONLY);
     options.setAssumeClosuresOnlyCaptureReferences(false);
     options.setCheckGlobalThisLevel(CheckLevel.OFF);
@@ -172,7 +172,6 @@ public enum CompilationLevel {
     // All the advanced optimizations.
     options.setRemoveClosureAsserts(true);
     options.setRemoveAbstractMethods(true);
-    options.setRemoveSuperMethods(true);
     options.setReserveRawExports(true);
     options.setRenamingPolicy(VariableRenamingPolicy.ALL, PropertyRenamingPolicy.ALL_UNQUOTED);
     options.setShadowVariables(true);
@@ -180,7 +179,7 @@ public enum CompilationLevel {
     options.setRemoveUnusedPrototypePropertiesInExterns(false);
     options.setRemoveUnusedClassProperties(true);
     options.setCollapseAnonymousFunctions(true);
-    options.setCollapseProperties(true);
+    options.setCollapsePropertiesLevel(PropertyCollapseLevel.ALL);
     options.setCheckGlobalThisLevel(CheckLevel.WARNING);
     options.setRewriteFunctionExpressions(false);
     options.setSmartNameRemoval(true);
@@ -189,7 +188,6 @@ public enum CompilationLevel {
     options.setInlineFunctions(Reach.ALL);
     options.setAssumeClosuresOnlyCaptureReferences(false);
     options.setInlineVariables(Reach.ALL);
-    options.setFlowSensitiveInlineVariables(true);
     options.setComputeFunctionSideEffects(true);
     options.setAssumeStrictThis(true);
 
@@ -197,13 +195,11 @@ public enum CompilationLevel {
     options.setRemoveUnusedVariables(Reach.ALL);
 
     // Move code around based on the defined modules.
-    options.setCrossModuleCodeMotion(true);
-    options.setCrossModuleMethodMotion(true);
+    options.setCrossChunkCodeMotion(true);
+    options.setCrossChunkMethodMotion(true);
 
     // Call optimizations
     options.setDevirtualizePrototypeMethods(true);
-    options.setOptimizeParameters(true);
-    options.setOptimizeReturns(true);
     options.setOptimizeCalls(true);
   }
 
@@ -241,6 +237,7 @@ public enum CompilationLevel {
       case SIMPLE_OPTIMIZATIONS:
         // Enable global variable optimizations (but not property optimizations)
         options.setVariableRenaming(VariableRenamingPolicy.ALL);
+        options.setCollapsePropertiesLevel(PropertyCollapseLevel.MODULE_EXPORT);
         options.setCollapseAnonymousFunctions(true);
         options.setInlineConstantVars(true);
         options.setInlineFunctions(Reach.ALL);

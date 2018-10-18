@@ -86,7 +86,7 @@ public final class ReferenceCollectingCallback
    */
   public ReferenceCollectingCallback(AbstractCompiler compiler, Behavior behavior,
       ScopeCreator creator) {
-    this(compiler, behavior, creator, Predicates.<Var>alwaysTrue());
+    this(compiler, behavior, creator, Predicates.alwaysTrue());
   }
 
   /**
@@ -122,8 +122,15 @@ public final class ReferenceCollectingCallback
    * Targets reference collection to a particular scope.
    */
   void processScope(Scope scope) {
+    boolean shouldAddToBlockStack = !scope.isHoistScope();
     this.narrowScope = scope;
+    if (shouldAddToBlockStack) {
+      blockStack.add(new BasicBlock(null, scope.getRootNode()));
+    }
     (new NodeTraversal(compiler, this, scopeCreator)).traverseAtScope(scope);
+    if (shouldAddToBlockStack) {
+      pop(blockStack);
+    }
     this.narrowScope = null;
   }
 
@@ -132,7 +139,7 @@ public final class ReferenceCollectingCallback
    */
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   /**
@@ -163,6 +170,13 @@ public final class ReferenceCollectingCallback
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     if (n.isName() || n.isImportStar() || (n.isStringKey() && !n.hasChildren())) {
+      if ((parent.isImportSpec() && n != parent.getLastChild())
+          || (parent.isExportSpec() && n != parent.getFirstChild())) {
+        // The n in `import {n as x}` or `export {x as n}` are not references, even though
+        // they are represented in the AST as NAME nodes.
+        return;
+      }
+
       Var v = t.getScope().getVar(n.getString());
 
       if (v != null) {
@@ -200,7 +214,7 @@ public final class ReferenceCollectingCallback
     Scope containingScope = v.getScope();
 
     // This is tricky to compute because of the weird traverseAtScope call for
-    // CollapseProperties.
+    // AggressiveInlineAliases.
     List<BasicBlock> newBlockStack = null;
     if (containingScope.isGlobal()) {
       newBlockStack = new ArrayList<>();
@@ -233,7 +247,7 @@ public final class ReferenceCollectingCallback
     BasicBlock parent = blockStack.isEmpty() ? null : peek(blockStack);
     // Don't add all ES6 scope roots to blockStack, only those that are also scopes according to
     // the ES5 scoping rules. Other nodes that ought to be considered the root of a BasicBlock
-    // are added in shouldTraverse() and removed in visit().
+    // are added in shouldTraverse() or processScope() and removed in visit().
     if (t.isHoistScope()) {
       blockStack.add(new BasicBlock(parent, n));
     }
@@ -259,7 +273,7 @@ public final class ReferenceCollectingCallback
     // is first referenced, so that the reference lists are in the right order.
     //
     // TODO(nicksantos): Maybe generalize this to a continuation mechanism
-    // like in RemoveUnusedVars.
+    // like in RemoveUnusedCode.
     if (NodeUtil.isHoistedFunctionDeclaration(n)) {
       Node nameNode = n.getFirstChild();
       Var functionVar = nodeTraversal.getScope().getVar(nameNode.getString());
@@ -337,11 +351,8 @@ public final class ReferenceCollectingCallback
 
   private void addReference(Var v, Reference reference) {
     // Create collection if none already
-    ReferenceCollection referenceInfo = referenceMap.get(v);
-    if (referenceInfo == null) {
-      referenceInfo = new ReferenceCollection();
-      referenceMap.put(v, referenceInfo);
-    }
+    ReferenceCollection referenceInfo =
+        referenceMap.computeIfAbsent(v, k -> new ReferenceCollection());
 
     // Add this particular reference
     referenceInfo.add(reference);

@@ -22,6 +22,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.javascript.jscomp.BlackHoleErrorManager;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerOptions;
@@ -43,36 +44,29 @@ import java.util.regex.Pattern;
  */
 public final class RefactoringDriver {
 
-  private final Scanner scanner;
   private final Compiler compiler;
   private final Node rootNode;
 
   private RefactoringDriver(
-      Scanner scanner,
       List<SourceFile> inputs,
       List<SourceFile> externs,
       CompilerOptions compilerOptions) {
-    this.scanner = scanner;
     this.compiler = createCompiler(inputs, externs, compilerOptions);
     this.rootNode = this.compiler.getRoot();
   }
 
-  /**
-   * Run the refactoring and return any suggested fixes as a result.
-   */
-  public List<SuggestedFix> drive(Pattern includeFilePattern) {
+  /** Run a refactoring and return any suggested fixes as a result. */
+  public List<SuggestedFix> drive(Scanner scanner, Pattern includeFilePattern) {
     JsFlumeCallback callback = new JsFlumeCallback(scanner, includeFilePattern);
-    NodeTraversal.traverseEs6(compiler, rootNode, callback);
+    NodeTraversal.traverse(compiler, rootNode, callback);
     List<SuggestedFix> fixes = callback.getFixes();
     fixes.addAll(scanner.processAllMatches(callback.getMatches()));
     return fixes;
   }
 
-  /**
-   * Run the refactoring and return any suggested fixes as a result.
-   */
-  public List<SuggestedFix> drive() {
-    return drive(null);
+  /** Run a refactoring and return any suggested fixes as a result. */
+  public List<SuggestedFix> drive(Scanner scanner) {
+    return drive(scanner, null);
   }
 
   public Compiler getCompiler() {
@@ -81,7 +75,7 @@ public final class RefactoringDriver {
 
   private static Compiler createCompiler(
       List<SourceFile> inputs, List<SourceFile> externs, CompilerOptions compilerOptions) {
-    Compiler compiler = new Compiler();
+    Compiler compiler = new Compiler(new BlackHoleErrorManager());
     compiler.disableThreads();
     compiler.compile(externs, inputs, compilerOptions);
     return compiler;
@@ -109,10 +103,10 @@ public final class RefactoringDriver {
     options.setBrokenClosureRequiresLevel(CheckLevel.OFF);
     // TODO(bangert): Remove this -- we want to rewrite code before closure syntax is removed.
     // Unfortunately, setClosurePass is required, or code doesn't type check.
-    options.setClosurePass(true); 
+    options.setClosurePass(true);
     options.setGenerateExports(true);
     options.setPreserveClosurePrimitives(true);
-    
+
     options.setWarningLevel(DiagnosticGroups.STRICT_MISSING_REQUIRE, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.EXTRA_REQUIRE, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.LINT_CHECKS, CheckLevel.WARNING);
@@ -122,23 +116,21 @@ public final class RefactoringDriver {
 
   public static class Builder {
     private static final Function<String, SourceFile> TO_SOURCE_FILE_FN =
-        new Function<String, SourceFile>() {
-          @Override public SourceFile apply(String file) {
-            return new SourceFile.Builder().buildFromFile(file);
-          }
-        };
+        file -> new SourceFile.Builder().buildFromFile(file);
 
-    private final Scanner scanner;
     private final ImmutableList.Builder<SourceFile> inputs = ImmutableList.builder();
     private final ImmutableList.Builder<SourceFile> externs = ImmutableList.builder();
     private CompilerOptions compilerOptions = getCompilerOptions();
 
-    public Builder(Scanner scanner) {
-      this.scanner = scanner;
-    }
+    public Builder() {}
 
     public Builder addExternsFromFile(String filename) {
       externs.add(SourceFile.fromFile(filename));
+      return this;
+    }
+
+    public Builder addExternsFromFile(Iterable<String> externs) {
+      this.externs.addAll(Lists.transform(ImmutableList.copyOf(externs), TO_SOURCE_FILE_FN));
       return this;
     }
 
@@ -152,13 +144,13 @@ public final class RefactoringDriver {
       return this;
     }
 
-    public Builder addExternsFromFile(Iterable<String> externs) {
-      this.externs.addAll(Lists.transform(ImmutableList.copyOf(externs), TO_SOURCE_FILE_FN));
+    public Builder addInputsFromFile(String filename) {
+      inputs.add(SourceFile.fromFile(filename));
       return this;
     }
 
-    public Builder addInputsFromFile(String filename) {
-      inputs.add(SourceFile.fromFile(filename));
+    public Builder addInputsFromFile(Iterable<String> inputs) {
+      this.inputs.addAll(Lists.transform(ImmutableList.copyOf(inputs), TO_SOURCE_FILE_FN));
       return this;
     }
 
@@ -176,18 +168,13 @@ public final class RefactoringDriver {
       return this;
     }
 
-    public Builder addInputsFromFile(Iterable<String> inputs) {
-      this.inputs.addAll(Lists.transform(ImmutableList.copyOf(inputs), TO_SOURCE_FILE_FN));
-      return this;
-    }
-
     public Builder withCompilerOptions(CompilerOptions compilerOptions) {
       this.compilerOptions = checkNotNull(compilerOptions);
       return this;
     }
 
     public RefactoringDriver build() {
-      return new RefactoringDriver(scanner, inputs.build(), externs.build(), compilerOptions);
+      return new RefactoringDriver(inputs.build(), externs.build(), compilerOptions);
     }
   }
 }

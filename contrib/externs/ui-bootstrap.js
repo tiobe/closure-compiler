@@ -20,6 +20,7 @@
  * API Reference: http://angular-ui.github.io/bootstrap/
  *
  * @externs
+ * @suppress {strictMissingProperties}
  */
 
 
@@ -27,7 +28,6 @@
  * Suppresses the compiler warning when multiple externs files declare the
  * ui namespace.
  * @suppress {duplicate}
- * @noalias
  */
 var ui = {};
 

@@ -52,6 +52,32 @@ Document.prototype.createAttributeNS =
     function(namespaceURI, qualifiedName) {};
 
 /**
+ * @param {Node} root
+ * @param {number=} whatToShow
+ * @param {NodeFilter=} filter
+ * @param {boolean=} entityReferenceExpansion
+ * @return {!NodeIterator}
+ * @see https://www.w3.org/TR/2000/REC-DOM-Level-2-Traversal-Range-20001113/traversal.html#Traversal-Document
+ * @see https://dom.spec.whatwg.org/#interface-document
+ * @nosideeffects
+ */
+Document.prototype.createNodeIterator = function(
+    root, whatToShow, filter, entityReferenceExpansion) {};
+
+/**
+ * @param {Node} root
+ * @param {number=} whatToShow
+ * @param {NodeFilter=} filter
+ * @param {boolean=} entityReferenceExpansion
+ * @return {!TreeWalker}
+ * @see https://www.w3.org/TR/2000/REC-DOM-Level-2-Traversal-Range-20001113/traversal.html#Traversal-Document
+ * @see https://dom.spec.whatwg.org/#interface-document
+ * @nosideeffects
+ */
+Document.prototype.createTreeWalker = function(
+    root, whatToShow, filter, entityReferenceExpansion) {};
+
+/**
  * @param {string} namespace
  * @param {string} name
  * @return {!NodeList<!Element>}
@@ -102,25 +128,43 @@ HTMLCollection.prototype.namedItem = function(name) {};
 
 /**
  * @constructor
- * @implements {IObject<(string|number),HTMLOptionElement>}
- * @implements {IArrayLike<!HTMLOptionElement>}
- * @see http://www.w3.org/TR/DOM-Level-2-HTML/html.html#HTMLOptionsCollection
+ * @extends {HTMLCollection<HTMLOptionElement>}
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#htmloptionscollection
  */
 function HTMLOptionsCollection() {}
 
 /**
  * @type {number}
- * @see http://www.w3.org/TR/DOM-Level-2-HTML/html.html#HTMLOptionsCollection-length
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmloptionscollection-length
+ * @nosideeffects
  */
 HTMLOptionsCollection.prototype.length;
 
 /**
+ * @param {HTMLOptionElement|HTMLOptGroupElement} element
+ * @param {HTMLElement|number=} before
+ * @return {undefined}
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmloptionscollection-add
+ */
+HTMLOptionsCollection.prototype.add = function(element, before) {};
+
+/**
+ * NOTE(tjgq): The HTMLOptionsCollection#item method is inherited from
+ * HTMLCollection, but it must be declared explicitly to work around an error
+ * when building a jsinterop library for GWT.
  * @param {number} index
- * @return {Node}
- * @see http://www.w3.org/TR/DOM-Level-2-HTML/html.html#HTMLOptionsCollection-item
+ * @return {HTMLOptionElement}
+ * @override
  * @nosideeffects
  */
 HTMLOptionsCollection.prototype.item = function(index) {};
+
+/**
+ * @param {number} index
+ * @return {undefined}
+ * @see https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#dom-htmloptionscollection-remove
+ */
+HTMLOptionsCollection.prototype.remove = function(index) {};
 
 /**
  * @constructor
@@ -237,30 +281,6 @@ HTMLDocument.prototype.writeln = function(text) {};
  */
 HTMLDocument.prototype.getElementsByName = function(elementName) {};
 
-/**
- * @param {Node} root
- * @param {number=} whatToShow
- * @param {NodeFilter=} filter
- * @param {boolean=} entityReferenceExpansion
- * @return {!NodeIterator}
- * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-Document
- * @nosideeffects
- */
-HTMLDocument.prototype.createNodeIterator = function(
-    root, whatToShow, filter, entityReferenceExpansion) {};
-
-/**
- * @param {Node} root
- * @param {number=} whatToShow
- * @param {NodeFilter=} filter
- * @param {boolean=} entityReferenceExpansion
- * @return {!TreeWalker}
- * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-Document
- * @nosideeffects
- */
-HTMLDocument.prototype.createTreeWalker = function(
-    root, whatToShow, filter, entityReferenceExpansion) {};
-
 
 /** @typedef {{
   createNodeIterator: function(Node, number=, NodeFilter=, boolean=) : NodeIterator,
@@ -269,7 +289,7 @@ HTMLDocument.prototype.createTreeWalker = function(
 var TraversalDocument;
 
 /**
- * @interface
+ * @record
  * @see http://www.w3.org/TR/DOM-Level-2-Traversal-Range/traversal.html#Traversal-NodeFilter
 */
 function NodeFilter() {}
@@ -1748,6 +1768,12 @@ HTMLImageElement.prototype.name;
 
 /**
  * @type {string}
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement/referrerPolicy
+ */
+HTMLImageElement.prototype.referrerPolicy;
+
+/**
+ * @type {string}
  * @implicitCast
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-87762984
  */
@@ -2104,6 +2130,11 @@ HTMLScriptElement.prototype.event;
  * @see http://www.w3.org/TR/2000/CR-DOM-Level-2-20000510/html.html#ID-66979266
  */
 HTMLScriptElement.prototype.htmlFor;
+
+/**
+ * @type {?function(!Event)}
+ */
+HTMLScriptElement.prototype.onreadystatechange;
 
 /**
  * @type {string}

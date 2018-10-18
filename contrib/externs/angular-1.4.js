@@ -26,6 +26,7 @@
  *
  * @see http://angularjs.org/
  * @externs
+ * @suppress {strictMissingProperties}
  */
 
 /**
@@ -86,7 +87,7 @@ angular.equals = function(o1, o2) {};
 
 /**
  * @param {Object} dest
- * @param {...Object} srcs
+ * @param {...(Object|undefined)} srcs
  */
 angular.extend = function(dest, srcs) {};
 
@@ -179,7 +180,7 @@ angular.lowercase = function(s) {};
 
 /**
  * @param {Object} dest
- * @param {...Object} srcs
+ * @param {...(Object|undefined)} srcs
  */
 angular.merge = function(dest, srcs) {};
 
@@ -671,7 +672,7 @@ angular.JQLite.prototype.val = function(opt_value) {};
  */
 angular.JQLite.prototype.wrap = function(element) {};
 
-/** @constructor */
+/** @interface */
 angular.Module = function() {};
 
 /**
@@ -764,7 +765,7 @@ angular.Module.prototype.decorator = function(name, decorator) {};
 /**
  * @type {string}
  */
-angular.Module.prototype.name = '';
+angular.Module.prototype.name;
 
 /**
  * @type {Array.<string>}

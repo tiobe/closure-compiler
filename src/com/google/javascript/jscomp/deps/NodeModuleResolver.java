@@ -23,7 +23,8 @@ import com.google.common.collect.ImmutableSortedSet;
 import com.google.javascript.jscomp.CheckLevel;
 import com.google.javascript.jscomp.ErrorHandler;
 import com.google.javascript.jscomp.JSError;
-import java.util.Comparator;
+import com.google.javascript.jscomp.deps.ModuleLoader.ModuleResolverFactory;
+import com.google.javascript.jscomp.deps.ModuleLoader.PathEscaper;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -42,7 +43,6 @@ public class NodeModuleResolver extends ModuleResolver {
     ModuleLoader.MODULE_SLASH + "index.js",
     ModuleLoader.MODULE_SLASH + "index.json"
   };
-  public static final String JSC_BROWSER_BLACKLISTED_MARKER = "$jscomp$browser$blacklisted";
 
   /** Named modules found in node_modules folders */
   private final ImmutableMap<String, String> packageJsonMainEntries;
@@ -68,17 +68,15 @@ public class NodeModuleResolver extends ModuleResolver {
       Iterable<String> modulePaths) {
     SortedSet<String> registry =
         new TreeSet<>(
-            new Comparator<String>() {
-              @Override
-              public int compare(String a, String b) {
-                // Order longest path first
-                int comparison = Integer.compare(b.length(), a.length());
-                if (comparison != 0) {
-                  return comparison;
-                }
-
-                return a.compareTo(b);
+            // TODO(b/28382956): Take better advantage of Java8 comparing() to simplify this
+            (a, b) -> {
+              // Order longest path first
+              int comparison = Integer.compare(b.length(), a.length());
+              if (comparison != 0) {
+                return comparison;
               }
+
+              return a.compareTo(b);
             });
 
     // For each modulePath, find all the node_modules folders
@@ -104,12 +102,36 @@ public class NodeModuleResolver extends ModuleResolver {
     return ImmutableSortedSet.copyOfSorted(registry);
   }
 
+  /** Factory for {@link NodeModuleResolver}. */
+  public static final class Factory implements ModuleResolverFactory {
+    private final Map<String, String> packageJsonMainEntries;
+
+    public Factory() {
+      this(/* packageJsonMainEntries= */ null);
+    }
+
+    public Factory(@Nullable Map<String, String> packageJsonMainEntries) {
+      this.packageJsonMainEntries = packageJsonMainEntries;
+    }
+
+    @Override
+    public ModuleResolver create(
+        ImmutableSet<String> modulePaths,
+        ImmutableList<String> moduleRootPaths,
+        ErrorHandler errorHandler,
+        PathEscaper pathEscaper) {
+      return new NodeModuleResolver(
+          modulePaths, moduleRootPaths, packageJsonMainEntries, errorHandler, pathEscaper);
+    }
+  }
+
   public NodeModuleResolver(
       ImmutableSet<String> modulePaths,
       ImmutableList<String> moduleRootPaths,
       Map<String, String> packageJsonMainEntries,
-      ErrorHandler errorHandler) {
-    super(modulePaths, moduleRootPaths, errorHandler);
+      ErrorHandler errorHandler,
+      PathEscaper pathEscaper) {
+    super(modulePaths, moduleRootPaths, errorHandler, pathEscaper);
     this.nodeModulesFolders = buildNodeModulesFoldersRegistry(modulePaths);
 
     if (packageJsonMainEntries == null) {
@@ -139,10 +161,12 @@ public class NodeModuleResolver extends ModuleResolver {
     return builder.build();
   }
 
+  @Override
   Map<String, String> getPackageJsonMainEntries() {
     return this.packageJsonMainEntries;
   }
 
+  @Override
   @Nullable
   public String resolveJsModule(
       String scriptAddress, String moduleAddress, String sourcename, int lineno, int colno) {
@@ -163,23 +187,24 @@ public class NodeModuleResolver extends ModuleResolver {
   }
 
   public String resolveJsModuleFile(String scriptAddress, String moduleAddress) {
-    for (int i = 0; i < FILE_EXTENSIONS_TO_SEARCH.length; i++) {
-      String loadAddress = locate(scriptAddress, moduleAddress + FILE_EXTENSIONS_TO_SEARCH[i]);
-      if (loadAddress != null) {
-        // Also look for mappings in packageJsonMainEntries because browser field
-        // advanced usage allows to override / blacklist specific files, including
-        // the main entry.
-        if (packageJsonMainEntries.containsKey(loadAddress)) {
-          String packageJsonEntry = packageJsonMainEntries.get(loadAddress);
+    for (String extension : FILE_EXTENSIONS_TO_SEARCH) {
+      String moduleAddressCandidate = moduleAddress + extension;
+      String canonicalizedCandidatePath = canonicalizePath(scriptAddress, moduleAddressCandidate);
 
-          if (packageJsonEntry != JSC_BROWSER_BLACKLISTED_MARKER) {
-            return resolveJsModuleFile(scriptAddress, packageJsonEntry);
-          } else {
-            return null;
-          }
-        } else {
-          return loadAddress;
+      // Also look for mappings in packageJsonMainEntries because browser field
+      // advanced usage allows to override / blacklist specific files, including
+      // the main entry.
+      if (packageJsonMainEntries.containsKey(canonicalizedCandidatePath)) {
+        moduleAddressCandidate = packageJsonMainEntries.get(canonicalizedCandidatePath);
+
+        if (ModuleLoader.JSC_BROWSER_BLACKLISTED_MARKER.equals(moduleAddressCandidate)) {
+          return null;
         }
+      }
+
+      String loadAddress = locate(scriptAddress, moduleAddressCandidate);
+      if (loadAddress != null) {
+        return loadAddress;
       }
     }
 

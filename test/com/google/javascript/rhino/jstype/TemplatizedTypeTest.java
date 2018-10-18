@@ -39,39 +39,31 @@
 package com.google.javascript.rhino.jstype;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.rhino.testing.TypeSubject.assertType;
 
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.testing.BaseJSTypeTestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public class TemplatizedTypeTest extends BaseJSTypeTestCase {
 
-  @Override
-  public void setUp() throws Exception {
-    super.setUp();
-  }
-
-  /**
-   * Assert that a type can assign to itself.
-   */
-  private void assertTypeCanAssignToItself(JSType type) {
-    assertTrue(type.isSubtype(type));
-  }
-
-  /**
-   * Tests the behavior of variants type.
-   */
-  public void testTemplatizedType() throws Exception {
+  /** Tests the behavior of variants type. */
+  @Test
+  public void testTemplatizedType() {
     TemplatizedType arrOfString = createTemplatizedType(
         ARRAY_TYPE, STRING_TYPE);
     assertTypeCanAssignToItself(arrOfString);
     assertTrue(arrOfString.isSubtype(ARRAY_TYPE));
-    assertTrue(ARRAY_TYPE.isSubtype(arrOfString));
+    assertTrue(ARRAY_TYPE.isSubtypeOf(arrOfString));
 
     TemplatizedType arrOfNumber = createTemplatizedType(
         ARRAY_TYPE, NUMBER_TYPE);
     assertTypeCanAssignToItself(arrOfNumber);
     assertTrue(arrOfNumber.isSubtype(ARRAY_TYPE));
-    assertTrue(ARRAY_TYPE.isSubtype(arrOfNumber));
+    assertTrue(ARRAY_TYPE.isSubtypeOf(arrOfNumber));
 
     assertTrue(arrOfString.isEquivalentTo(createTemplatizedType(
         ARRAY_TYPE, STRING_TYPE)));
@@ -82,31 +74,43 @@ public class TemplatizedTypeTest extends BaseJSTypeTestCase {
     assertFalse(arrOfNumber.isEquivalentTo(arrOfString));
   }
 
+  @Test
   public void testEquality() {
     // Weird that we allow this as a type at all.
     TemplatizedType booleanOfString = createTemplatizedType(BOOLEAN_OBJECT_TYPE, STRING_TYPE);
     assertThat(booleanOfString.hashCode()).isEqualTo(BOOLEAN_OBJECT_TYPE.hashCode());
   }
 
-  public void testPrint1() throws Exception {
+  @Test
+  public void testPrint1() {
     TemplatizedType arrOfString = createTemplatizedType(
         ARRAY_TYPE, STRING_TYPE);
     assertEquals("Array<string>", arrOfString.toString());
   }
 
-  public void testPrint2() throws Exception {
+  @Test
+  public void testPrint2() {
     TemplatizedType arrOfTemplateType = createTemplatizedType(
         ARRAY_TYPE, new TemplateType(registry, "T"));
     assertEquals("Array<T>", arrOfTemplateType.toString());
   }
 
-  public void testPrint3() throws Exception {
+  @Test
+  public void testPrint3() {
     TemplatizedType arrOfUnknown = createTemplatizedType(
         ARRAY_TYPE, UNKNOWN_TYPE);
     assertEquals("Array<?>", arrOfUnknown.toString());
   }
 
-  public void testDifferentRawTypes() throws Exception {
+  @Test
+  public void testPrintingRawType() {
+    ObjectType rawType = createCustomTemplatizedType("Foo");
+
+    assertEquals("Foo", rawType.toString());
+  }
+
+  @Test
+  public void testDifferentRawTypes() {
     TemplatizedType arrOfNumber = createTemplatizedType(
         ARRAY_TYPE, NUMBER_TYPE);
     TemplatizedType objType = createTemplatizedType(
@@ -115,45 +119,83 @@ public class TemplatizedTypeTest extends BaseJSTypeTestCase {
     assertFalse(objType.isSubtype(arrOfNumber));
   }
 
-  public void testCustomTemplatizedType() throws Exception {
-    FunctionType ctor =
+  @Test
+  public void testSubtypingAndEquivalenceAmongCustomTemplatizedTypes() {
+    ObjectType rawType = createCustomTemplatizedType("Baz");
+
+    JSType templatizedStringNumber =
+        registry.createTemplatizedType(rawType, ImmutableList.of(STRING_TYPE, NUMBER_TYPE));
+    JSType templatizedStringAll =
+        registry.createTemplatizedType(rawType, ImmutableList.of(STRING_TYPE, ALL_TYPE));
+    JSType templatizedStringUnknown =
+        registry.createTemplatizedType(rawType, ImmutableList.of(STRING_TYPE, UNKNOWN_TYPE));
+    JSType templatizedUnknownUnknown =
+        registry.createTemplatizedType(rawType, ImmutableList.of(UNKNOWN_TYPE, UNKNOWN_TYPE));
+
+    assertTrue(templatizedStringNumber.isSubtypeOf(rawType));
+    assertTrue(templatizedStringAll.isSubtypeOf(rawType));
+    assertTrue(templatizedStringUnknown.isSubtypeOf(rawType));
+    assertTrue(templatizedUnknownUnknown.isSubtypeOf(rawType));
+
+    assertTypeNotEquals(templatizedStringNumber, rawType);
+    assertTypeNotEquals(templatizedStringAll, rawType);
+    assertTypeNotEquals(templatizedStringUnknown, rawType);
+
+    // TODO(b/110224889): This case should probably be `assertTypeNotEquals`.
+    assertTypeEquals(templatizedUnknownUnknown, rawType);
+
+    assertTrue(rawType.isSubtypeOf(templatizedStringNumber));
+    assertTrue(rawType.isSubtypeOf(templatizedStringAll));
+    assertTrue(rawType.isSubtypeOf(templatizedStringUnknown));
+    assertTrue(rawType.isSubtypeOf(templatizedUnknownUnknown));
+
+    assertFalse(templatizedStringNumber.isSubtypeOf(templatizedStringAll));
+    assertFalse(templatizedStringAll.isSubtypeOf(templatizedStringNumber));
+
+    assertTrue(templatizedStringAll.isSubtypeOf(templatizedStringUnknown));
+    assertTrue(templatizedStringUnknown.isSubtypeOf(templatizedStringAll));
+  }
+
+  @Test
+  public void testGetPropertyTypeOnTemplatizedType() {
+    TemplateType templateT = registry.createTemplateType("T");
+    FunctionType ctor = // function<T>(new:Foo<T>)
+        registry.createConstructorType("Foo", null, null, null, ImmutableList.of(templateT), false);
+    ObjectType rawType = ctor.getInstanceType(); // Foo<T> == Foo
+    rawType.defineDeclaredProperty("property", templateT, null);
+
+    JSType templatizedNumber = registry.createTemplatizedType(rawType, NUMBER_TYPE);
+    assertType(templatizedNumber.toObjectType().getPropertyType("property")).isEqualTo(NUMBER_TYPE);
+  }
+
+  @Test
+  public void testFindPropertyTypeOnTemplatizedType() {
+    TemplateType templateT = registry.createTemplateType("T");
+    FunctionType ctor = // function<T>(new:Foo<T>)
+        registry.createConstructorType("Foo", null, null, null, ImmutableList.of(templateT), false);
+    ObjectType rawType = ctor.getInstanceType(); // Foo<T> == Foo
+    rawType.defineDeclaredProperty("property", templateT, null);
+
+    JSType templatizedNumber = registry.createTemplatizedType(rawType, NUMBER_TYPE);
+    // TODO(b/116830836): this should be the NUMBER_TYPE
+    assertType(templatizedNumber.findPropertyType("property")).isUnknown();
+  }
+
+  /** Returns an unspecialized type with the provided name and two type parameters. */
+  private ObjectType createCustomTemplatizedType(String rawName) {
+    FunctionType ctor = // function<T,U>(new:Foo<T,U>)
         registry.createConstructorType(
-            "Foo",
+            rawName,
             null,
             null,
             null,
             ImmutableList.of(registry.createTemplateType("T"), registry.createTemplateType("U")),
             false);
-    ObjectType baseType = ctor.getInstanceType();
+    return ctor.getInstanceType(); // Foo<T, U> == Foo
+  }
 
-    JSType templatizedType1 = registry.createTemplatizedType(
-        baseType, ImmutableList.of(STRING_TYPE, NUMBER_TYPE));
-    JSType templatizedType2 = registry.createTemplatizedType(
-        baseType, ImmutableList.of(STRING_TYPE, ALL_TYPE));
-    JSType templatizedType3 = registry.createTemplatizedType(
-        baseType, ImmutableList.of(STRING_TYPE, UNKNOWN_TYPE));
-    JSType templatizedType4 = registry.createTemplatizedType(
-        baseType, ImmutableList.<JSType>of(UNKNOWN_TYPE, UNKNOWN_TYPE));
-
-    assertTrue(templatizedType1.isSubtype(baseType));
-    assertTrue(templatizedType2.isSubtype(baseType));
-    assertTrue(templatizedType3.isSubtype(baseType));
-    assertTrue(templatizedType4.isSubtype(baseType));
-
-    assertFalse(templatizedType1.isEquivalentTo(baseType));
-    assertFalse(templatizedType2.isEquivalentTo(baseType));
-    assertFalse(templatizedType3.isEquivalentTo(baseType));
-    assertTrue(templatizedType4.isEquivalentTo(baseType));
-
-    assertTrue(baseType.isSubtype(templatizedType1));
-    assertTrue(baseType.isSubtype(templatizedType2));
-    assertTrue(baseType.isSubtype(templatizedType3));
-    assertTrue(baseType.isSubtype(templatizedType4));
-
-    assertFalse(templatizedType1.isSubtype(templatizedType2));
-    assertFalse(templatizedType2.isSubtype(templatizedType1));
-
-    assertTrue(templatizedType2.isSubtype(templatizedType3));
-    assertTrue(templatizedType3.isSubtype(templatizedType2));
+  /** Assert that a type can assign to itself. */
+  private void assertTypeCanAssignToItself(JSType type) {
+    assertTrue(type.isSubtypeOf(type));
   }
 }

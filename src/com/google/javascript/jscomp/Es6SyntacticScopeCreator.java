@@ -81,13 +81,13 @@ public class Es6SyntacticScopeCreator implements ScopeCreator {
     public Scope create(Scope parent, Node n) {
       return (parent == null)
         ? Scope.createGlobalScope(n)
-        : new Scope(parent, n);
+        : Scope.createChildScope(parent, n);
     }
   }
 
   @Override
-  public Scope createScope(Node n, Scope parent) {
-    Scope scope = scopeFactory.create(parent, n);
+  public Scope createScope(Node n, AbstractScope<?, ?> parent) {
+    Scope scope = scopeFactory.create((Scope) parent, n);
     new ScopeScanner(compiler, redeclarationHandler, scope, null).populate();
     return scope;
   }
@@ -167,6 +167,7 @@ public class Es6SyntacticScopeCreator implements ScopeCreator {
 
         case FOR:
         case FOR_OF:
+        case FOR_AWAIT_OF:
         case FOR_IN:
         case SWITCH:
           scanVars(n, null, scope);
@@ -186,7 +187,7 @@ public class Es6SyntacticScopeCreator implements ScopeCreator {
     }
 
     private void declareLHS(Scope s, Node n) {
-      for (Node lhs : NodeUtil.getLhsNodesOfDeclaration(n)) {
+      for (Node lhs : NodeUtil.findLhsNodesInNode(n)) {
         declareVar(s, lhs);
       }
     }
@@ -309,8 +310,7 @@ public class Es6SyntacticScopeCreator implements ScopeCreator {
      * @param n The node corresponding to the variable name.
      */
     private void declareVar(Scope s, Node n) {
-      checkState(n.isName() || n.isStringKey() || n.isImportStar(),
-          "Invalid node for declareVar: %s", n);
+      checkState(n.isName() || n.isImportStar(), "Invalid node for declareVar: %s", n);
 
       String name = n.getString();
       // Because of how we scan the variables, it is possible to encounter

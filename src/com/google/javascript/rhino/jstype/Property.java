@@ -42,16 +42,15 @@ package com.google.javascript.rhino.jstype;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.StaticSourceFile;
-import com.google.javascript.rhino.TypeI;
 import java.io.Serializable;
 import java.util.Objects;
 
 /**
  * A property slot of an object.
+ *
  * @author nicksantos@google.com (Nick Santos)
  */
-public final class Property
-    implements Serializable, StaticTypedSlot<JSType>, StaticTypedRef<JSType> {
+public final class Property implements Serializable, StaticTypedSlot, StaticTypedRef {
   private static final long serialVersionUID = 1L;
 
   /**
@@ -117,11 +116,6 @@ public final class Property
   }
 
   @Override
-  public TypeI getTypeI() {
-    return type;
-  }
-
-  @Override
   public boolean isTypeInferred() {
     return inferred;
   }
@@ -152,6 +146,11 @@ public final class Property
         + ", type:" + this.type
         + ", inferred: " + this.inferred
         + "}";
+  }
+
+  @Override
+  public StaticTypedScope getScope() {
+    throw new UnsupportedOperationException();
   }
 
   @Override

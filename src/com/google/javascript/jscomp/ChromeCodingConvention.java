@@ -15,14 +15,14 @@
  */
 package com.google.javascript.jscomp;
 
+import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.Immutable;
 import com.google.javascript.jscomp.ClosureCodingConvention.AssertInstanceofSpec;
-import com.google.javascript.rhino.FunctionTypeI;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.NominalTypeBuilder;
-import java.util.Collection;
+import com.google.javascript.rhino.jstype.FunctionType;
 
 /**
  * Coding convention used by the Chrome team to compile Chrome's JS.
@@ -53,19 +53,19 @@ public final class ChromeCodingConvention extends CodingConventions.Proxy {
   }
 
   @Override
-  public void applySingletonGetter(NominalTypeBuilder classType, FunctionTypeI getterType) {
+  public void applySingletonGetter(NominalTypeBuilder classType, FunctionType getterType) {
     Node defSite = classType.constructor().getSource();
     classType.declareConstructorProperty("getInstance", getterType, defSite);
     classType.declareConstructorProperty("instance_", classType.instance(), defSite);
   }
 
   @Override
-  public Collection<String> getIndirectlyDeclaredProperties() {
+  public ImmutableCollection<String> getIndirectlyDeclaredProperties() {
     return indirectlyDeclaredProperties;
   }
 
   @Override
-  public Collection<AssertionFunctionSpec> getAssertionFunctions() {
+  public ImmutableCollection<AssertionFunctionSpec> getAssertionFunctions() {
     return ImmutableList.of(
       new AssertionFunctionSpec("assert"),
       new AssertInstanceofSpec("cr.ui.decorate")

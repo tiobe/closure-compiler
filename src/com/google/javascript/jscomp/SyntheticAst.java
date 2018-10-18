@@ -16,9 +16,12 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.InputId;
 import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 
 /**
  * An AST generated totally by the compiler.
@@ -35,14 +38,14 @@ public final class SyntheticAst implements SourceAst {
 
   SyntheticAst(String sourceName) {
     this.inputId = new InputId(sourceName);
-    this.sourceFile = new SourceFile(sourceName);
+    this.sourceFile = new SourceFile(sourceName, SourceKind.STRONG);
     clearAst();
   }
 
   public SyntheticAst(Node root) {
     this.inputId = new InputId(root.getSourceFileName());
-    this.sourceFile = new SourceFile(root.getSourceFileName());
-    this.root = root;
+    this.sourceFile = new SourceFile(root.getSourceFileName(), SourceKind.STRONG);
+    this.root = checkNotNull(root);
   }
 
   @Override

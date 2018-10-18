@@ -40,23 +40,19 @@
 package com.google.javascript.rhino.jstype;
 
 import com.google.javascript.rhino.StaticSlot;
-import com.google.javascript.rhino.TypeI;
 
 /**
- * The {@code StaticTypedSlot} interface must be implemented by variables that can
- * appear as members of a {@code StaticTypedScope}.
+ * The {@code StaticTypedSlot} interface must be implemented by variables that can appear as members
+ * of a {@code StaticTypedScope}.
  *
- * @param <T> The type of information stored about the slot
  */
-public interface StaticTypedSlot<T extends TypeI> extends StaticSlot {
+public interface StaticTypedSlot extends StaticSlot {
   /**
    * Returns the type information, if any, for this slot.
+   *
    * @return The type or {@code null} if no type is declared for it.
    */
-  T getType();
-
-  /** Returns the type information as a {@link TypeI}. */
-  TypeI getTypeI();
+  JSType getType();
 
   /**
    * Returns whether the type has been inferred (as opposed to declared).
@@ -64,5 +60,9 @@ public interface StaticTypedSlot<T extends TypeI> extends StaticSlot {
   boolean isTypeInferred();
 
   /** Gets the declaration of this symbol. May not exist. */
-  StaticTypedRef<T> getDeclaration();
+  @Override
+  StaticTypedRef getDeclaration();
+
+  @Override
+  StaticTypedScope getScope();
 }

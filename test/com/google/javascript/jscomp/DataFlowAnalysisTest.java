@@ -17,7 +17,7 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.javascript.jscomp.CompilerTestCase.LINE_JOINER;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static java.util.Comparator.comparingInt;
 
 import com.google.javascript.jscomp.AbstractCompiler.LifeCycleStage;
@@ -42,14 +42,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
- * A test suite with a very small programming language that has two types of
- * instructions: {@link BranchInstruction} and {@link ArithmeticInstruction}.
- * Test cases must construct a small program with these instructions and
- * manually put each instruction in a {@code ControlFlowGraph}.
+ * A test suite with a very small programming language that has two types of instructions: {@link
+ * BranchInstruction} and {@link ArithmeticInstruction}. Test cases must construct a small program
+ * with these instructions and manually put each instruction in a {@code ControlFlowGraph}.
  *
  */
+@RunWith(JUnit4.class)
 public final class DataFlowAnalysisTest extends TestCase {
 
   /**
@@ -537,6 +540,7 @@ public final class DataFlowAnalysisTest extends TestCase {
     return out;
   }
 
+  @Test
   public void testSimpleIf() {
     // if (a) { b = 1; } else { b = 1; } c = b;
     Variable a = new Variable("a");
@@ -593,6 +597,7 @@ public final class DataFlowAnalysisTest extends TestCase {
     verifyOutHas(n4, c, 1);
   }
 
+  @Test
   public void testSimpleLoop() {
     // a = 0; do { a = a + 1 } while (b); c = a;
     Variable a = new Variable("a");
@@ -648,20 +653,24 @@ public final class DataFlowAnalysisTest extends TestCase {
     verifyOutHas(n4, c, null);
   }
 
+  @Test
   public void testLatticeArrayMinimizationWhenMidpointIsEven() {
-    assertEquals(6, JoinOp.BinaryJoinOp.computeMidPoint(12));
+    assertThat(JoinOp.BinaryJoinOp.computeMidPoint(12)).isEqualTo(6);
   }
 
+  @Test
   public void testLatticeArrayMinimizationWhenMidpointRoundsDown() {
-    assertEquals(8, JoinOp.BinaryJoinOp.computeMidPoint(18));
+    assertThat(JoinOp.BinaryJoinOp.computeMidPoint(18)).isEqualTo(8);
   }
 
+  @Test
   public void testLatticeArrayMinimizationWithTwoElements() {
-    assertEquals(1, JoinOp.BinaryJoinOp.computeMidPoint(2));
+    assertThat(JoinOp.BinaryJoinOp.computeMidPoint(2)).isEqualTo(1);
   }
 
   // tests for computeEscaped method
 
+  @Test
   public void testEscaped() {
     assertThat(
             computeEscapedLocals(
@@ -675,6 +684,7 @@ public final class DataFlowAnalysisTest extends TestCase {
     assertThat(computeEscapedLocals("function f() {try{} catch(e){}}")).hasSize(1);
   }
 
+  @Test
   public void testEscapedFunctionLayered() {
     assertThat(
             computeEscapedLocals(
@@ -688,10 +698,12 @@ public final class DataFlowAnalysisTest extends TestCase {
         .isEmpty();
   }
 
+  @Test
   public void testEscapedLetConstSimple() {
     assertThat(computeEscapedLocals("function f() { let x = 0; x ++; x; }")).isEmpty();
   }
 
+  @Test
   public void testEscapedFunctionAssignment() {
     assertThat(computeEscapedLocals("function f() {var x = function () { return 1; }; }"))
         .isEmpty();
@@ -701,6 +713,7 @@ public final class DataFlowAnalysisTest extends TestCase {
         .isEmpty();
   }
 
+  @Test
   public void testEscapedArrowFunction() {
     // When the body of the arrow fn is analyzed, x is considered an escaped var. When the outer
     // block containing "const value ..." is analyzed, 'x' is not considered an escaped var
@@ -715,7 +728,7 @@ public final class DataFlowAnalysisTest extends TestCase {
   }
 
   // test computeEscaped helper method that returns the liveness analysis performed by the
-  // LiveVariablesAnalysisES6 class
+  // LiveVariablesAnalysis class
   public Set<? extends Var> computeEscapedLocals(String... lines) {
     // Set up compiler
     Compiler compiler = new Compiler();
@@ -725,14 +738,14 @@ public final class DataFlowAnalysisTest extends TestCase {
     compiler.initOptions(options);
     compiler.setLifeCycleStage(LifeCycleStage.NORMALIZED);
 
-    String src = LINE_JOINER.join(lines);
+    String src = CompilerTestCase.lines(lines);
     Node n = compiler.parseTestCode(src).removeFirstChild();
     Node script = new Node(Token.SCRIPT, n);
     script.setInputId(new InputId("test"));
     assertThat(compiler.getErrors()).isEmpty();
 
     // Create scopes
-    ScopeCreator scopeCreator = new Es6SyntacticScopeCreator(compiler);
+    Es6SyntacticScopeCreator scopeCreator = new Es6SyntacticScopeCreator(compiler);
     Scope scope = scopeCreator.createScope(n, Scope.createGlobalScope(script));
     Scope childScope;
     if (script.getFirstChild().isFunction()) {
@@ -747,74 +760,8 @@ public final class DataFlowAnalysisTest extends TestCase {
     ControlFlowGraph<Node> cfg = cfa.getCfg();
 
     // Compute liveness of variables
-    LiveVariablesAnalysisEs6 analysis =
-        new LiveVariablesAnalysisEs6(
-            cfg, scope, childScope, compiler, (Es6SyntacticScopeCreator) scopeCreator);
-    analysis.analyze();
-    return analysis.getEscapedLocals();
-  }
-
-  public void testEscapedES5() {
-    assertThat(
-            computeEscapedLocalsES5(
-                "function f() {",
-                "    var x = 0; ",
-                "    setTimeout(function() { x++; }); ",
-                "    alert(x);",
-                "}"))
-        .hasSize(1);
-    assertThat(computeEscapedLocalsES5("function f() {var _x}")).hasSize(1);
-
-    // Note the result of the following try-catch escaped test differs from the ES6 version because
-    // the scope creators treat catch blocks differently
-    assertThat(computeEscapedLocalsES5("function f() {try{} catch(e){}}")).hasSize(1);
-  }
-
-  public void testEscapedFunctionAssignmentES5() {
-    assertThat(computeEscapedLocalsES5("function f() {var x = function () { return 1; }; }"))
-        .isEmpty();
-    assertThat(computeEscapedLocalsES5("function f() {var x = function (y) { return y; }; }"))
-        .isEmpty();
-  }
-
-  public void testEscapedFunctionLayeredES5() {
-    assertThat(
-            computeEscapedLocalsES5(
-                "function f() {",
-                "    function ff() {",
-                "        var x = 0; ",
-                "        setTimeout(function() { x++; }); ",
-                "        alert(x);",
-                "    }",
-                "}"))
-        .isEmpty();
-  }
-
-  // test computeEscaped helper method for ES5
-  public Set<? extends Var> computeEscapedLocalsES5(String... lines) {
-    // Set up compiler
-    Compiler compiler = new Compiler();
-    CompilerOptions options = new CompilerOptions();
-    options.setCodingConvention(new GoogleCodingConvention());
-    compiler.initOptions(options);
-
-    String src = LINE_JOINER.join(lines);
-    Node n = compiler.parseTestCode(src).removeFirstChild();
-    Node script = new Node(Token.SCRIPT, n);
-    script.setInputId(new InputId("test"));
-    assertThat(compiler.getErrors()).isEmpty();
-
-    // Create scopes
-    ScopeCreator scopeCreator = SyntacticScopeCreator.makeUntyped(compiler);
-    Scope scope = scopeCreator.createScope(n, Scope.createGlobalScope(script));
-
-    // Control flow graph
-    ControlFlowAnalysis cfa = new ControlFlowAnalysis(compiler, false, true);
-    cfa.process(null, script);
-    ControlFlowGraph<Node> cfg = cfa.getCfg();
-
-    // Compute livenss of variables
-    LiveVariablesAnalysis analysis = new LiveVariablesAnalysis(cfg, scope, compiler, scopeCreator);
+    LiveVariablesAnalysis analysis =
+        new LiveVariablesAnalysis(cfg, scope, childScope, compiler, scopeCreator);
     analysis.analyze();
     return analysis.getEscapedLocals();
   }
@@ -875,6 +822,7 @@ public final class DataFlowAnalysisTest extends TestCase {
     }
   }
 
+  @Test
   public void testBranchedSimpleIf() {
     // if (a) { a = 0; } else { b = 0; } c = b;
     Variable a = new Variable("a");
@@ -919,6 +867,7 @@ public final class DataFlowAnalysisTest extends TestCase {
 
   private static final int MAX_STEP = 10;
 
+  @Test
   public void testMaxIterationsExceededException() {
     Variable a = new Variable("a");
     Instruction inst1 = new ArithmeticInstruction(a, a, Operation.ADD, a);
@@ -944,7 +893,7 @@ public final class DataFlowAnalysisTest extends TestCase {
     DummyConstPropagation constProp = new DummyConstPropagation(cfg);
     try {
       constProp.analyze(MAX_STEP);
-      fail("Expected MaxIterationsExceededException to be thrown.");
+      assertWithMessage("Expected MaxIterationsExceededException to be thrown.").fail();
     } catch (MaxIterationsExceededException e) {
       assertThat(e)
           .hasMessageThat()

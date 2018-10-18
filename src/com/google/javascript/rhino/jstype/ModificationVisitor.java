@@ -43,7 +43,6 @@ package com.google.javascript.rhino.jstype;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.javascript.rhino.Node;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -130,14 +129,14 @@ public class ModificationVisitor implements Visitor<JSType> {
     }
 
     if (changed) {
-      FunctionBuilder builder = new FunctionBuilder(registry)
-          .setIsConstructor(type.isConstructor())
+      FunctionType ft = new FunctionBuilder(registry)
+          .withKind(type.getKind())
           .withParamsNode(paramBuilder.build())
           .withReturnType(afterReturn)
           .withTypeOfThis(afterThis)
-          .withTemplateKeys(
-              type.getTemplateTypeMap().getUnfilledTemplateKeys());
-      return builder.build();
+          .withTemplateKeys(type.getTemplateTypeMap().getUnfilledTemplateKeys())
+          .build();
+      return ft;
     }
 
     return type;
@@ -228,6 +227,11 @@ public class ModificationVisitor implements Visitor<JSType> {
   }
 
   @Override
+  public JSType caseSymbolType() {
+    return getNativeType(JSTypeNative.SYMBOL_TYPE);
+  }
+
+  @Override
   public JSType caseVoidType() {
     return getNativeType(JSTypeNative.VOID_TYPE);
   }
@@ -245,7 +249,7 @@ public class ModificationVisitor implements Visitor<JSType> {
     }
 
     if (changed) {
-      UnionTypeBuilder builder = new UnionTypeBuilder(registry);
+      UnionTypeBuilder builder = UnionTypeBuilder.create(registry);
       for (JSType alternate : results) {
         builder.addAlternate(alternate);
       }

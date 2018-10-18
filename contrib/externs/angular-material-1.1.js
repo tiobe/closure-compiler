@@ -285,6 +285,12 @@ md.$dialog.ConfirmConfig_.prototype.parent = function(parent) {};
  */
 md.$dialog.ConfirmConfig_.prototype.css = function(css) {};
 
+/**
+ * @param {boolean} scroll
+ * @return {!md.$dialog.ConfirmConfig_}
+ */
+md.$dialog.ConfirmConfig_.prototype.disableParentScroll = function(scroll) {};
+
 
 /** @interface */
 md.$dialog.PromptConfig_ = function() {};
@@ -387,6 +393,11 @@ md.$dialog.PromptConfig_.prototype.parent = function(parent) {};
  */
 md.$dialog.PromptConfig_.prototype.css = function(css) {};
 
+/**
+ * @param {boolean} required
+ * @return {!md.$dialog.PromptConfig_}
+ */
+md.$dialog.PromptConfig_.prototype.required = function(required) {};
 
 /** @typedef {!md.$dialog.options|!md.$dialog.ConfirmConfig_|
  *     !md.$dialog.AlertConfig_|!md.$dialog.PromptConfig_} */
@@ -1006,6 +1017,7 @@ md.$panel = function() {};
  *   onDomRemoved: (Function|undefined),
  *   origin: (!angular.JQLite|!Element|undefined),
  *   onCloseSuccess: (function(!md.$panel.MdPanelRef, string)|undefined),
+ *   groupName: (string|!Array<string>|undefined),
  * }}
  */
 md.$panel.config;
@@ -1027,6 +1039,23 @@ md.$panel.prototype.newPanelPosition = function() {};
 
 /** @return {!md.$panel.MdPanelAnimation} */
 md.$panel.prototype.newPanelAnimation = function() {};
+
+/**
+ * @param {string} groupName
+ * @param {{maxOpen: (number|undefined)}=} opt_config
+ * @return {{
+ *   panels: !Array<!md.$panel.MdPanelRef>,
+ *   openPanels: !Array<!md.$panel.MdPanelRef>,
+ *   maxOpen: number,
+ * }}
+ */
+md.$panel.prototype.newPanelGroup = function(groupName, opt_config) {};
+
+/**
+ * @param {string} groupName
+ * @param {number} maxOpen
+ */
+md.$panel.prototype.setGroupMaxOpen = function(groupName, maxOpen) {};
 
 /**
  * Possible values of xPosition.
@@ -1269,3 +1298,15 @@ md.$panel.MdPanelAnimation.prototype.closeTo = function(closeTo) {};
  * @return {!md.$panel.MdPanelAnimation}
  */
 md.$panel.MdPanelAnimation.prototype.withAnimation = function(cssClass) {};
+
+/******************************************************************************
+ * DatePickerCtrl
+ *****************************************************************************/
+
+/** @interface */
+md.DatePickerCtrl = function() {};
+
+/**
+ * @param {Date=} opt_date
+ */
+md.DatePickerCtrl.prototype.updateErrorState = function(opt_date) {};

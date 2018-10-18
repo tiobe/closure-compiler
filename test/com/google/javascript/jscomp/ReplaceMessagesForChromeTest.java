@@ -19,12 +19,17 @@ package com.google.javascript.jscomp;
 import static com.google.javascript.jscomp.JsMessage.Style.RELAX;
 
 import com.google.javascript.jscomp.JsMessage.Style;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Test which checks that replacer works correctly.
  *
  * @author tbreisacher@google.com (Tyler Breisacher)
  */
+@RunWith(JUnit4.class)
 public final class ReplaceMessagesForChromeTest extends CompilerTestCase {
 
   private Style style = RELAX;
@@ -42,57 +47,61 @@ public final class ReplaceMessagesForChromeTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     style = RELAX;
   }
 
+  @Test
   public void testReplaceSimpleMessage() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A simple message. */\n", "var MSG_A = goog.getMsg('Hello world');"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A simple message. */\n",
             "var MSG_A=chrome.i18n.getMessage('8660696502365331902');"));
 
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message attached to an object. */\n",
             "foo.bar.MSG_B = goog.getMsg('Goodbye world');"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message attached to an object. */\n",
             "foo.bar.MSG_B=chrome.i18n.getMessage('2356086230621084760');"));
   }
 
+  @Test
   public void testReplaceSinglePlaceholder() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with one placeholder. */\n",
             "var MSG_C = goog.getMsg('Hello, {$name}', {name: 'Tyler'});"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with one placeholder. */\n",
             "var MSG_C=chrome.i18n.getMessage('4985325380591528435', ['Tyler']);"));
   }
 
+  @Test
   public void testReplaceTwoPlaceholders() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with two placeholders. */\n",
             "var MSG_D = goog.getMsg('{$greeting}, {$name}', ",
             "{greeting: 'Hi', name: 'Tyler'});"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with two placeholders. */\n",
             "var MSG_D=chrome.i18n.getMessage('3605047247574980322', ",
             "['Hi', 'Tyler']);"));
 
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with two placeholders, but their order is\n",
             " * reversed in the object literal. (Shouldn't make a difference.)\n",
             " */\n",
             "var MSG_E = goog.getMsg('{$greeting}, {$name}!', ",
             "{name: 'Tyler', greeting: 'Hi'});"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with two placeholders, but their order is\n",
             " * reversed in the object literal. (Shouldn't make a difference.)\n",
             " */\n",
@@ -100,78 +109,83 @@ public final class ReplaceMessagesForChromeTest extends CompilerTestCase {
             "['Hi', 'Tyler']);"));
   }
 
+  @Test
   public void testReplacePlaceholderMissingValue() {
     testError("/** @desc A message with two placeholders, but one is missing. */\n"
         + "var MSG_F = goog.getMsg('{$greeting}, {$name}!', {name: 'Tyler'});",
          JsMessageVisitor.MESSAGE_TREE_MALFORMED);
   }
 
+  @Test
   public void testReplaceTwoPlaceholdersNonAlphaOrder() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with two placeholders not in order .*/\n",
             "var MSG_G = goog.getMsg('{$name}: {$greeting}', ",
             "{greeting: 'Salutations', name: 'Tyler'});"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with two placeholders not in order .*/\n",
             "var MSG_G=chrome.i18n.getMessage('7437383242562773138', ",
             "['Salutations', 'Tyler']);"));
   }
 
+  @Test
   public void testReplaceSinglePlaceholderComputedProp() {
     testError(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message with one placeholder. */\n",
             "var MSG_H = goog.getMsg('Hello, {$name}', {['name']: 'Tyler'});"),
         JsMessageVisitor.MESSAGE_TREE_MALFORMED);
   }
 
+  @Test
   public void testReplaceSimpleMessageWithLet() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A simple message. */\n",
             "let MSG_I = goog.getMsg('Hello world');"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A simple message. */\n",
             "let MSG_I = chrome.i18n.getMessage('987871171253827787');"));
   }
 
+  @Test
   public void testReplaceSimpleMessageWithConst() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A simple message. */\n",
             "const MSG_J = goog.getMsg('Hello world');"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A simple message. */\n",
             "const MSG_J =chrome.i18n.getMessage('3477894568604521782');"));
   }
 
+  @Test
   public void testReplaceTemplatedMessage() {
     testError(
-        LINE_JOINER.join(
+        lines(
             "const greeting = '{$greeting}'",
             "/** @desc A simple message */\n",
             "var MSG_K = goog.getMsg(`${greeting}, Tyler`, {greeting: 'Hello'});"),
         JsMessageVisitor.MESSAGE_TREE_MALFORMED);
   }
 
+  @Test
   public void testReplaceExternalMessage() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message that was extracted with SoyMsgExtractor. */\n",
             "var MSG_EXTERNAL_1357902468 = goog.getMsg('Hello world');"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message that was extracted with SoyMsgExtractor. */\n",
             "var MSG_EXTERNAL_1357902468 = chrome.i18n.getMessage('1357902468');"));
   }
 
-  /**
-   * Test that messages are handled correctly if they contain the same
-   * placeholder twice.
-   */
+  /** Test that messages are handled correctly if they contain the same placeholder twice. */
+  @Test
   public void testReplaceMessageWithDuplicatePlaceholders() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message that contains two instances of the same placeholder. */\n",
             "var MSG_EXTERNAL_987654321 = goog.getMsg(",
             "'{$startDiv_1}You are signed in as{$endDiv}{$img}{$startDiv_2}{$name}{$endDiv}',",
@@ -180,7 +194,7 @@ public final class ReplaceMessagesForChromeTest extends CompilerTestCase {
             "'img': '<img src=\"http://example.com/photo.png\">',",
             "'startDiv_2': '<div class=\"name\">',",
             "'name': name});"),
-        LINE_JOINER.join(
+        lines(
             "/** @desc A message that contains two instances of the same placeholder. */\n",
             "var MSG_EXTERNAL_987654321 = chrome.i18n.getMessage('987654321', ",
             "[",

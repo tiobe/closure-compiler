@@ -59,7 +59,7 @@ public final class StringType extends ValueType {
     if (result != null) {
       return result;
     }
-    if (that.isUnknownType() || that.isSubtype(
+    if (that.isUnknownType() || that.isSubtypeOf(
             getNativeType(JSTypeNative.OBJECT_NUMBER_STRING_BOOLEAN))) {
       return UNKNOWN;
     }
@@ -110,10 +110,5 @@ public final class StringType extends ValueType {
   @Override
   public <T> T visit(Visitor<T> visitor) {
     return visitor.caseStringType();
-  }
-
-  @Override
-  public int hashCode() {
-    return System.identityHashCode(this);
   }
 }

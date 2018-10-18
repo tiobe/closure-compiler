@@ -23,7 +23,7 @@ import com.google.javascript.rhino.Node;
  * requested via the CompilerOptions#forceLibraryInjection field.
  */
 class InjectRuntimeLibraries implements CompilerPass {
-  private AbstractCompiler compiler;
+  private final AbstractCompiler compiler;
 
   public InjectRuntimeLibraries(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -31,7 +31,12 @@ class InjectRuntimeLibraries implements CompilerPass {
 
   @Override
   public void process(Node externs, Node root) {
-    for (String forced : compiler.getOptions().forceLibraryInjection) {
+    CompilerOptions options = compiler.getOptions();
+    if (options.runtimeTypeCheck) {
+      compiler.ensureLibraryInjected("runtime_type_check", true);
+    }
+
+    for (String forced : options.forceLibraryInjection) {
       compiler.ensureLibraryInjected(forced, true);
     }
   }

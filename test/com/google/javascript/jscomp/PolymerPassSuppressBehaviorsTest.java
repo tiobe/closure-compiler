@@ -17,14 +17,17 @@ package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for {@link PolymerPassSuppressBehaviors}
- */
-public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
+/** Unit tests for {@link PolymerPassSuppressBehaviors} */
+@RunWith(JUnit4.class)
+public class PolymerPassSuppressBehaviorsTest extends CompilerTestCase {
 
   private static final String EXTERNS =
-      LINE_JOINER.join(
+      lines(
           MINIMAL_EXTERNS,
           "/** @constructor */",
           "var HTMLElement = function() {};",
@@ -67,17 +70,18 @@ public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
       public void process(Node externs, Node root) {
         PolymerPassSuppressBehaviors suppressBehaviorsCallback =
             new PolymerPassSuppressBehaviors(compiler);
-        NodeTraversal.traverseEs6(compiler, root, suppressBehaviorsCallback);
+        NodeTraversal.traverse(compiler, root, suppressBehaviorsCallback);
       }
     };
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
+    enableTypeCheck();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
     allowExternsChanges();
-    this.mode = TypeInferenceMode.BOTH;
     enableRunTypeCheckAfterProcessing();
     enableParseTypeInfo();
   }
@@ -87,9 +91,10 @@ public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
     return 1;
   }
 
+  @Test
   public void testPropertyTypeRemoval() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "var FunBehavior = {",
             "  properties: {",
@@ -109,7 +114,7 @@ public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
             "  },",
             "};"),
 
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior @nocollapse */",
             "var FunBehavior = {",
             "  properties: {",
@@ -127,9 +132,10 @@ public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
             "};"));
   }
 
+  @Test
   public void testDefaultValueSuppression() {
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "var FunBehavior = {",
             "  properties: {",
@@ -148,7 +154,7 @@ public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
             "  },",
             "};"),
 
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior @nocollapse */",
             "var FunBehavior = {",
             "  properties: {",
@@ -170,29 +176,33 @@ public class PolymerPassSuppressBehaviorsTest extends TypeICompilerTestCase {
             "};"));
   }
 
+  @Test
   public void testConstBehaviours() {
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "const FunBehavior = {",
             "};"),
 
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior @nocollapse */",
             "const FunBehavior = {",
             "};"));
   }
 
+  @Test
   public void testLetBehaviours() {
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
+
     test(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "let FunBehavior = {",
             "};"),
 
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior @nocollapse */",
             "let FunBehavior = {",
             "};"));

@@ -28,11 +28,15 @@ import com.google.javascript.rhino.Node;
 import java.util.Collection;
 import java.util.Set;
 import java.util.TreeSet;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link DefinitionUseSiteFinder}
  *
  */
+@RunWith(JUnit4.class)
 public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
   Set<String> found = new TreeSet<>();
 
@@ -48,6 +52,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
     found.clear();
   }
 
+  @Test
   public void testDefineNumber() {
     checkDefinitionsInJs(
         "var a = 1",
@@ -92,6 +97,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
                         "USE GETPROP a.b -> [NUMBER]"));
   }
 
+  @Test
   public void testDefineGet() {
     // TODO(johnlenz): Add support for quoted properties
     checkDefinitionsInJs(
@@ -100,6 +106,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
                       "USE GETPROP o.a -> [FUNCTION]"));
   }
 
+  @Test
   public void testDefineSet() {
     // TODO(johnlenz): Add support for quoted properties
     checkDefinitionsInJs(
@@ -109,6 +116,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
                       "USE GETPROP o.a -> [FUNCTION]"));
   }
 
+  @Test
   public void testDefineFunction() {
     checkDefinitionsInJs(
         "var a = function(){}",
@@ -140,6 +148,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
         ImmutableSet.of("DEF GETPROP null -> FUNCTION"));
   }
 
+  @Test
   public void testFunctionArgumentsBasic() {
     checkDefinitionsInJs(
         "function f(a){return a}",
@@ -158,6 +167,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
   private static final String DEF = "var f = function(arg1, arg2){}";
   private static final String USE = "f(1, 2)";
 
+  @Test
   public void testFunctionArgumentsInExterns() {
 
     // function arguments are definitions when they appear in source.
@@ -175,6 +185,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
                         "USE NAME f -> [EXTERN FUNCTION]"));
   }
 
+  @Test
   public void testMultipleDefinition() {
     checkDefinitionsInJs(
         "a = 1; a = 2; a",
@@ -234,9 +245,10 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testDropStubDefinitions() {
     String externs =
-        LINE_JOINER.join(
+        lines(
             "obj.prototype.stub;",
             "/**",
             " * @param {string} s id.",
@@ -249,9 +261,10 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
         externs, ImmutableSet.of("DEF GETPROP obj.prototype.stub -> EXTERN FUNCTION"));
   }
 
+  @Test
   public void testNoDropStub1() {
     String externs =
-        LINE_JOINER.join(
+        lines(
             "var name;",
             "/**",
             " * @param {string} s id.",
@@ -265,9 +278,10 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
                                  "DEF NAME name -> EXTERN FUNCTION"));
   }
 
+  @Test
   public void testNoDropStub2() {
     String externs =
-        LINE_JOINER.join(
+        lines(
             "f().name;", // These are not recongnized as stub definitions
             "/**",
             " * @param {string} s id.",
@@ -279,6 +293,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
     checkDefinitionsInExterns(externs, ImmutableSet.<String>of());
   }
 
+  @Test
   public void testDefinitionInExterns() {
     String externs = "var a = 1";
 
@@ -326,6 +341,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
         ImmutableSet.of("DEF NAME a -> EXTERN NUMBER"));
   }
 
+  @Test
   public void testRecordDefinitionInExterns() {
     checkDefinitionsInExterns(
         "var ns = {};" +
@@ -354,12 +370,14 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
                         "DEF STRING_KEY null -> EXTERN <null>"));
   }
 
+  @Test
   public void testUnitializedDefinitionInExterns() {
     checkDefinitionsInExterns(
         "/** @type {number} */ var HYBRID;",
         ImmutableSet.of("DEF NAME HYBRID -> EXTERN <null>"));
   }
 
+  @Test
   public void testObjectLitInExterns() {
     checkDefinitions(
         "var goog = {};" +
@@ -377,8 +395,9 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
             "USE NAME goog -> [EXTERN <null>]"));
   }
 
+  @Test
   public void testCallInExterns() {
-    String externs = LINE_JOINER.join(
+    String externs = lines(
             "var goog = {};",
             "/** @constructor */",
             "goog.Response = function() {};",
@@ -392,8 +411,9 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
             "DEF GETPROP goog.Response.prototype.get -> EXTERN <null>"));
   }
 
+  @Test
   public void testDoubleNamedFunction() {
-    String source = LINE_JOINER.join(
+    String source = lines(
         "A.f = function f_d() { f_d(); };",
         "A.f();");
     checkDefinitionsInJs(
@@ -405,6 +425,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
             "USE NAME f_d -> [FUNCTION]"));
   }
 
+  @Test
   public void testGetChangesAndDeletions_changeDoesntOverrideDelete() {
     Compiler compiler = new Compiler();
     DefinitionUseSiteFinder definitionsFinder = new DefinitionUseSiteFinder(compiler);
@@ -412,7 +433,7 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
 
     Node script =
         compiler.parseSyntheticCode(
-            LINE_JOINER.join(
+            lines(
                 "function foo() {",
                 "  foo.propOfFoo = 'asdf';",
                 "}",
@@ -489,8 +510,8 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
   }
 
   void checkDefinitions(String externs, String source, Set<String> expected) {
-    testSame(externs, source);
-    assertEquals(expected, found);
+    testSame(externs(externs), srcs(source));
+    assertThat(found).isEqualTo(expected);
     found.clear();
   }
 
@@ -577,8 +598,8 @@ public final class DefinitionUseSiteFinderTest extends CompilerTestCase {
     @Override
     public void process(Node externs, Node root) {
       passUnderTest.process(externs, root);
-      NodeTraversal.traverseEs6(compiler, externs, this);
-      NodeTraversal.traverseEs6(compiler, root, this);
+      NodeTraversal.traverse(compiler, externs, this);
+      NodeTraversal.traverse(compiler, root, this);
 
       buildFound(passUnderTest, found);
     }

@@ -17,11 +17,16 @@
 package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Unit tests for {@link ShadowVariables}.
  *
  */
+@RunWith(JUnit4.class)
 public final class ShadowVariablesTest extends CompilerTestCase {
   // Use pseudo names to make test easier to read.
   private boolean generatePseudoNames = false;
@@ -42,7 +47,8 @@ public final class ShadowVariablesTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
     generatePseudoNames = false;
@@ -54,6 +60,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
     pass = null;
   }
 
+  @Test
   public void testShadowSimple1() {
     test("function foo(x) { return function (y) {} }",
          "function   b(a) { return function (a) {} }");
@@ -65,6 +72,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
 
   }
 
+  @Test
   public void testShadowSimple2() {
     test("function foo(x,y) { return function (y,z) {} }",
          "function   c(a,b) { return function (a,b) {} }");
@@ -75,9 +83,8 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          "function $foo$$($x$$,$y$$) { return function ($x$$,$y$$) {} }");
   }
 
-  /**
-   * If we have a choice, pick out the most used variable to shadow.
-   */
+  /** If we have a choice, pick out the most used variable to shadow. */
+  @Test
   public void testShadowMostUsedVar() {
     generatePseudoNames = true;
     test("function  foo  () {var  x  ; var  y  ;  y  ; y  ; y  ; x  ;" +
@@ -87,10 +94,11 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          "  return function ($y$$) {} }");
   }
 
+  @Test
   public void testNoShadowReferencedVariables() {
     generatePseudoNames = true;
     // Unsafe to shadow function names on IE8
-    test(LINE_JOINER.join(
+    test(lines(
         "function f1() {",
         "  var x; x; x; x;",
         "  return function f2(y) {",
@@ -99,7 +107,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "    };",
         "  };",
         "}"),
-        LINE_JOINER.join(
+        lines(
         "function $f1$$() {",
         "  var $x$$; $x$$; $x$$; $x$$;",
         "  return function $f2$$($y$$) {",
@@ -110,18 +118,21 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "}"));
   }
 
+  @Test
   public void testNoShadowGlobalVariables() {
     generatePseudoNames = true;
     test("var  x  ;  x  ; function  foo  () { return function ( y  ) {}}",
          "var $x$$; $x$$; function $foo$$() { return function ($y$$) {}}");
   }
 
+  @Test
   public void testShadowBleedInFunctionName() {
     generatePseudoNames = true;
     test("function  foo  () { function  b  ( y  ) { y  }  b  ;  b  ;}",
          "function $foo$$() { function $b$$($b$$) {$b$$} $b$$; $b$$;}");
    }
 
+  @Test
   public void testNoShadowLessPopularName() {
     generatePseudoNames = true;
     // We make sure that y doesn't pick x as a shadow and remains to be renamed
@@ -140,6 +151,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          "  var $k$$; var $j$$;$j$$;$j$$;$j$$;$j$$;$j$$;$j$$;}");
   }
 
+  @Test
   public void testShadowFunctionName() {
     generatePseudoNames = true;
     test("var  g   = function() {" +
@@ -148,6 +160,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          "  var $x$$; return function(){function $x$$(){}}}");
   }
 
+  @Test
   public void testShadowLotsOfScopes1() {
     generatePseudoNames = true;
     test("var  g   = function( x  ) { return function() { return function() {" +
@@ -156,6 +169,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          " return function() { var $x$$ }}}}");
   }
 
+  @Test
   public void testShadowLotsOfScopes2() {
     generatePseudoNames = true;
     // 'y' doesn't have a candidate to shadow due to upward referencing.
@@ -175,6 +189,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         " {return function() {return function($y$$) { $x$$ }}}}");
   }
 
+  @Test
   public void testShadowLotsOfScopes3() {
     generatePseudoNames = true;
     // 'y' doesn't have a candidate to shadow due to upward referencing.
@@ -192,6 +207,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         " {return function() {return function() { $x$$ }}}; var $y$$}");
   }
 
+  @Test
   public void testShadowLotsOfScopes4() {
     // Make sure we do get the optimal shadowing scheme where
     test("var g = function(x) { return function() { return function() {" +
@@ -200,6 +216,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          " return function(){return function(){};var a};var a};var a}}");
   }
 
+  @Test
   public void testShadowLotsOfScopes5() {
     generatePseudoNames = true;
     test("var  g   = function( x  ) {" +
@@ -221,6 +238,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "     $x$$};$p$$};var $o$$};var $o$$};var $p$$}");
   }
 
+  @Test
   public void testShadowWithShadowAlready() {
     test("var g = function(x) { return function() { return function() {" +
          " return function(){return function(){x}};var p};var o};var p}",
@@ -233,6 +251,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          " return function(){return function(){b};a};var a};var a};var a}");
   }
 
+  @Test
   public void testShadowBug1() {
     generatePseudoNames = true;
     test("function  f  ( x  ) { return function( y  ) {" +
@@ -241,12 +260,14 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          "    return function($x$$) { $x$$ + $y$$; }}}");
   }
 
+  @Test
   public void testOptimal() {
     // A test for a case that wasn't optimal in a single pass algorithm.
     test("function f(x) { function g(y) { function h(x) {}}}",
          "function c(a) { function b(a) { function b(a) {}}}");
   }
 
+  @Test
   public void testSharingAcrossInnerScopes() {
     test("function f() {var f=function g(){g()}; var x=function y(){y()}}",
          "function c() {var d=function a(){a()}; var e=function b(){b()}}");
@@ -254,16 +275,19 @@ public final class ShadowVariablesTest extends CompilerTestCase {
          "function b(a) { return a ? function(a){} : function(a) {} }");
   }
 
+  @Test
   public void testExportedLocal1() {
     test("function f(a) { a();a();a(); return function($super){} }",
          "function b(a) { a();a();a(); return function($super){} }");
   }
 
+  @Test
   public void testExportedLocal2() {
     test("function f($super) { $super();$super(); return function(a){} }",
          "function a($super) { $super();$super(); return function(b){} }");
   }
 
+  @Test
   public void testRenameMapHasNoDuplicates() {
     test("function foo(x) { return function (y) {} }",
          "function   b(a) { return function (a) {} }");
@@ -272,10 +296,12 @@ public final class ShadowVariablesTest extends CompilerTestCase {
     try {
       vm.getNewNameToOriginalNameMap();
     } catch (java.lang.IllegalArgumentException unexpected) {
-      fail("Invalid VariableMap generated: " + vm.getOriginalNameToNewNameMap());
+      throw new AssertionError(
+          "Invalid VariableMap generated: " + vm.getOriginalNameToNewNameMap(), unexpected);
     }
   }
 
+  @Test
   public void testBug4172539() {
     // All the planets must line up. When we look at the 2nd inner function,
     // y can shadow x, also m can shadow x as well. Now all that is left for
@@ -286,7 +312,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
 
     generatePseudoNames = true;
     test(
-        LINE_JOINER.join(
+        lines(
             "function f(x) {",
             "  x;x;x;",
             "  return function (y) { y; x };",
@@ -297,7 +323,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
             "    };",
             "  };",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "function $f$$($x$$) {",
             "  $x$$;$x$$;$x$$;",
             "  return function ($y$$) { $y$$; $x$$ };",
@@ -310,9 +336,10 @@ public final class ShadowVariablesTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testBlocks() {
     // Unsafe to shadow nested "var"s
-    test(LINE_JOINER.join(
+    test(lines(
         "function f() {",
         "  var x = 1;",
         "  {",
@@ -322,7 +349,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "    }",
         "  }",
         "}"),
-        LINE_JOINER.join(
+        lines(
         "function a() {",
         "  var b = 1;",
         "  {",
@@ -334,7 +361,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "}"));
 
     // Safe to shadow nested "let"s
-    test(LINE_JOINER.join(
+    test(lines(
         "function f() {",
         "  let x = 1;",
         "  {",
@@ -344,7 +371,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "    }",
         "  }",
         "}"),
-        LINE_JOINER.join(
+        lines(
         "function b() {",
         "  let a = 1;",
         "  {",
@@ -355,7 +382,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "  }",
         "}"));
 
-    test(LINE_JOINER.join(
+    test(lines(
         "function f() {",
         "  let x = 1;",
         "  {",
@@ -366,7 +393,7 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "    }",
         "  }",
         "}"),
-        LINE_JOINER.join(
+        lines(
         "function c() {",
         "  let a = 1;",
         "  {",
@@ -379,15 +406,16 @@ public final class ShadowVariablesTest extends CompilerTestCase {
         "}"));
   }
 
+  @Test
   public void testCatch() {
     // Unsafe to shadow caught exceptions on IE8 since they are not block scoped
-    test(LINE_JOINER.join(
+    test(lines(
         "function f(a) {",
         "  try {",
         "  } catch (e) {",
         "  }",
         "}"),
-        LINE_JOINER.join(
+        lines(
         "function a(b) {",
         "  try {",
         "  } catch (c) {",

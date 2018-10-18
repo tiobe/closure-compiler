@@ -20,11 +20,14 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.deps.ModuleLoader;
-import com.google.javascript.jscomp.deps.NodeModuleResolver;
 import com.google.javascript.rhino.Node;
 import java.util.Map;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /** Unit tests for {@link RewriteJsonToModule} */
+@RunWith(JUnit4.class)
 public final class RewriteJsonToModuleTest extends CompilerTestCase {
 
   @Override
@@ -52,6 +55,7 @@ public final class RewriteJsonToModuleTest extends CompilerTestCase {
     return 1;
   }
 
+  @Test
   public void testJsonFile() {
     test(
         srcs(SourceFile.fromCode("/test.json", "{ 'foo': 'bar'}")),
@@ -60,6 +64,7 @@ public final class RewriteJsonToModuleTest extends CompilerTestCase {
     assertThat(getLastCompiler().getModuleLoader().getPackageJsonMainEntries()).isEmpty();
   }
 
+  @Test
   public void testPackageJsonFile() {
     test(
         srcs(SourceFile.fromCode("/package.json", "{ 'main': 'foo/bar/baz.js'}")),
@@ -76,6 +81,7 @@ public final class RewriteJsonToModuleTest extends CompilerTestCase {
         .containsEntry("/package.json", "/foo/bar/baz.js");
   }
 
+  @Test
   public void testPackageJsonWithoutMain() {
     test(
         srcs(SourceFile.fromCode("/package.json", "{'other': { 'main': 'foo/bar/baz.js'}}")),
@@ -86,6 +92,7 @@ public final class RewriteJsonToModuleTest extends CompilerTestCase {
     assertThat(getLastCompiler().getModuleLoader().getPackageJsonMainEntries()).isEmpty();
   }
 
+  @Test
   public void testPackageJsonFileBrowserField() {
     test(
         srcs(
@@ -105,6 +112,7 @@ public final class RewriteJsonToModuleTest extends CompilerTestCase {
         .containsEntry("/package.json", "/browser/foo.js");
   }
 
+  @Test
   public void testPackageJsonFileBrowserFieldAdvancedUsage() {
     test(
         srcs(
@@ -137,7 +145,38 @@ public final class RewriteJsonToModuleTest extends CompilerTestCase {
     // NodeModuleResolver knows how to normalize this entry's value
     assertThat(packageJsonMainEntries).containsEntry("/override/relative.js", "/./with/this.js");
     assertThat(packageJsonMainEntries)
-        .containsEntry("/dont/include.js", NodeModuleResolver.JSC_BROWSER_BLACKLISTED_MARKER);
+        .containsEntry("/dont/include.js", ModuleLoader.JSC_BROWSER_BLACKLISTED_MARKER);
     assertThat(packageJsonMainEntries).containsEntry("/override/explicitly.js", "/with/other.js");
+  }
+
+  @Test
+  public void testPackageJsonBrowserFieldAdvancedUsageGH2625() {
+    test(
+        srcs(
+            SourceFile.fromCode(
+                "/package.json",
+                lines(
+                    "{ 'main': 'foo/bar/baz.js',",
+                    "  'browser': { './a/b.js': './c/d.js',",
+                    "               './server.js': 'client.js'} }"))),
+        expected(
+            lines(
+                "goog.provide('module$package_json')",
+                "var module$package_json = {",
+                "  'main': 'foo/bar/baz.js',",
+                "  'browser': {",
+                "    './a/b.js': './c/d.js',",
+                "    './server.js': 'client.js'",
+                "  }",
+                "};")));
+
+    Map<String, String> packageJsonMainEntries =
+        getLastCompiler().getModuleLoader().getPackageJsonMainEntries();
+    assertThat(packageJsonMainEntries).containsExactly(
+        "/package.json", "/foo/bar/baz.js",
+    
+        // Test that we have normalized the key, value is normalized by NodeModuleResolver
+        "/a/b.js", "/./c/d.js",
+        "/server.js", "/client.js");
   }
 }

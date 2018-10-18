@@ -63,15 +63,10 @@ final class PolymerPassErrors {
       "JSC_POLYMER_UNANNOTATED_BEHAVIOR",
       "Behavior declarations must be annotated with @polymerBehavior.");
 
-  static final DiagnosticType POLYMER_SHORTHAND_NOT_SUPPORTED =
-      DiagnosticType.error(
-          "JSC_POLYMER_SHORTHAND_NOT_SUPPORTED",
-          "Shorthand assignment in object literal is not allowed in Polymer call arguments");
-
   static final DiagnosticType POLYMER_CLASS_PROPERTIES_INVALID =
       DiagnosticType.error(
           "JSC_POLYMER_CLASS_PROPERTIES_INVALID",
-          "The Polymer element class 'propertis' getter does not return an object literal. "
+          "The Polymer element class 'properties' getter does not return an object literal. "
               + "Ignoring this definition.");
 
   static final DiagnosticType POLYMER_CLASS_PROPERTIES_NOT_STATIC =
@@ -85,6 +80,12 @@ final class PolymerPassErrors {
           "JSC_POLYMER2_UNNAMED",
           "Unable to locate a valid name for the Polymer element class."
               + "Ignoring this definition.");
+
+  static final DiagnosticType POLYMER_MISPLACED_PROPERTY_JSDOC =
+      DiagnosticType.warning(
+          "JSC_POLYMER_MISPLACED_PROPERTY_JSDOC",
+          "When a Polymer property is declared in the constructor, its JSDoc "
+              + "should only be in the constructor, not on the Polymer properties configuration.");
 
   private PolymerPassErrors() {}
 }

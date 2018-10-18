@@ -18,6 +18,7 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Iterators;
@@ -27,9 +28,10 @@ import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
@@ -75,7 +77,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     }
 
     GetterSetterCollector getterSetterCollector = new GetterSetterCollector();
-    NodeTraversal.traverseEs6(compiler, root, getterSetterCollector);
+    NodeTraversal.traverse(compiler, root, getterSetterCollector);
 
     // If there's any potentially unknown getter/setter property, back off of the optimization.
     if (getterSetterCollector.unknownGetterSetterPresent) {
@@ -112,7 +114,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
 
       FindCandidateAssignmentTraversal traversal =
           new FindCandidateAssignmentTraversal(blacklistedPropNames, NodeUtil.isConstructor(root));
-      NodeTraversal.traverseEs6(compiler, body, traversal);
+      NodeTraversal.traverse(compiler, body, traversal);
 
       // Any candidate property assignment can have a write removed if that write is never read
       // and it's written to at least one more time.
@@ -127,9 +129,18 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
             Node lhs = propertyWrite.assignedAt;
             Node rhs = lhs.getNext();
             Node assignNode = lhs.getParent();
-            rhs.detach();
-            assignNode.replaceWith(rhs);
-            compiler.reportChangeToEnclosingScope(rhs);
+            if (assignNode.isAssign()) {
+              // replace "a.b.c = <expr>" with "<expr>"
+              rhs.detach();
+              assignNode.replaceWith(rhs);
+              compiler.reportChangeToEnclosingScope(rhs);
+            } else {
+              checkState(NodeUtil.isAssignmentOp(assignNode));
+              // replace "a.b.c += <expr>" with "a.b.c + expr"
+              Token opType = NodeUtil.getOpFromAssignmentOp(assignNode);
+              assignNode.setToken(opType);
+              compiler.reportChangeToEnclosingScope(assignNode);
+            }
           }
         }
       }
@@ -146,7 +157,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     // All writes in a list are to the same property name, but the full qualified names may
     // differ, eg, a.b.c and e.d.c can be in the list. Consecutive writes to the same qname
     // may mean that the first write can be removed (see isSafeToRemove).
-    private final LinkedList<PropertyWrite> writes = new LinkedList<>();
+    private final Deque<PropertyWrite> writes = new ArrayDeque<>();
 
     private final Set<Property> children = new HashSet<>();
 
@@ -167,7 +178,7 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
       // If a property is in propertiesSet, it has been added to the queue and processed,
       // it will not be added to the queue again.
       Set<Property> propertiesSet = new HashSet<>(children);
-      Queue<Property> propertyQueue = new LinkedList<>(propertiesSet);
+      Queue<Property> propertyQueue = new ArrayDeque<>(propertiesSet);
 
       // Ensure we don't process ourselves.
       propertiesSet.add(this);
@@ -186,6 +197,11 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
     void addWrite(Node lhs) {
       checkArgument(lhs.isQualifiedName());
       writes.addLast(new PropertyWrite(lhs));
+    }
+
+    @Override
+    public String toString() {
+      return "Property " + name;
     }
   }
 
@@ -255,12 +271,8 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
 
       String propName =
           propNode.isGetProp() ? propNode.getLastChild().getString() : propNode.getQualifiedName();
-      if (propertyMap.containsKey(propName)) {
-        return propertyMap.get(propName);
-      }
 
-      Property property = new Property(propName);
-      propertyMap.put(propName, property);
+      Property property = propertyMap.computeIfAbsent(propName, name -> new Property(name));
 
       /* Using the GETPROP chain, build out the tree of children properties.
 
@@ -295,15 +307,28 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
         visitAssignmentLhs(n.getFirstChild());
       }
 
+      // Assume that all properties may be read when control flow leaves the function
+      if (NodeUtil.isInvocation(n) || n.isYield() || n.isAwait()) {
+        if (ASSUME_CONSTRUCTORS_HAVENT_ESCAPED
+            && isConstructor
+            && !NodeUtil.referencesThis(n)
+            && NodeUtil.getEnclosingType(n, Token.TRY) == null) {
+          // this.x properties are okay.
+          markAllPropsReadExceptThisProps();
+        } else {
+          markAllPropsRead();
+        }
+      }
+
       // Mark all properties as read when leaving a block since we haven't proven that the block
       // will execute.
-      if (n.isNormalBlock()) {
+      if (n.isBlock()) {
         visitBlock(n);
       }
     }
 
     private void visitBlock(Node blockNode) {
-      checkArgument(blockNode.isNormalBlock());
+      checkArgument(blockNode.isBlock());
 
       // We don't do flow analysis yet so we're going to assume everything written up to this
       // block is read.
@@ -389,15 +414,6 @@ public class DeadPropertyAssignmentElimination implements CompilerPass {
             }
           }
           return true;
-        case CALL:
-          if (ASSUME_CONSTRUCTORS_HAVENT_ESCAPED && isConstructor && !NodeUtil.referencesThis(n)
-              && NodeUtil.getEnclosingType(n, Token.TRY) == null) {
-            // this.x properties are okay.
-            markAllPropsReadExceptThisProps();
-          } else {
-            markAllPropsRead();
-          }
-          return false;
 
         case THIS:
         case NAME:

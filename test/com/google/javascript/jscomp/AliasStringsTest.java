@@ -18,11 +18,15 @@ package com.google.javascript.jscomp;
 
 import com.google.common.collect.ImmutableSet;
 import java.util.Set;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link AliasStrings}.
  *
  */
+@RunWith(JUnit4.class)
 public final class AliasStringsTest extends CompilerTestCase {
 
   private static final String EXTERNS = "alert";
@@ -45,6 +49,23 @@ public final class AliasStringsTest extends CompilerTestCase {
     return pass;
   }
 
+  @Test
+  public void testTemplateLiteral() {
+    strings = ImmutableSet.of("aliasable string");
+    // TODO(bradfordcsmith): Maybe implement using aliases in template literals?
+    test(
+        lines(
+            "const A = 'aliasable string';",
+            "const B = 'aliasable string';",
+            "const AB = `${A}aliasable string${B}`;"),
+        lines(
+            "var $$S_aliasable$20string = 'aliasable string';",
+            "const A = $$S_aliasable$20string;",
+            "const B = $$S_aliasable$20string;",
+            "const AB = `${A}aliasable string${B}`"));
+  }
+
+  @Test
   public void testAssignment() {
     strings = ImmutableSet.of("none", "width", "overimaginative");
 
@@ -68,6 +89,7 @@ public final class AliasStringsTest extends CompilerTestCase {
     testSame("width=1234;width=10000;width=9900;width=17;");
   }
 
+  @Test
   public void testSeveral() {
     strings = ImmutableSet.of("", "px", "none", "width");
 
@@ -118,6 +140,7 @@ public final class AliasStringsTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testSortedOutput() {
     strings =
         ImmutableSet.of(
@@ -145,6 +168,7 @@ public final class AliasStringsTest extends CompilerTestCase {
             + "          $$S_bbabbabbabbabbabbabb, $$S_bbabbabbabbabbabbabb]}");
   }
 
+  @Test
   public void testObjectLiterals() {
     strings = ImmutableSet.of("pxpxpxpxpxpxpxpxpxpx", "abcdefghijabcdefghij");
 
@@ -179,6 +203,7 @@ public final class AliasStringsTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testGetProp() {
     strings = ImmutableSet.of("pxpxpxpxpxpxpxpxpxpx", "widthwidthwidthwidth");
 
@@ -207,6 +232,7 @@ public final class AliasStringsTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testFunctionCalls() {
     strings = ImmutableSet.of("", ",", "overimaginative");
 
@@ -219,12 +245,14 @@ public final class AliasStringsTest extends CompilerTestCase {
          "f($$S_overimaginative,$$S_overimaginative)");
  }
 
+  @Test
   public void testRegularExpressions() {
     strings = ImmutableSet.of("px");
 
     testSame("/px/.match('10px')");
   }
 
+  @Test
   public void testBlackList() {
     // The 'TOPseCreT' string is configured to be ignored even though it fits the aliasing
     // conditions.
@@ -241,6 +269,7 @@ public final class AliasStringsTest extends CompilerTestCase {
             + "})");
   }
 
+  @Test
   public void testLongStableAlias() {
     strings = ALL_STRINGS;
 
@@ -265,6 +294,7 @@ public final class AliasStringsTest extends CompilerTestCase {
     // TODO(user): check that hash code collisions are handled.
   }
 
+  @Test
   public void testLongStableAliasHashCollision() {
     strings = ALL_STRINGS;
     hashReduction = true;
@@ -288,7 +318,7 @@ public final class AliasStringsTest extends CompilerTestCase {
          "f($$S_Antidisestablishment_0_1);");
   }
 
-
+  @Test
   public void testStringsThatAreGlobalVarValues() {
     strings = ALL_STRINGS;
 
@@ -318,6 +348,7 @@ public final class AliasStringsTest extends CompilerTestCase {
     testSame("var foo={'foo': 'foo'};function bar() {return 'foo';}");
   }
 
+  @Test
   public void testStringsInModules() {
     strings = ALL_STRINGS;
 
@@ -375,6 +406,7 @@ public final class AliasStringsTest extends CompilerTestCase {
         });
   }
 
+  @Test
   public void testStringsInModules2() {
     strings = ALL_STRINGS;
 
@@ -400,11 +432,11 @@ public final class AliasStringsTest extends CompilerTestCase {
         modules,
         new String[] {
           // m1
-          LINE_JOINER.join(
+          lines(
               "var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';",
               "function g() { alert($$S_ciaociaociaociaociao); }"),
           // m2
-          LINE_JOINER.join(
+          lines(
               "var $$S_hhhhhhhhhhhhhhhhhhh$3a = 'hhhhhhhhhhhhhhhhhhh:';",
               "function h(a) {"
                   + "  alert($$S_hhhhhhhhhhhhhhhhhhh$3a + a);"
@@ -417,6 +449,7 @@ public final class AliasStringsTest extends CompilerTestCase {
         });
   }
 
+  @Test
   public void testAliasInCommonModuleInclusive() {
     strings = ALL_STRINGS;
 
@@ -439,7 +472,7 @@ public final class AliasStringsTest extends CompilerTestCase {
           // m0
           "",
           // m1
-          LINE_JOINER.join(
+          lines(
               "var $$S_ciaociaociaociaociao = 'ciaociaociaociaociao';",
               "function g() { alert($$S_ciaociaociaociaociao); }"),
           // m2
@@ -449,7 +482,7 @@ public final class AliasStringsTest extends CompilerTestCase {
         });
   }
 
-
+  @Test
   public void testEmptyModules() {
     JSModule[] modules =
         createModuleStar(

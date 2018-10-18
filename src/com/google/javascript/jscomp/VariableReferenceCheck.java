@@ -89,7 +89,8 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
   VariableReferenceCheck(AbstractCompiler compiler, boolean forTranspileOnly) {
     this.compiler = compiler;
     this.forTranspileOnly = forTranspileOnly;
-    this.checkUnusedLocals = compiler.getOptions().enables(DiagnosticGroups.UNUSED_LOCAL_VARIABLE);
+    this.checkUnusedLocals =
+        compiler.getOptions().enables(DiagnosticGroup.forType(UNUSED_LOCAL_ASSIGNMENT));
   }
 
   private boolean shouldProcess(Node root) {
@@ -132,7 +133,7 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
    */
   private class ReferenceCheckingBehavior implements Behavior {
 
-    private Set<String> varsInFunctionBody;
+    private final Set<String> varsInFunctionBody;
 
     private ReferenceCheckingBehavior() {
       varsInFunctionBody = new HashSet<>();
@@ -178,15 +179,15 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
 
     private void checkDefaultParam(
         Var param, final Scope scope, final Set<String> varsInFunctionBody) {
-      NodeTraversal.traverseEs6(
+      NodeTraversal.traverse(
           compiler,
           param.getParentNode().getSecondChild(),
           /**
-           * Do a shallow check since cases like:
+           * Do a shallow check since cases like: {@code
            *   function f(y = () => x, x = 5) { return y(); }
-           * is legal. We are going to miss cases like:
+           * } is legal. We are going to miss cases like: {@code
            *   function f(y = (() => x)(), x = 5) { return y(); }
-           * but this should be rare.
+           * } but this should be rare.
            */
           new AbstractShallowCallback() {
             @Override
@@ -195,7 +196,7 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
                 return;
               }
               String refName = n.getString();
-              if (varsInFunctionBody.contains(refName) && !scope.isDeclared(refName, true)) {
+              if (varsInFunctionBody.contains(refName) && !scope.hasSlot(refName)) {
                 compiler.report(JSError.make(n, EARLY_REFERENCE_ERROR, refName));
               }
             }
@@ -264,7 +265,10 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
           }
 
           // Check for temporal dead zone of let / const declarations in for-in and for-of loops
-          if ((v.isLet() || v.isConst()) && v.getScope() == reference.getScope()
+          // TODO(b/111441110): Fix this check. it causes spurious warnings on `b = a` in
+          //   for (const [a, b = a] of []) {}
+          if ((v.isLet() || v.isConst())
+              && v.getScope() == reference.getScope()
               && NodeUtil.isEnhancedFor(reference.getScope().getRootNode())) {
             compiler.report(JSError.make(referenceNode, EARLY_REFERENCE_ERROR, v.name));
           }
@@ -324,7 +328,8 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
    */
   private boolean checkRedeclaration(
       Var v, Reference reference, Node referenceNode, Reference hoistedFn, BasicBlock basicBlock) {
-    boolean allowDupe = VarCheck.hasDuplicateDeclarationSuppression(referenceNode, v);
+    boolean allowDupe =
+        VarCheck.hasDuplicateDeclarationSuppression(compiler, referenceNode, v.getNameNode());
     boolean letConstShadowsVar = v.getParentNode().isVar()
         && (reference.isLetDeclaration() || reference.isConstDeclaration());
     boolean isVarNodeSameAsReferenceNode = v.getNode() == reference.getNode();
@@ -341,8 +346,13 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
           shadowDetected = true;
           DiagnosticType diagnosticType;
           Node warningNode = referenceNode;
-          if (v.isLet() || v.isConst() || v.isClass() || letConstShadowsVar || shadowCatchVar
-              || shadowParam) {
+          if (v.isLet()
+              || v.isConst()
+              || v.isClass()
+              || letConstShadowsVar
+              || shadowCatchVar
+              || shadowParam
+              || v.isImport()) {
             // These cases are all hard errors that violate ES6 semantics
             diagnosticType = REDECLARED_VARIABLE_ERROR;
           } else if (reference.getNode().getParent().isCatch() || allowDupe) {
@@ -385,7 +395,7 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
    * @return If an early reference has been found
    */
   private boolean checkEarlyReference(Var v, Reference reference, Node referenceNode) {
-    // Don't check the order of refer in externs files.
+    // Don't check the order of references in externs files.
     if (!referenceNode.isFromExterns()) {
       // Special case to deal with var goog = goog || {}. Note that
       // let x = x || {} is illegal, just like var y = x || {}; let x = y;
@@ -399,10 +409,14 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
         }
       }
 
-      // Only generate warnings if the scopes do not match in order
-      // to deal with possible forward declarations and recursion
+      // Only generate warnings for early references in the same function scope/global scope in
+      // order to deal with possible forward declarations and recursion
+      // e.g. don't warn on:
+      //   function f() { return x; } f(); let x = 5;
+      // We don't track where `f` is called, just where it's defined, and don't want to warn for
+      //     function f() { return x; } let x = 5; f();
       // TODO(moz): See if we can remove the bypass for "goog"
-      if (reference.getScope() == v.scope && !v.getName().equals("goog")) {
+      if (reference.getScope().hasSameContainerScope(v.scope) && !v.getName().equals("goog")) {
         compiler.report(
             JSError.make(
                 reference.getNode(),
@@ -448,11 +462,11 @@ class VariableReferenceCheck implements HotSwapCompilerPass {
         Node rhs = lhs.getFirstChild();
         if (rhs != null
             && (NodeUtil.isCallTo(rhs, "goog.forwardDeclare")
+                || NodeUtil.isCallTo(rhs, "goog.requireType")
                 || NodeUtil.isCallTo(rhs, "goog.require")
                 || rhs.isQualifiedName())) {
-          // No warning. goog.{require,forwardDeclare} and import will be caught by the
-          // unused-require check, and if the right side is a qualified name then this is
-          // likely an alias used in type annotations.
+          // No warning. module imports will be caught by the unused-require check, and if the
+          // right side is a qualified name then this is likely an alias used in type annotations.
           return;
         }
       }

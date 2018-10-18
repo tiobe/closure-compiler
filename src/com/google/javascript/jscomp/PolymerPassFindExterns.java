@@ -27,7 +27,7 @@ final class PolymerPassFindExterns extends AbstractPostOrderCallback {
   private static final String POLYMER_ELEMENT_NAME = "PolymerElement";
 
   private Node polymerElementExterns;
-  private ImmutableList.Builder<Node> polymerElementProps;
+  private final ImmutableList.Builder<Node> polymerElementProps;
 
   PolymerPassFindExterns() {
     polymerElementProps = ImmutableList.builder();
@@ -60,7 +60,8 @@ final class PolymerPassFindExterns extends AbstractPostOrderCallback {
    * @return Whether the node is the declaration of PolymerElement.
    */
   private static boolean isPolymerElementExterns(Node value) {
-    return value != null && value.isVar()
+    // Explicitly allow var, let or const.
+    return NodeUtil.isNameDeclaration(value)
         && value.getFirstChild().matchesQualifiedName(POLYMER_ELEMENT_NAME);
   }
 

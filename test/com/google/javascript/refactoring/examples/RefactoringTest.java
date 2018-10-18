@@ -19,13 +19,14 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertTrue;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Multimap;
 import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.refactoring.ApplySuggestedFixes;
 import com.google.javascript.refactoring.RefactoringDriver;
 import com.google.javascript.refactoring.Scanner;
 import com.google.javascript.refactoring.SuggestedFix;
-
 import java.util.List;
 
 abstract class RefactoringTest {
@@ -36,30 +37,41 @@ abstract class RefactoringTest {
   protected abstract String getExterns();
 
   private List<SuggestedFix> runRefactoring(String originalCode) {
-    return (new RefactoringDriver.Builder(getScanner())
+    return (new RefactoringDriver.Builder()
             .addExternsFromCode(getExterns())
             .addInputsFromCode(originalCode)
             .withCompilerOptions(getOptions())
-            .build()).drive();
+            .build())
+        .drive(getScanner());
   }
 
   protected CompilerOptions getOptions() {
     return RefactoringDriver.getCompilerOptions();
   }
 
-  protected void assertChanges(String originalCode, String expectedCode) {
+  protected void assertChanges(String originalCode, String... expectedCodeChoices) {
     List<SuggestedFix> fixes = runRefactoring(originalCode);
     assertThat(fixes).isNotEmpty();
-    String newCode =
-        ApplySuggestedFixes.applySuggestedFixesToCode(fixes, ImmutableMap.of("input", originalCode))
-            .get("input");
-    assertThat(newCode).isEqualTo(expectedCode);
+    ImmutableList<String> newCode =
+        ApplySuggestedFixes.applyAllSuggestedFixChoicesToCode(
+                fixes, ImmutableMap.of("input", originalCode))
+            .stream()
+            .map(m -> m.get("input"))
+            .collect(ImmutableList.toImmutableList());
+    assertThat(newCode).containsExactlyElementsIn(ImmutableList.copyOf(expectedCodeChoices));
   }
 
   protected void assertNoChanges(String originalCode) {
     List<SuggestedFix> fixes = runRefactoring(originalCode);
     assertTrue(
         "No changes should be made to the code, but found: " + fixes,
-        fixes.isEmpty() || (fixes.size() == 1 && fixes.get(0).getReplacements().isEmpty()));
+        fixes.isEmpty()
+            || (fixes.size() == 1
+                && fixes
+                    .get(0)
+                    .getAlternatives()
+                    .stream()
+                    .map(SuggestedFix::getReplacements)
+                    .allMatch(Multimap::isEmpty)));
   }
 }

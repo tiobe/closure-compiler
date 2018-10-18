@@ -60,9 +60,9 @@ class NameAnonymousFunctionsMapped implements CompilerPass {
       AbstractCompiler compiler, VariableMap previousMap) {
     this.compiler = compiler;
     Set<String> reserved =
-        previousMap != null ?
-            previousMap.getNewNameToOriginalNameMap().keySet() :
-            Collections.<String>emptySet();
+        previousMap != null
+            ? previousMap.getNewNameToOriginalNameMap().keySet()
+            : Collections.emptySet();
     this.nameGenerator = new DefaultNameGenerator(
         reserved, PREFIX_STRING, null);
     this.previousMap = previousMap;
@@ -73,7 +73,7 @@ class NameAnonymousFunctionsMapped implements CompilerPass {
   public void process(Node externs, Node root) {
     AnonymousFunctionNamingCallback namingCallback =
         new AnonymousFunctionNamingCallback(new MappedFunctionNamer());
-    NodeTraversal.traverseEs6(compiler, root, namingCallback);
+    NodeTraversal.traverse(compiler, root, namingCallback);
     logger.fine("Named " + namedCount + " anon functions using " +
         bytesUsed + " bytes");
   }
@@ -95,6 +95,8 @@ class NameAnonymousFunctionsMapped implements CompilerPass {
         case STRING:
         case STRING_KEY:
           return node.getString();
+        case COMPUTED_PROP:
+          return getName(node.getFirstChild());
         default:
           return compiler.toSource(node);
       }

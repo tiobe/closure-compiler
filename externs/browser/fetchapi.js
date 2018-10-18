@@ -37,7 +37,7 @@ var ReferrerPolicy;
 
 
 /**
- * @typedef {!Headers|!Array<!Array<string>>|!IObject<string,string>}
+ * @typedef {!Headers|!Array<!Array<string>>|!Object<string,string>}
  * @see https://fetch.spec.whatwg.org/#headersinit
  */
 var HeadersInit;
@@ -85,7 +85,7 @@ Headers.prototype.getAll = function(name) {};
  */
 Headers.prototype.has = function(name) {};
 
-/** @return {!Iterator<string>} */
+/** @return {!IteratorIterable<string>} */
 Headers.prototype.keys = function() {};
 
 /**
@@ -208,6 +208,12 @@ Request.prototype.redirect;
 /** @type {string} */
 Request.prototype.integrity;
 
+/** @type {boolean} */
+Request.prototype.isHistoryNavigation;
+
+/** @type {(undefined|boolean)} */
+Request.prototype.keepalive;
+
 /** @return {!Request} */
 Request.prototype.clone = function() {};
 
@@ -247,6 +253,12 @@ RequestInit.prototype.redirect;
 
 /** @type {(undefined|string)} */
 RequestInit.prototype.integrity;
+
+/** @type {(undefined|!AbortSignal)} */
+RequestInit.prototype.signal;
+
+/** @type {(undefined|boolean)} */
+RequestInit.prototype.keepalive;
 
 /** @type {(undefined|null)} */
 RequestInit.prototype.window;
@@ -418,3 +430,10 @@ Window.prototype.fetch = function(input, opt_init) {};
  * @see https://fetch.spec.whatwg.org/#fetch-method
  */
 WorkerGlobalScope.prototype.fetch = function(input, opt_init) {};
+
+/**
+ * if WorkerOptions.type = 'module', it specifies how `scriptURL` is fetched.
+ * WorkerOptions is defined in html5.js.
+ * @type {!RequestCredentials|undefined}
+ */
+WorkerOptions.prototype.credentials;

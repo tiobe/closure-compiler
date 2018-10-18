@@ -187,6 +187,18 @@ Node.prototype.insertAdjacentHTML = function(sWhere, sText) {};
 
 
 /**
+ * Inserts the given HTML Element into the node at the location.
+ * @param {string} sWhere Where to insert the HTML text, one of 'beforeBegin',
+ *     'afterBegin', 'beforeEnd', 'afterEnd'.
+ * @param {!Element} sElement DOM Element to insert.
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/insertAdjacentElement
+ * @return {?Element} The element that was inserted, or null, if the
+ *     insertion failed.
+ */
+Node.prototype.insertAdjacentElement = function(sWhere, sElement) {};
+
+
+/**
  * @type {*}
  * @see http://msdn.microsoft.com/en-us/library/ms762308(VS.85).aspx
  */
@@ -471,6 +483,12 @@ Window.prototype.showModelessDialog;
 Window.prototype.external;
 
 /**
+ * @see https://msdn.microsoft.com/en-us/ie/dn265046(v=vs.94)
+ * @const {!Object}
+ */
+Window.prototype.msCrypto;
+
+/**
  * @see http://msdn.microsoft.com/en-us/library/ms535864(VS.85).aspx
  * @param {number|string} delta The number of entries to go back, or
  *     the URL to which to go back. (URL form is supported only in IE)
@@ -517,12 +535,6 @@ HTMLFrameElement.prototype.contentWindow;
  * @see http://msdn.microsoft.com/en-us/library/ie/ms533072(v=vs.85).aspx
  */
 HTMLIFrameElement.prototype.allowTransparency;
-
-/**
- * @type {Window}
- * @see http://msdn.microsoft.com/en-us/library/ms533692(VS.85).aspx
- */
-HTMLIFrameElement.prototype.contentWindow;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms536385(VS.85).aspx
@@ -794,6 +806,7 @@ Document.prototype.loadXML;
 // http://msdn.microsoft.com/en-us/library/ms531073(VS.85).aspx
 
 /**
+ * @type {!Element}
  * @see http://msdn.microsoft.com/en-us/library/ms533065(VS.85).aspx
  */
 Document.prototype.activeElement;
@@ -1265,6 +1278,7 @@ Location.prototype.pathname;
 
 /**
  * @see http://msdn.microsoft.com/en-us/library/ms534342(VS.85).aspx
+ * @type {string}
  */
 Location.prototype.port;
 

@@ -25,6 +25,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.io.CharStreams;
 import com.google.common.io.Resources;
 import com.google.javascript.rhino.StaticSourceFile;
+import com.google.javascript.rhino.StaticSourceFile.SourceKind;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -57,6 +58,7 @@ import java.util.zip.ZipFile;
  * @author nicksantos@google.com (Nick Santos)
  */
 public class SourceFile implements StaticSourceFile, Serializable {
+
   private static final long serialVersionUID = 1L;
   private static final String UTF8_BOM = "\uFEFF";
 
@@ -74,7 +76,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
   private static final int SOURCE_EXCERPT_REGION_LENGTH = 5;
 
   private final String fileName;
-  private boolean isExternFile = false;
+  private SourceKind kind;
 
   // The fileName may not always identify the original file - for example,
   // supersourced Java inputs, or Java inputs that come from Jar files. This
@@ -88,20 +90,15 @@ public class SourceFile implements StaticSourceFile, Serializable {
 
   private transient String code = null;
 
-  static final DiagnosticType DUPLICATE_ZIP_CONTENTS = DiagnosticType.warning(
-      "JSC_DUPLICATE_ZIP_CONTENTS",
-      "Two zip entries containing the same relative path.\n"
-      + "Entry 1: {0}\n"
-      + "Entry 2: {1}");
-
   /**
    * Construct a new abstract source file.
    *
    * @param fileName The file name of the source file. It does not necessarily need to correspond to
    *     a real path. But it should be unique. Will appear in warning messages emitted by the
    *     compiler.
+   * @param kind The source kind.
    */
-  public SourceFile(String fileName) {
+  public SourceFile(String fileName, SourceKind kind) {
     if (isNullOrEmpty(fileName)) {
       throw new IllegalArgumentException("a source must have a name");
     }
@@ -111,6 +108,8 @@ public class SourceFile implements StaticSourceFile, Serializable {
     } else {
       this.fileName = fileName;
     }
+
+    this.kind = kind;
   }
 
   @Override
@@ -151,9 +150,6 @@ public class SourceFile implements StaticSourceFile, Serializable {
     lineOffsets = null;
   }
 
-  //////////////////////////////////////////////////////////////////////////////
-  // Implementation
-
   /**
    * Gets all the code in this source file.
    * @throws IOException
@@ -161,7 +157,6 @@ public class SourceFile implements StaticSourceFile, Serializable {
   public String getCode() throws IOException {
     return code;
   }
-
 
   /**
    * Gets a reader for the code in this source file.
@@ -216,15 +211,21 @@ public class SourceFile implements StaticSourceFile, Serializable {
     return fileName;
   }
 
-  /** Returns whether this is an extern. */
+  /** Returns the source kind. */
   @Override
-  public boolean isExtern() {
-    return isExternFile;
+  public SourceKind getKind() {
+    return kind;
   }
 
-  /** Sets that this is an extern. */
-  void setIsExtern(boolean newVal) {
-    isExternFile = newVal;
+  /**
+   * Sets the source kind.
+   *
+   * <p>TODO(tjgq): Move the extern bit into the AST, so we can make the kind immutable. This is
+   * currently not possible because for some files the extern bit is not determined by the contents
+   * (e.g. files passed under the --externs flag and missing an externs annotation).
+   */
+  void setKind(SourceKind kind) {
+    this.kind = kind;
   }
 
   @Override
@@ -281,7 +282,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
       if (pos >= js.length()) {
         return null;
       } else {
-        return js.substring(pos, js.length());
+        return js.substring(pos);
       }
     } else {
       return js.substring(pos, js.indexOf('\n', pos));
@@ -365,8 +366,8 @@ public class SourceFile implements StaticSourceFile, Serializable {
     return sourceFiles;
   }
 
-  static final String BANG_SLASH = "!/";
-  static final String JAR_URL_PREFIX = "jar:file:";
+  private static final String BANG_SLASH = "!/";
+  private static final String JAR_URL_PREFIX = "jar:file:";
 
   private static boolean isZipEntry(String path) {
     return path.contains(".zip!/") && (path.endsWith(".js") || path.endsWith(".js.map"));
@@ -399,8 +400,13 @@ public class SourceFile implements StaticSourceFile, Serializable {
   }
 
   @GwtIncompatible("java.io.File")
+  public static SourceFile fromFile(String fileName, Charset charset, SourceKind kind) {
+    return builder().withKind(kind).withCharset(charset).buildFromFile(fileName);
+  }
+
+  @GwtIncompatible("java.io.File")
   public static SourceFile fromFile(String fileName, Charset charset) {
-    return builder().withCharset(charset).buildFromFile(fileName);
+    return fromFile(fileName, charset, SourceKind.STRONG);
   }
 
   @GwtIncompatible("java.io.File")
@@ -409,26 +415,21 @@ public class SourceFile implements StaticSourceFile, Serializable {
   }
 
   @GwtIncompatible("java.io.File")
-  public static SourceFile fromPath(Path path, Charset c) {
-    return builder().withCharset(c).buildFromPath(path);
+  public static SourceFile fromPath(Path path, Charset charset, SourceKind kind) {
+    return builder().withKind(kind).withCharset(charset).buildFromPath(path);
   }
 
-  /** @deprecated Use {@link SourceFile#fromPath(Path, Charset)} */
-  @Deprecated
   @GwtIncompatible("java.io.File")
-  public static SourceFile fromFile(File file, Charset c) {
-    return builder().withCharset(c).buildFromFile(file);
+  public static SourceFile fromPath(Path path, Charset charset) {
+    return fromPath(path, charset, SourceKind.STRONG);
   }
 
-  /** @deprecated Use {@link #fromPath(Path, Charset)} */
-  @Deprecated
-  @GwtIncompatible("java.io.File")
-  public static SourceFile fromFile(File file) {
-    return fromFile(file, UTF_8);
+  public static SourceFile fromCode(String fileName, String code, SourceKind kind) {
+    return builder().withKind(kind).buildFromCode(fileName, code);
   }
 
   public static SourceFile fromCode(String fileName, String code) {
-    return builder().buildFromCode(fileName, code);
+    return fromCode(fileName, code, SourceKind.STRONG);
   }
 
   /**
@@ -470,10 +471,17 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * the source file (if it differs from the path on disk).
    */
   public static class Builder {
+    private SourceKind kind = SourceKind.STRONG;
     private Charset charset = UTF_8;
     private String originalPath = null;
 
     public Builder() {}
+
+    /** Set the source kind. */
+    public Builder withKind(SourceKind kind) {
+      this.kind = kind;
+      return this;
+    }
 
     /** Set the charset to use when reading from an input stream or file. */
     public Builder withCharset(Charset charset) {
@@ -488,16 +496,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
 
     @GwtIncompatible("java.io.File")
     public SourceFile buildFromFile(String fileName) {
-      return buildFromFile(new File(fileName));
-    }
-
-    /**
-     * @deprecated Use {@link #buildFromPath(Path path)}
-     */
-    @GwtIncompatible("java.io.File")
-    @Deprecated
-    public SourceFile buildFromFile(File file) {
-      return buildFromPath(file.toPath());
+      return buildFromPath(Paths.get(fileName));
     }
 
     @GwtIncompatible("java.io.File")
@@ -505,16 +504,16 @@ public class SourceFile implements StaticSourceFile, Serializable {
       if (isZipEntry(path.toString())) {
         return fromZipEntry(path.toString(), charset);
       }
-      return new OnDisk(path, originalPath, charset);
+      return new OnDisk(path, originalPath, charset, kind);
     }
 
     @GwtIncompatible("java.net.URL")
     public SourceFile buildFromUrl(URL url) {
-      return new AtUrl(url, originalPath, charset);
+      return new AtUrl(url, originalPath, charset, kind);
     }
 
     public SourceFile buildFromCode(String fileName, String code) {
-      return new Preloaded(fileName, originalPath, code);
+      return new Preloaded(fileName, originalPath, code, kind);
     }
 
     @GwtIncompatible("java.io.InputStream")
@@ -528,7 +527,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
     }
 
     public SourceFile buildFromGenerator(String fileName, Generator generator) {
-      return new Generated(fileName, originalPath, generator);
+      return new Generated(fileName, originalPath, generator, kind);
     }
   }
 
@@ -542,8 +541,8 @@ public class SourceFile implements StaticSourceFile, Serializable {
   static class Preloaded extends SourceFile {
     private static final long serialVersionUID = 1L;
 
-    Preloaded(String fileName, String originalPath, String code) {
-      super(fileName);
+    Preloaded(String fileName, String originalPath, String code, SourceKind kind) {
+      super(fileName, kind);
       super.setOriginalPath(originalPath);
       super.setCode(code);
     }
@@ -561,8 +560,8 @@ public class SourceFile implements StaticSourceFile, Serializable {
     private transient Generator generator;
 
     // Not private, so that LazyInput can extend it.
-    Generated(String fileName, String originalPath, Generator generator) {
-      super(fileName);
+    Generated(String fileName, String originalPath, Generator generator, SourceKind kind) {
+      super(fileName, kind);
       super.setOriginalPath(originalPath);
       this.generator = generator;
     }
@@ -596,14 +595,14 @@ public class SourceFile implements StaticSourceFile, Serializable {
    * A source file where the code is only read into memory if absolutely necessary. We will try to
    * delay loading the code into memory as long as possible.
    */
-  @GwtIncompatible("java.io.File")
+  @GwtIncompatible("com.google.common.io.CharStreams")
   static class OnDisk extends SourceFile {
     private static final long serialVersionUID = 1L;
     private transient Path path;
     private transient Charset inputCharset = UTF_8;
 
-    OnDisk(Path path, String originalPath, Charset c) {
-      super(path.toString());
+    OnDisk(Path path, String originalPath, Charset c, SourceKind kind) {
+      super(path.toString(), kind);
       this.path = path;
       setOriginalPath(originalPath);
       if (c != null) {
@@ -676,7 +675,7 @@ public class SourceFile implements StaticSourceFile, Serializable {
       out.writeObject(inputCharset != null ? inputCharset.name() : null);
       out.writeObject(path != null ? path.toUri() : null);
     }
-    
+
     @GwtIncompatible("ObjectInputStream")
     private void readObject(java.io.ObjectInputStream in) throws Exception {
       in.defaultReadObject();
@@ -707,10 +706,10 @@ public class SourceFile implements StaticSourceFile, Serializable {
     // Default input file format for the compiler has always been UTF_8.
     private String inputCharset = UTF_8.name();
 
-    AtUrl(URL url, String originalPath, Charset c) {
-      super(originalPath);
-      this.url = url;
+    AtUrl(URL url, String originalPath, Charset c, SourceKind kind) {
+      super(originalPath, SourceKind.STRONG);
       super.setOriginalPath(originalPath);
+      this.url = url;
       if (c != null) {
         this.setCharset(c);
       }

@@ -144,6 +144,7 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       case ASSIGN_MUL:
       case ASSIGN_DIV:
       case ASSIGN_MOD:
+      case ASSIGN_EXPONENT:
         return tryUnfoldAssignOp(subtree, left, right);
 
       case ADD:
@@ -152,6 +153,7 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       case SUB:
       case DIV:
       case MOD:
+      case EXPONENT:
         return tryFoldArithmeticOp(subtree, left, right);
 
       case MUL:
@@ -224,6 +226,7 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       case DIV:
       case POS:
       case NEG:
+      case EXPONENT:
         tryConvertOperandsToNumber(n);
         break;
       default:
@@ -528,6 +531,9 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       case URSH:
         newType = Token.ASSIGN_URSH;
         break;
+      case EXPONENT:
+        newType = Token.ASSIGN_EXPONENT;
+        break;
       default:
         return n;
     }
@@ -740,17 +746,81 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
     // to zero so this is a little awkward here.
 
     Double lValObj = NodeUtil.getNumberValue(left);
-    if (lValObj == null) {
-      return null;
-    }
     Double rValObj = NodeUtil.getNumberValue(right);
-    if (rValObj == null) {
+    // at least one of the two operands must have a value and both must be numeric
+    if ((lValObj == null && rValObj == null) || !isNumeric(left) || !isNumeric(right)) {
       return null;
     }
-
+    // handle the operations that have algebraic identities, since we can simplify the tree without
+    // actually knowing the value statically.
+    switch (opType) {
+      case ADD:
+        if (lValObj != null && rValObj != null) {
+          return maybeReplaceBinaryOpWithNumericResult(lValObj + rValObj, lValObj, rValObj);
+        }
+        if (lValObj != null && lValObj == 0) {
+          return right.cloneTree(true);
+        } else if (rValObj != null && rValObj == 0) {
+          return left.cloneTree(true);
+        }
+        return null;
+      case SUB:
+        if (lValObj != null && rValObj != null) {
+          return maybeReplaceBinaryOpWithNumericResult(lValObj - rValObj, lValObj, rValObj);
+        }
+        if (lValObj != null && lValObj == 0) {
+          // 0 - x -> -x
+          return IR.neg(right.cloneTree(true));
+        } else if (rValObj != null && rValObj == 0) {
+          // x - 0 -> x
+          return left.cloneTree(true);
+        }
+        return null;
+      case MUL:
+        if (lValObj != null && rValObj != null) {
+          return maybeReplaceBinaryOpWithNumericResult(lValObj * rValObj, lValObj, rValObj);
+        }
+        // NOTE: 0*x != 0 for all x, if x==0, then it is NaN.  So we can't take advantage of that
+        // without some kind of non-NaN proof.  So the special cases here only deal with 1*x
+        if (lValObj != null) {
+          if (lValObj == 1) {
+            return right.cloneTree(true);
+          }
+        } else {
+          if (rValObj == 1) {
+            return left.cloneTree(true);
+          }
+        }
+        return null;
+      case DIV:
+        if (lValObj != null && rValObj != null) {
+          if (rValObj == 0) {
+            return null;
+          }
+          return maybeReplaceBinaryOpWithNumericResult(lValObj / rValObj, lValObj, rValObj);
+        }
+        // NOTE: 0/x != 0 for all x, if x==0, then it is NaN
+        if (rValObj != null) {
+          if (rValObj == 1) {
+            // x/1->x
+            return left.cloneTree(true);
+          }
+        }
+        return null;
+      case EXPONENT:
+        if (lValObj != null && rValObj != null) {
+          return maybeReplaceBinaryOpWithNumericResult(
+              Math.pow(lValObj, rValObj), lValObj, rValObj);
+        }
+        return null;
+      default:
+        // fall-through
+    }
+    if (lValObj == null || rValObj == null) {
+      return null;
+    }
     double lval = lValObj;
     double rval = rValObj;
-
     switch (opType) {
       case BITAND:
         result = NodeUtil.toInt32(lval) & NodeUtil.toInt32(rval);
@@ -761,31 +831,24 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       case BITXOR:
         result = NodeUtil.toInt32(lval) ^ NodeUtil.toInt32(rval);
         break;
-      case ADD:
-        result = lval + rval;
-        break;
-      case SUB:
-        result = lval - rval;
-        break;
-      case MUL:
-        result = lval * rval;
-        break;
       case MOD:
         if (rval == 0) {
           return null;
         }
         result = lval % rval;
         break;
-      case DIV:
-        if (rval == 0) {
-          return null;
-        }
-        result = lval / rval;
-        break;
       default:
-        throw new Error("Unexpected arithmetic operator");
+        throw new Error("Unexpected arithmetic operator: " + opType);
     }
+    return maybeReplaceBinaryOpWithNumericResult(result, lval, rval);
+  }
 
+  private boolean isNumeric(Node n) {
+    return NodeUtil.isNumericResult(n)
+        || (shouldUseTypes && n.getJSType() != null && n.getJSType().isNumberValueType());
+  }
+
+  private Node maybeReplaceBinaryOpWithNumericResult(double result, double lval, double rval) {
     // TODO(johnlenz): consider removing the result length check.
     // length of the left and right value plus 1 byte for the operator.
     if ((String.valueOf(result).length() <=
@@ -856,6 +919,13 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
         // '6' + 7
         return tryFoldAddConstantString(node, left, right);
       } else {
+        if (left.isString() && left.getString().isEmpty() && isStringTyped(right)) {
+          return replace(node, right.cloneTree(true));
+        } else if (right.isString()
+            && right.getString().isEmpty()
+            && isStringTyped(left)) {
+          return replace(node, left.cloneTree(true));
+        }
         // a + 7 or 6 + a
         return tryFoldChildAddString(node, left, right);
       }
@@ -867,6 +937,18 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       }
       return tryFoldLeftChildOp(node, left, right);
     }
+  }
+
+  private Node replace(Node oldNode, Node newNode) {
+    oldNode.replaceWith(newNode);
+    compiler.reportChangeToEnclosingScope(newNode);
+    return newNode;
+  }
+
+  private boolean isStringTyped(Node n) {
+    // We could also accept !String, but it is unlikely to be very common.
+    return NodeUtil.isStringResult(n)
+        || (shouldUseTypes && n.getJSType() != null && n.getJSType().isStringValueType());
   }
 
   /**
@@ -1271,7 +1353,7 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
     // If GETPROP/GETELEM is used as assignment target the array literal is
     // acting as a temporary we can't fold it here:
     //    "[][0] += 1"
-    if (NodeUtil.isAssignmentTarget(n)) {
+    if (NodeUtil.isLValue(n)) {
       return n;
     }
 
@@ -1328,7 +1410,7 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
     // If GETPROP/GETELEM is used as assignment target the array literal is
     // acting as a temporary we can't fold it here:
     //    "[][0] += 1"
-    if (NodeUtil.isAssignmentTarget(n)) {
+    if (NodeUtil.isLValue(n)) {
       return n;
     }
 
@@ -1382,7 +1464,7 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       return n;
     }
 
-    if (NodeUtil.isAssignmentTarget(n)) {
+    if (NodeUtil.isLValue(n)) {
       // If GETPROP/GETELEM is used as assignment target the object literal is
       // acting as a temporary we can't fold it here:
       //    "{a:x}.a += 1" is not "x += 1"
@@ -1393,23 +1475,42 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
     Node key = null;
     Node value = null;
     for (Node c = left.getFirstChild(); c != null; c = c.getNext()) {
-      if (c.getString().equals(right.getString())) {
-        switch (c.getToken()) {
-          case SETTER_DEF:
+      switch (c.getToken()) {
+        case SETTER_DEF:
+          continue;
+        case COMPUTED_PROP:
+          // don't handle computed properties unless the input is a simple string
+          Node prop = c.getFirstChild();
+          if (!prop.isString()) {
+            return n;
+          }
+          if (prop.getString().equals(right.getString())) {
+            if (value != null && mayHaveSideEffects(value)) {
+              // The previously found value had side-effects
+              return n;
+            }
+            key = c;
+            value = key.getSecondChild();
             continue;
-          case GETTER_DEF:
-          case STRING_KEY:
+          }
+          break;
+        case GETTER_DEF:
+        case STRING_KEY:
+        case MEMBER_FUNCTION_DEF:
+          if (c.getString().equals(right.getString())) {
             if (value != null && mayHaveSideEffects(value)) {
               // The previously found value had side-effects
               return n;
             }
             key = c;
             value = key.getFirstChild();
-            break;
-          default:
-            throw new IllegalStateException();
-        }
-      } else if (mayHaveSideEffects(c.getFirstChild())) {
+            continue;
+          }
+          break;
+        default:
+          throw new IllegalStateException();
+      }
+      if (mayHaveSideEffects(c.getFirstChild())) {
         // We don't handle the side-effects here as they might need a temporary
         // or need to be reordered.
         return n;
@@ -1422,9 +1523,28 @@ class PeepholeFoldConstants extends AbstractPeepholeOptimization {
       return n;
     }
 
-    if (value.isFunction() && NodeUtil.referencesThis(value)) {
-      // 'this' may refer to the object we are trying to remove
+    // Don't try to fold member functions, since they are unlike function expressions (they have an
+    // undefined prototype and can't be used with new) and are unlike arrow functions (they can
+    // reference new.target, this, super, or arguments).
+    if (key.isMemberFunctionDef()) {
       return n;
+    }
+
+    if (n.getParent().isCall() || key.isGetterDef()) {
+      // When the code looks like:
+      //   {x: f}.x();
+      // or
+      //   {get x() {...}}.x;
+      // it's not safe, in general, to convert that to just a function call, because the 'this'
+      // value will be wrong. Except, if the function is a function literal and does not reference
+      // 'this' then it is safe:
+      if (value.isFunction() && !NodeUtil.referencesThis(value)) {
+        if (n.getParent().isCall()) {
+          n.getParent().putBooleanProp(Node.FREE_CALL, true);
+        }
+      } else {
+        return n;
+      }
     }
 
     Node replacement = value.detach();

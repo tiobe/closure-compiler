@@ -105,7 +105,7 @@ class StatementFusion extends AbstractPeepholeOptimization {
 
   private boolean canFuseIntoOneStatement(Node block) {
     // If we are favoring semi-colon, we shouldn't fuse script blocks.
-    if (!favorsCommaOverSemiColon && !block.isNormalBlock()) {
+    if (!favorsCommaOverSemiColon && !block.isBlock()) {
       return false;
     }
 
@@ -137,15 +137,16 @@ class StatementFusion extends AbstractPeepholeOptimization {
         return n.hasChildren();
       case FOR:
         // Avoid cases where we have for(var x;_;_) { ....
-        return !n.getFirstChild().isVar();
+        return !NodeUtil.isNameDeclaration(n.getFirstChild());
       case FOR_IN:
         // Avoid cases where we have for(var x = foo() in a) { ....
         return !mayHaveSideEffects(n.getFirstChild());
       case LABEL:
         return isFusableControlStatement(n.getLastChild());
       case BLOCK:
-        return !n.isSyntheticBlock() &&
-            isFusableControlStatement(n.getFirstChild());
+        return (isASTNormalized() || NodeUtil.canMergeBlock(n))
+            && !n.isSyntheticBlock()
+            && isFusableControlStatement(n.getFirstChild());
       default:
         break;
     }

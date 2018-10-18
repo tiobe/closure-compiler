@@ -102,7 +102,7 @@ Object.create = function(proto, opt_properties) {};
 
 /**
  * @param {!Object} obj
- * @param {string} prop
+ * @param {string|symbol} prop
  * @param {!Object} descriptor A ObjectPropertyDescriptor.
  * @return {!Object}
  * @see https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Object/defineProperty
@@ -121,7 +121,7 @@ Object.defineProperties = function(obj, props) {};
 
 /**
  * @param {T} obj
- * @param {string} prop
+ * @param {string|symbol} prop
  * @return {!ObjectPropertyDescriptor<T>|undefined}
  * @nosideeffects
  * @template T
@@ -244,7 +244,7 @@ function JSONType() {}
 
 /**
  * @param {string} jsonStr The string to parse.
- * @param {(function(string, *) : *)=} opt_reviver
+ * @param {(function(this:?, string, *) : *)=} opt_reviver
  * @return {*} The JSON object.
  * @throws {Error}
  */
@@ -253,7 +253,7 @@ JSONType.prototype.parse = function(jsonStr, opt_reviver) {};
 
 /**
  * @param {*} jsonObj Input object.
- * @param {(Array<string>|(function(string, *) : *)|null)=} opt_replacer
+ * @param {(Array<string>|(function(this:?, string, *) : *)|null)=} opt_replacer
  * @param {(number|string)=} opt_space
  * @return {string} JSON string which represents jsonObj.
  * @throws {Error}

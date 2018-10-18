@@ -16,13 +16,19 @@
 package com.google.javascript.jscomp;
 
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public class WhitespaceWrapGoogModulesTest extends CompilerTestCase {
 
   private LanguageMode languageOut;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2015);
     languageOut = LanguageMode.ECMASCRIPT_2015;
@@ -45,9 +51,10 @@ public class WhitespaceWrapGoogModulesTest extends CompilerTestCase {
     return options;
   }
 
+  @Test
   public void testGoogModuleRewrite() {
     test(
-        LINE_JOINER.join("goog.module('test');", "var f = 5;", "exports = f;"),
+        lines("goog.module('test');", "var f = 5;", "exports = f;"),
         "goog.loadModule(function(exports){"
             + "\"use strict\";"
             + "goog.module(\"test\");"

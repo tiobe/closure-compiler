@@ -24,17 +24,23 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.javascript.jscomp.deps.DependencyInfo.Require;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import junit.framework.TestCase;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link JSModuleGraph}
  *
  */
+@RunWith(JUnit4.class)
 public final class JSModuleGraphTest extends TestCase {
 
   // NOTE: These are not static. It would probably be clearer to initialize them in setUp()
@@ -50,6 +56,7 @@ public final class JSModuleGraphTest extends TestCase {
   private Compiler compiler;
 
   @Override
+  @Before
   public void setUp() throws Exception {
     super.setUp();
     B.addDependency(A); //     __A__
@@ -64,6 +71,7 @@ public final class JSModuleGraphTest extends TestCase {
     compiler = new Compiler();
   }
 
+  @Test
   public void testSmallerTreeBeatsDeeperTree() {
     final JSModule a = new JSModule("a");
     final JSModule b = new JSModule("b");
@@ -102,15 +110,17 @@ public final class JSModuleGraphTest extends TestCase {
     assertSmallestCoveringSubtree(d, graph, c, e, f, g);
   }
 
+  @Test
   public void testModuleDepth() {
-    assertEquals("A should have depth 0", 0, A.getDepth());
-    assertEquals("B should have depth 1", 1, B.getDepth());
-    assertEquals("C should have depth 1", 1, C.getDepth());
-    assertEquals("D should have depth 2", 2, D.getDepth());
-    assertEquals("E should have depth 2", 2, E.getDepth());
-    assertEquals("F should have depth 3", 3, F.getDepth());
+    assertWithMessage("A should have depth 0").that(A.getDepth()).isEqualTo(0);
+    assertWithMessage("B should have depth 1").that(B.getDepth()).isEqualTo(1);
+    assertWithMessage("C should have depth 1").that(C.getDepth()).isEqualTo(1);
+    assertWithMessage("D should have depth 2").that(D.getDepth()).isEqualTo(2);
+    assertWithMessage("E should have depth 2").that(E.getDepth()).isEqualTo(2);
+    assertWithMessage("F should have depth 3").that(F.getDepth()).isEqualTo(3);
   }
 
+  @Test
   public void testDeepestCommonDep() {
     assertDeepestCommonDep(null, A, A);
     assertDeepestCommonDep(null, A, B);
@@ -135,6 +145,7 @@ public final class JSModuleGraphTest extends TestCase {
     assertDeepestCommonDep(E, F, F);
   }
 
+  @Test
   public void testDeepestCommonDepInclusive() {
     assertDeepestCommonDepInclusive(A, A, A);
     assertDeepestCommonDepInclusive(A, A, B);
@@ -159,6 +170,7 @@ public final class JSModuleGraphTest extends TestCase {
     assertDeepestCommonDepInclusive(F, F, F);
   }
 
+  @Test
   public void testSmallestCoveringSubtree() {
     assertSmallestCoveringSubtree(A, A, A, A);
     assertSmallestCoveringSubtree(A, A, A, B);
@@ -183,6 +195,7 @@ public final class JSModuleGraphTest extends TestCase {
     assertSmallestCoveringSubtree(F, A, F, F);
   }
 
+  @Test
   public void testGetTransitiveDepsDeepestFirst() {
     assertTransitiveDepsDeepestFirst(A);
     assertTransitiveDepsDeepestFirst(B, A);
@@ -192,47 +205,51 @@ public final class JSModuleGraphTest extends TestCase {
     assertTransitiveDepsDeepestFirst(F, E, C, B, A);
   }
 
+  @Test
   public void testManageDependencies1() throws Exception {
-    List<CompilerInput> inputs = setUpManageDependenciesTest();
+    setUpManageDependenciesTest();
     DependencyOptions depOptions = new DependencyOptions();
     depOptions.setDependencySorting(true);
     depOptions.setDependencyPruning(true);
     depOptions.setEntryPoints(ImmutableList.<ModuleIdentifier>of());
-    List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+    List<CompilerInput> results = graph.manageDependencies(depOptions);
 
     assertInputs(A, "a1", "a3");
     assertInputs(B, "a2", "b2");
     assertInputs(C); // no inputs
     assertInputs(E, "c1", "e1", "e2");
 
-    assertEquals(ImmutableList.of("a1", "a3", "a2", "b2", "c1", "e1", "e2"), sourceNames(results));
+    assertThat(sourceNames(results))
+        .isEqualTo(ImmutableList.of("a1", "a3", "a2", "b2", "c1", "e1", "e2"));
   }
 
+  @Test
   public void testManageDependencies2() throws Exception {
-    List<CompilerInput> inputs = setUpManageDependenciesTest();
+    setUpManageDependenciesTest();
     DependencyOptions depOptions = new DependencyOptions();
     depOptions.setDependencySorting(true);
     depOptions.setDependencyPruning(true);
     depOptions.setEntryPoints(ImmutableList.of(ModuleIdentifier.forClosure("c2")));
-    List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+    List<CompilerInput> results = graph.manageDependencies(depOptions);
 
     assertInputs(A, "a1", "a3");
     assertInputs(B, "a2", "b2");
     assertInputs(C, "c1", "c2");
     assertInputs(E, "e1", "e2");
 
-    assertEquals(
-        ImmutableList.of("a1", "a3", "a2", "b2", "c1", "c2", "e1", "e2"), sourceNames(results));
+    assertThat(sourceNames(results))
+        .isEqualTo(ImmutableList.of("a1", "a3", "a2", "b2", "c1", "c2", "e1", "e2"));
   }
 
+  @Test
   public void testManageDependencies3Impl() throws Exception {
-    List<CompilerInput> inputs = setUpManageDependenciesTest();
+    setUpManageDependenciesTest();
     DependencyOptions depOptions = new DependencyOptions();
     depOptions.setDependencySorting(true);
     depOptions.setDependencyPruning(true);
     depOptions.setMoocherDropping(true);
     depOptions.setEntryPoints(ImmutableList.of(ModuleIdentifier.forClosure("c2")));
-    List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+    List<CompilerInput> results = graph.manageDependencies(depOptions);
 
     // Everything gets pushed up into module c, because that's
     // the only one that has entry points.
@@ -244,35 +261,28 @@ public final class JSModuleGraphTest extends TestCase {
     assertThat(sourceNames(results)).containsExactly("a1", "c1", "c2").inOrder();
   }
 
+  @Test
   public void testManageDependencies4() throws Exception {
     setUpManageDependenciesTest();
     DependencyOptions depOptions = new DependencyOptions();
     depOptions.setDependencySorting(true);
 
-    List<CompilerInput> inputs = new ArrayList<>();
-
-    // Add the inputs in a random order.
-    inputs.addAll(E.getInputs());
-    inputs.addAll(B.getInputs());
-    inputs.addAll(A.getInputs());
-    inputs.addAll(C.getInputs());
-
-    List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+    List<CompilerInput> results = graph.manageDependencies(depOptions);
 
     assertInputs(A, "a1", "a2", "a3");
     assertInputs(B, "b1", "b2");
     assertInputs(C, "c1", "c2");
     assertInputs(E, "e1", "e2");
 
-    assertEquals(
-        ImmutableList.of("a1", "a2", "a3", "b1", "b2", "c1", "c2", "e1", "e2"),
-        sourceNames(results));
+    assertThat(sourceNames(results))
+        .isEqualTo(ImmutableList.of("a1", "a2", "a3", "b1", "b2", "c1", "c2", "e1", "e2"));
   }
 
   // NOTE: The newline between the @provideGoog comment and the var statement is required.
   private static final String BASEJS =
       "/** @provideGoog */\nvar COMPILED = false; var goog = goog || {}";
 
+  @Test
   public void testManageDependencies5Impl() throws Exception {
     A.add(code("a2", provides("a2"), requires("a1")));
     A.add(code("a1", provides("a1"), requires()));
@@ -285,39 +295,38 @@ public final class JSModuleGraphTest extends TestCase {
     DependencyOptions depOptions = new DependencyOptions();
     depOptions.setDependencySorting(true);
 
-    List<CompilerInput> inputs = new ArrayList<>();
-    inputs.addAll(A.getInputs());
-    List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+    List<CompilerInput> results = graph.manageDependencies(depOptions);
 
     assertInputs(A, "base.js", "a1", "a2");
 
     assertThat(sourceNames(results)).containsExactly("base.js", "a1", "a2").inOrder();
   }
 
+  @Test
   public void testNoFiles() throws Exception {
     DependencyOptions depOptions = new DependencyOptions();
     depOptions.setDependencySorting(true);
 
-    List<CompilerInput> inputs = new ArrayList<>();
-    List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+    List<CompilerInput> results = graph.manageDependencies(depOptions);
     assertThat(results).isEmpty();
   }
 
+  @Test
   public void testToJson() {
     JsonArray modules = graph.toJson();
-    assertEquals(6, modules.size());
+    assertThat(modules.size()).isEqualTo(6);
     for (int i = 0; i < modules.size(); i++) {
       JsonObject m = modules.get(i).getAsJsonObject();
-      assertNotNull(m.get("name"));
-      assertNotNull(m.get("dependencies"));
-      assertNotNull(m.get("transitive-dependencies"));
-      assertNotNull(m.get("inputs"));
+      assertThat(m.get("name")).isNotNull();
+      assertThat(m.get("dependencies")).isNotNull();
+      assertThat(m.get("transitive-dependencies")).isNotNull();
+      assertThat(m.get("inputs")).isNotNull();
     }
     JsonObject m = modules.get(3).getAsJsonObject();
-    assertEquals("D", m.get("name").getAsString());
-    assertEquals("[\"B\"]", m.get("dependencies").getAsJsonArray().toString());
-    assertEquals(2, m.get("transitive-dependencies").getAsJsonArray().size());
-    assertEquals("[]", m.get("inputs").getAsJsonArray().toString());
+    assertThat(m.get("name").getAsString()).isEqualTo("D");
+    assertThat(m.get("dependencies").getAsJsonArray().toString()).isEqualTo("[\"B\"]");
+    assertThat(m.get("transitive-dependencies").getAsJsonArray().size()).isEqualTo(2);
+    assertThat(m.get("inputs").getAsJsonArray().toString()).isEqualTo("[]");
   }
 
   private List<CompilerInput> setUpManageDependenciesTest() {
@@ -347,6 +356,7 @@ public final class JSModuleGraphTest extends TestCase {
     return inputs;
   }
 
+  @Test
   public void testGoogBaseOrderedCorrectly() throws Exception {
     List<SourceFile> sourceFiles = new ArrayList<>();
     sourceFiles.add(code("a9", provides("a9"), requires()));
@@ -377,9 +387,7 @@ public final class JSModuleGraphTest extends TestCase {
         input.setCompiler(compiler);
       }
 
-      List<CompilerInput> inputs = new ArrayList<>();
-      inputs.addAll(A.getInputs());
-      List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+      List<CompilerInput> results = graph.manageDependencies(depOptions);
 
       assertInputs(A, "base.js", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a1");
 
@@ -389,6 +397,7 @@ public final class JSModuleGraphTest extends TestCase {
     }
   }
 
+  @Test
   public void testProperEs6ModuleOrdering() throws Exception {
     List<SourceFile> sourceFiles = new ArrayList<>();
     sourceFiles.add(code("/entry.js", provides(), requires()));
@@ -431,14 +440,12 @@ public final class JSModuleGraphTest extends TestCase {
       for (CompilerInput input : A.getInputs()) {
         input.setCompiler(compiler);
         for (String require : orderedRequires.get(input.getSourceFile().getName())) {
-          input.addOrderedRequire(require);
+          input.addOrderedRequire(Require.compilerModule(require));
         }
         input.setHasFullParseDependencyInfo(true);
       }
 
-      List<CompilerInput> inputs = new ArrayList<>();
-      inputs.addAll(A.getInputs());
-      List<CompilerInput> results = graph.manageDependencies(depOptions, inputs);
+      List<CompilerInput> results = graph.manageDependencies(depOptions);
 
       assertInputs(
           A, "/b/c.js", "/b/b.js", "/b/a.js", "/important.js", "/a/b.js", "/a/a.js", "/entry.js");
@@ -451,7 +458,7 @@ public final class JSModuleGraphTest extends TestCase {
   }
 
   private void assertInputs(JSModule module, String... sourceNames) {
-    assertEquals(ImmutableList.copyOf(sourceNames), sourceNames(module.getInputs()));
+    assertThat(sourceNames(module.getInputs())).isEqualTo(ImmutableList.copyOf(sourceNames));
   }
 
   private List<String> sourceNames(List<CompilerInput> inputs) {
@@ -478,11 +485,11 @@ public final class JSModuleGraphTest extends TestCase {
     return SourceFile.fromCode(sourceName, text + source);
   }
 
-  private List<String> provides(String... strings) {
+  private ImmutableList<String> provides(String... strings) {
     return ImmutableList.copyOf(strings);
   }
 
-  private List<String> requires(String... strings) {
+  private ImmutableList<String> requires(String... strings) {
     return ImmutableList.copyOf(strings);
   }
 
@@ -527,18 +534,20 @@ public final class JSModuleGraphTest extends TestCase {
             ? graph.getDeepestCommonDependencyInclusive(m1, m2)
             : graph.getDeepestCommonDependency(m1, m2);
     if (actual != expected) {
-      fail(
-          String.format(
-              "Deepest common dep of %s and %s should be %s but was %s",
-              m1.getName(),
-              m2.getName(),
-              expected == null ? "null" : expected.getName(),
-              actual == null ? "null" : actual.getName()));
+      assertWithMessage(
+              String.format(
+                  "Deepest common dep of %s and %s should be %s but was %s",
+                  m1.getName(),
+                  m2.getName(),
+                  expected == null ? "null" : expected.getName(),
+                  actual == null ? "null" : actual.getName()))
+          .fail();
     }
   }
 
   private void assertTransitiveDepsDeepestFirst(JSModule m, JSModule... deps) {
     Iterable<JSModule> actual = graph.getTransitiveDepsDeepestFirst(m);
-    assertEquals(Arrays.toString(deps), Arrays.toString(Iterables.toArray(actual, JSModule.class)));
+    assertThat(Arrays.toString(Iterables.toArray(actual, JSModule.class)))
+        .isEqualTo(Arrays.toString(deps));
   }
 }

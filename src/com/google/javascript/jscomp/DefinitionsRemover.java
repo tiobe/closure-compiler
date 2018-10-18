@@ -48,7 +48,7 @@ class DefinitionsRemover {
     if (NodeUtil.isNameDeclaration(parent) && n.isName() && (isExtern || n.hasChildren())) {
       return new VarDefinition(n, isExtern);
     } else if (parent.isFunction() && parent.getFirstChild() == n) {
-      if (!NodeUtil.isFunctionExpression(parent)) {
+      if (NodeUtil.isFunctionDeclaration(parent)) {
         return new NamedFunctionDefinition(parent, isExtern);
       } else if (!n.getString().isEmpty()) {
         return new FunctionExpressionDefinition(parent, isExtern);
@@ -280,8 +280,12 @@ class DefinitionsRemover {
     protected final Node function;
 
     FunctionDefinition(Node node, boolean inExterns) {
-      super(inExterns, NameBasedDefinitionProvider.getSimplifiedName(node.getFirstChild()));
-      checkArgument(node.isFunction());
+      this(node, inExterns, NameBasedDefinitionProvider.getSimplifiedName(node.getFirstChild()));
+    }
+
+    FunctionDefinition(Node node, boolean inExterns, String name) {
+      super(inExterns, name);
+      checkArgument(node.isFunction(), node);
       function = node;
     }
 
@@ -340,7 +344,8 @@ class DefinitionsRemover {
     protected final Node memberFunctionDef;
 
     MemberFunctionDefinition(Node node, boolean inExterns) {
-      super(node.getFirstChild(), inExterns);
+      super(node.getFirstChild(), inExterns, NameBasedDefinitionProvider.getSimplifiedName(node));
+      checkState(node.isMemberFunctionDef(), node);
       memberFunctionDef = node;
     }
 

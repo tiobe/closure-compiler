@@ -17,25 +17,38 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+
+import com.google.javascript.rhino.IR;
+import com.google.javascript.rhino.Node;
+import javax.annotation.Nullable;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link RuntimeTypeCheck}.
  *
  */
+@RunWith(JUnit4.class)
 public final class RuntimeTypeCheckTest extends CompilerTestCase {
+  @Nullable private String logFunction = null;
 
   public RuntimeTypeCheckTest() {
     super("/** @const */ var undefined;");
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     enableTypeCheck();
     disableLineNumberCheck();
     enableNormalize();
   }
 
+  @Test
   public void testValue() {
     testChecks(
         "/** @param {number} i */ function f(i) {}",
@@ -45,6 +58,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testConstValue() {
     // User a variable that's immutable by the google coding convention,
     // to ensure the immutable annotations are preserved.
@@ -55,6 +69,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testValueWithInnerFn() {
     testChecks("/** @param {number} i */ function f(i) { function g() {} }",
         "/** @param {number} i */ function f(i) {" +
@@ -64,6 +79,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testNullValue() {
     testChecks(
         "/** @param {null} i */ function f(i) {}",
@@ -72,6 +88,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testValues() {
     testChecks(
         "/** @param {number} i\n@param {string} j*/ function f(i, j) {}",
@@ -83,11 +100,12 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testSkipParamOK() {
     testChecks(
-        LINE_JOINER.join(
+        lines(
             "/**", " * @param {*} i", " * @param {string} j", " */", "function f(i, j) {}"),
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {*} i",
             " * @param {string} j",
@@ -98,6 +116,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testUnion() {
     testChecks("/** @param {number|string} x */ function f(x) {}",
         "/** @param {number|string} x */ function f(x) {" +
@@ -108,10 +127,12 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testUntypedParam() {
     testChecksSame("/** ... */ function f(x) {}");
   }
 
+  @Test
   public void testReturn() {
     testChecks("/** @return {string} */ function f() { return 'x'; }",
         "/** @return {string} */ function f() {" +
@@ -120,6 +141,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testNativeClass() {
     testChecks(
         "/** @param {!String} x */ function f(x) {}",
@@ -129,6 +151,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testFunctionObjectParam() {
     testChecks(
         "/** @param {!Function} x */ function f(x) {}",
@@ -138,6 +161,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testFunctionTypeParam() {
     testChecks(
         "/** @param {function()} x */ function f(x) {}",
@@ -148,6 +172,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
   }
 
   // Closure collapses {function()|!Function} into {!Function}
+  @Test
   public void testFunctionTypeOrFunctionObjectParam() {
     testChecks(
         "/** @param {function()|!Function} x */ function f(x) {}",
@@ -158,6 +183,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
   }
 
   // Closure collapses {!Function|!Object} into {!Object}
+  @Test
   public void testFunctionObjectOrObjectParam() {
     testChecks(
         "/** @param {!Function|!Object} x */ function f(x) {}",
@@ -167,15 +193,16 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             + "}");
   }
 
+  @Test
   public void testQualifiedClass() {
     testChecks(
-        LINE_JOINER.join(
+        lines(
             "var goog = {};",
             "/** @constructor */",
             "goog.Foo = function() {};",
             "/** @param {!goog.Foo} x */ ",
             "function f(x) {}"),
-        LINE_JOINER.join(
+        lines(
             "var goog = {};",
             "/** @constructor */",
             "goog.Foo = function() {};",
@@ -187,6 +214,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInnerClasses() {
     testChecks(
         "function f() { /** @constructor */ function inner() {} }" +
@@ -201,6 +229,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testInterface() {
     testChecks("/** @interface */ function I() {}" +
         "/** @param {!I} i */ function f(i) {}",
@@ -211,13 +240,14 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
         "}");
   }
 
+  @Test
   public void testImplementedInterface() {
     testChecks(
-        LINE_JOINER.join(
+        lines(
             "/** @interface */ function I() {}",
             "/** @param {!I} i */ function f(i) {}",
             "/** @constructor\n@implements {I} */ function C() {}"),
-        LINE_JOINER.join(
+        lines(
             "/** @interface */ function I() {}",
             "/** @param {!I} i */ function f(i) {",
             "  $jscomp.typecheck.checkType(i, ",
@@ -228,14 +258,15 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "C.prototype['implements__I'] = true;"));
   }
 
+  @Test
   public void testExtendedInterface() {
     testChecks(
-        LINE_JOINER.join(
+        lines(
             "/** @interface */ function I() {}",
             "/** @interface\n@extends {I} */ function J() {}",
             "/** @param {!I} i */function f(i) {}",
             "/** @constructor\n@implements {J} */function C() {}"),
-        LINE_JOINER.join(
+        lines(
             "/** @interface */ function I() {}",
             "/** @interface\n@extends {I} */ function J() {}",
             "/** @param {!I} i */ function f(i) {",
@@ -248,14 +279,15 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "C.prototype['implements__J'] = true;"));
   }
 
+  @Test
   public void testImplementedInterfaceOrdering() {
     testChecks(
-        LINE_JOINER.join(
+        lines(
             "/** @interface */ function I() {}" ,
             "/** @param {!I} i */ function f(i) {}" ,
             "/** @constructor\n@implements {I} */ function C() {}" ,
             "C.prototype.f = function() {};"),
-        LINE_JOINER.join(
+        lines(
             "/** @interface */ function I() {}",
             "/** @param {!I} i */ function f(i) {",
             "  $jscomp.typecheck.checkType(i, ",
@@ -267,9 +299,10 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "C.prototype.f = function() {};"));
   }
 
+  @Test
   public void testImplementedInterfaceOrderingGoogInherits() {
     testChecks(
-        LINE_JOINER.join(
+        lines(
             "var goog = {};",
             "goog.inherits = function(x, y) {};",
             "/** @interface */function I() {}",
@@ -278,7 +311,7 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "/** @constructor\n@extends {B}\n@implements {I} */function C() {}",
             "goog.inherits(C, B);",
             "C.prototype.f = function() {};"),
-        LINE_JOINER.join(
+        lines(
             "var goog = {};",
             "goog.inherits = function(x, y) {};",
             "/** @interface */function I() {}",
@@ -295,22 +328,62 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
             "C.prototype.f = function() {};"));
   }
 
+  @Test
   public void testInnerConstructor() {
     testChecks(
         "(function() { /** @constructor */ function C() {} })()",
-        LINE_JOINER.join(
+        lines(
             "(function() {",
             "  /** @constructor */ function C() {}",
             "  C.prototype['instance_of__C'] = true;",
             "})()"));
   }
 
+  @Test
   public void testReturnNothing() {
     testChecksSame("function f() { return; }");
   }
 
+  @Test
   public void testFunctionType() {
     testChecksSame("/** @type {!Function} */function f() {}");
+  }
+
+  @Test
+  public void testInjectLogFunction_name() {
+    logFunction = "myLogFn";
+    Compiler compiler = createCompiler();
+    compiler.initOptions(getOptions());
+    Node testNode = IR.exprResult(IR.nullNode());
+    IR.script(testNode);
+    getProcessor(compiler).injectCustomLogFunction(testNode);
+    assertThat(compiler.toSource(testNode.getParent())).contains("$jscomp.typecheck.log=myLogFn");
+  }
+
+  @Test
+  public void testInjectLogFunction_qualifiedName() {
+    logFunction = "my.log.fn";
+    Compiler compiler = createCompiler();
+    compiler.initOptions(getOptions());
+    Node testNode = IR.exprResult(IR.nullNode());
+    IR.script(testNode);
+    getProcessor(compiler).injectCustomLogFunction(testNode);
+    assertThat(compiler.toSource(testNode.getParent())).contains("$jscomp.typecheck.log=my.log.fn");
+  }
+
+  @Test
+  public void testInvalidLogFunction() {
+    logFunction = "{}"; // Not a valid qualified name
+    Compiler compiler = createCompiler();
+    compiler.initOptions(getOptions());
+    Node testNode = IR.exprResult(IR.nullNode());
+    IR.script(testNode);
+    try {
+      getProcessor(compiler).injectCustomLogFunction(testNode);
+      assertWithMessage("Expected an IllegalStateException").fail();
+    } catch (IllegalStateException e) {
+      assertThat(e).hasMessageThat().contains("not a valid qualified name");
+    }
   }
 
   private void testChecks(String js, String expected) {
@@ -334,8 +407,8 @@ public final class RuntimeTypeCheckTest extends CompilerTestCase {
   }
 
   @Override
-  protected CompilerPass getProcessor(final Compiler compiler) {
-    return new RuntimeTypeCheck(compiler, null);
+  protected RuntimeTypeCheck getProcessor(final Compiler compiler) {
+    return new RuntimeTypeCheck(compiler, logFunction);
   }
 
   @Override

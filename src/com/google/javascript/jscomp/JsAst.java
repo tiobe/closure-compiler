@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.annotations.GwtIncompatible;
@@ -55,7 +56,7 @@ public class JsAst implements SourceAst {
       parse(compiler);
       root.setInputId(inputId);
     }
-    return root;
+    return checkNotNull(root);
   }
 
   @Override
@@ -172,7 +173,7 @@ public class JsAst implements SourceAst {
       }
     } catch (IOException e) {
       compiler.report(
-          JSError.make(AbstractCompiler.READ_ERROR, sourceFile.getName()));
+          JSError.make(AbstractCompiler.READ_ERROR, sourceFile.getName(), e.getMessage()));
     }
 
     if (root == null) {

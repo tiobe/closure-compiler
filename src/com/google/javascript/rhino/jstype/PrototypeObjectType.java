@@ -167,8 +167,7 @@ public class PrototypeObjectType extends ObjectType {
     if (nativeType || implicitPrototype != null) {
       setImplicitPrototype(implicitPrototype);
     } else {
-      setImplicitPrototype(
-          registry.getNativeObjectType(JSTypeNative.OBJECT_TYPE));
+      setImplicitPrototype(registry.getNativeObjectType(JSTypeNative.OBJECT_TYPE));
     }
   }
 
@@ -224,43 +223,50 @@ public class PrototypeObjectType extends ObjectType {
 
   @Override
   public boolean matchesNumberContext() {
-    return isNumberObjectType() || isDateType() || isBooleanObjectType() ||
-        isStringObjectType() || hasOverridenNativeProperty("valueOf");
+    return isNumberObjectType() || isDateType() || isBooleanObjectType()
+        || isStringObjectType() || hasOverriddenNativeProperty("valueOf");
   }
 
   @Override
   public boolean matchesStringContext() {
-    return isTheObjectType() || isStringObjectType() || isDateType() ||
-        isRegexpType() || isArrayType() || isNumberObjectType() ||
-        isBooleanObjectType() || hasOverridenNativeProperty("toString");
+    return isTheObjectType() || isStringObjectType() || isDateType()
+        || isRegexpType() || isArrayType() || isNumberObjectType()
+        || isBooleanObjectType() || hasOverriddenNativeProperty("toString");
+  }
+
+  @Override
+  public boolean matchesSymbolContext() {
+    return isSymbolObjectType();
   }
 
   /**
    * Given the name of a native object property, checks whether the property is
    * present on the object and different from the native one.
    */
-  private boolean hasOverridenNativeProperty(String propertyName) {
+  private boolean hasOverriddenNativeProperty(String propertyName) {
     if (isNativeObjectType()) {
       return false;
     }
 
     JSType propertyType = getPropertyType(propertyName);
     ObjectType nativeType =
-        isFunctionType() ?
-        registry.getNativeObjectType(JSTypeNative.FUNCTION_PROTOTYPE) :
-        registry.getNativeObjectType(JSTypeNative.OBJECT_PROTOTYPE);
+        isFunctionType()
+            ? registry.getNativeObjectType(JSTypeNative.FUNCTION_PROTOTYPE)
+            : registry.getNativeObjectType(JSTypeNative.OBJECT_PROTOTYPE);
     JSType nativePropertyType = nativeType.getPropertyType(propertyName);
     return propertyType != nativePropertyType;
   }
 
   @Override
-  public JSType unboxesTo() {
+  public final JSType unboxesTo() {
     if (isStringObjectType()) {
       return getNativeType(JSTypeNative.STRING_TYPE);
     } else if (isBooleanObjectType()) {
       return getNativeType(JSTypeNative.BOOLEAN_TYPE);
     } else if (isNumberObjectType()) {
       return getNativeType(JSTypeNative.NUMBER_TYPE);
+    } else if (isSymbolObjectType()) {
+      return getNativeType(JSTypeNative.SYMBOL_TYPE);
     } else {
       return super.unboxesTo();
     }
@@ -269,11 +275,6 @@ public class PrototypeObjectType extends ObjectType {
   @Override
   public boolean matchesObjectContext() {
     return true;
-  }
-
-  @Override
-  public boolean canBeCalled() {
-    return isRegexpType();
   }
 
   @Override
@@ -290,8 +291,8 @@ public class PrototypeObjectType extends ObjectType {
     // Use a tree set so that the properties are sorted.
     Set<String> propertyNames = new TreeSet<>();
     for (ObjectType current = this;
-        current != null && !current.isNativeObjectType() &&
-            propertyNames.size() <= MAX_PRETTY_PRINTED_PROPERTIES;
+        current != null && !current.isNativeObjectType()
+            && propertyNames.size() <= MAX_PRETTY_PRINTED_PROPERTIES;
         current = current.getImplicitPrototype()) {
       propertyNames.addAll(current.getOwnPropertyNames());
     }
@@ -367,11 +368,6 @@ public class PrototypeObjectType extends ObjectType {
     } else {
       return null;
     }
-  }
-
-  @Override
-  public boolean hasReferenceName() {
-    return className != null || ownerFunction != null;
   }
 
   public boolean isAnonymous() {
@@ -452,11 +448,6 @@ public class PrototypeObjectType extends ObjectType {
     return true;
   }
 
-  @Override
-  public boolean hasCachedValues() {
-    return super.hasCachedValues();
-  }
-
   /** Whether this is a built-in object. */
   @Override
   public boolean isNativeObjectType() {
@@ -489,13 +480,13 @@ public class PrototypeObjectType extends ObjectType {
   }
 
   @Override
-  JSType resolveInternal(ErrorReporter t, StaticTypedScope<JSType> scope) {
+  JSType resolveInternal(ErrorReporter reporter) {
     setResolvedTypeInternal(this);
 
     ObjectType implicitPrototype = getImplicitPrototype();
     if (implicitPrototype != null) {
       implicitPrototypeFallback =
-          (ObjectType) implicitPrototype.resolve(t, scope);
+          (ObjectType) implicitPrototype.resolve(reporter);
       FunctionType ctor = getConstructor();
       if (ctor != null) {
         FunctionType superCtor = ctor.getSuperClassConstructor();
@@ -507,7 +498,7 @@ public class PrototypeObjectType extends ObjectType {
       }
     }
     for (Property prop : properties.values()) {
-      prop.setType(safeResolve(prop.getType(), t, scope));
+      prop.setType(safeResolve(prop.getType(), reporter));
     }
     return this;
   }
@@ -554,7 +545,7 @@ public class PrototypeObjectType extends ObjectType {
   }
 
   @Override
-  public int hashCode() {
+  int recursionUnsafeHashCode() {
     if (isStructuralType()) {
       return Objects.hash(className, properties);
     } else {

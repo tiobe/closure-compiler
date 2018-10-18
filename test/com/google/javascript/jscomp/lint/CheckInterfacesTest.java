@@ -22,8 +22,12 @@ import com.google.javascript.jscomp.CompilerOptions;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.CompilerTestCase;
 import com.google.javascript.jscomp.DiagnosticGroups;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /** Test case for {@link CheckInterfaces}. */
+@RunWith(JUnit4.class)
 public final class CheckInterfacesTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
@@ -37,43 +41,48 @@ public final class CheckInterfacesTest extends CompilerTestCase {
     return options;
   }
 
-  public void testInterfaceArgs() throws Exception {
+  @Test
+  public void testInterfaceArgs() {
     testSame("/** @interface */ function A(x) {}",
         CheckInterfaces.INTERFACE_SHOULD_NOT_TAKE_ARGS);
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "var ns = {};\n", "/** @interface */\n", "ns.SomeInterface = function(x) {};"),
         CheckInterfaces.INTERFACE_SHOULD_NOT_TAKE_ARGS);
   }
 
-  public void testInterfaceArgs_withES6Modules() throws Exception {
+  @Test
+  public void testInterfaceArgs_withES6Modules() {
     testSame(
         "export /** @interface */ function A(x) {}",
         CheckInterfaces.INTERFACE_SHOULD_NOT_TAKE_ARGS);
   }
 
+  @Test
   public void testInterfaceNotEmpty() {
     testSame("/** @interface */ function A() { this.foo; }",
         CheckInterfaces.INTERFACE_FUNCTION_NOT_EMPTY);
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "var ns = {};\n",
             "/** @interface */\n",
             "ns.SomeInterface = function() { this.foo; };"),
         CheckInterfaces.INTERFACE_FUNCTION_NOT_EMPTY);
   }
 
+  @Test
   public void testInterfaceNotEmpty_withES6Modules() {
     testSame(
         "export /** @interface */ function A() { this.foo; }",
         CheckInterfaces.INTERFACE_FUNCTION_NOT_EMPTY);
   }
 
+  @Test
   public void testRecordWithFieldDeclarations() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/** @record */",
             "function R() {",
             "  /** @type {string} */",
@@ -84,9 +93,10 @@ public final class CheckInterfacesTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testRecordWithOtherContents() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/** @record */",
             "function R() {",
             "  /** @type {string} */",

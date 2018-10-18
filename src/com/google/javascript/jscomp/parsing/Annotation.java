@@ -50,19 +50,15 @@ enum Annotation {
   IMPLICIT_CAST,
   INHERIT_DOC,
   INTERFACE,
-  JAGGER_INJECT,
-  JAGGER_MODULE,
-  JAGGER_PROVIDE,
-  JAGGER_PROVIDE_PROMISE,
   LENDS,
   LICENSE, // same as preserve
   MEANING,
   MIXIN_CLASS,
   MIXIN_FUNCTION,
   MODIFIES,
-  NO_ALIAS,
   NO_COLLAPSE,
   NO_COMPILE,
+  NO_INLINE,
   NO_SIDE_EFFECTS,
   NOT_IMPLEMENTED,
   OVERRIDE,
@@ -120,19 +116,15 @@ enum Annotation {
           .put("inheritDoc", Annotation.INHERIT_DOC)
           .put("interface", Annotation.INTERFACE)
           .put("record", Annotation.RECORD)
-          .put("jaggerInject", Annotation.JAGGER_INJECT)
-          .put("jaggerModule", Annotation.JAGGER_MODULE)
-          .put("jaggerProvidePromise", Annotation.JAGGER_PROVIDE_PROMISE)
-          .put("jaggerProvide", Annotation.JAGGER_PROVIDE)
           .put("lends", Annotation.LENDS)
           .put("license", Annotation.LICENSE)
           .put("meaning", Annotation.MEANING)
           .put("mixinClass", Annotation.MIXIN_CLASS)
           .put("mixinFunction", Annotation.MIXIN_FUNCTION)
           .put("modifies", Annotation.MODIFIES)
-          .put("noalias", Annotation.NO_ALIAS)
           .put("nocollapse", Annotation.NO_COLLAPSE)
           .put("nocompile", Annotation.NO_COMPILE)
+          .put("noinline", Annotation.NO_INLINE)
           .put("nosideeffects", Annotation.NO_SIDE_EFFECTS)
           .put("override", Annotation.OVERRIDE)
           .put("owner", Annotation.AUTHOR)

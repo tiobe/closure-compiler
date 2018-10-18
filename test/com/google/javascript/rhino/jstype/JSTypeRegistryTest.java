@@ -38,53 +38,173 @@
 
 package com.google.javascript.rhino.jstype;
 
-import com.google.javascript.rhino.testing.Asserts;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.javascript.rhino.jstype.JSTypeNative.ALL_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.BOOLEAN_OBJECT_FUNCTION_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.BOOLEAN_OBJECT_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.BOOLEAN_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.GENERATOR_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.ITERABLE_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.ITERATOR_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.I_TEMPLATE_ARRAY_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.NULL_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.NULL_VOID;
+import static com.google.javascript.rhino.jstype.JSTypeNative.NUMBER_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.STRING_TYPE;
+import static com.google.javascript.rhino.jstype.JSTypeNative.STRING_VALUE_OR_OBJECT_TYPE;
+import static com.google.javascript.rhino.testing.TypeSubject.assertType;
+import static com.google.javascript.rhino.testing.TypeSubject.types;
 
+import com.google.javascript.rhino.Node;
+import com.google.javascript.rhino.Token;
 import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests {@link JSTypeRegistry}.
  *
  */
+@RunWith(JUnit4.class)
 public class JSTypeRegistryTest extends TestCase {
   // TODO(user): extend this class with more tests, as JSTypeRegistry is
   // now much larger
-  public void testGetBuiltInType() {
+  @Test
+  public void testGetBuiltInType_boolean() {
     JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
-    assertTypeEquals(typeRegistry.getNativeType(JSTypeNative.BOOLEAN_TYPE),
-        typeRegistry.getType("boolean"));
+    assertType(typeRegistry.getType(null, "boolean"))
+        .isStructurallyEqualTo(typeRegistry.getNativeType(JSTypeNative.BOOLEAN_TYPE));
   }
 
+  @Test
+  public void testGetBuiltInType_iterable() {
+    JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
+    assertType(typeRegistry.getGlobalType("Iterable"))
+        .isStructurallyEqualTo(typeRegistry.getNativeType(ITERABLE_TYPE));
+  }
+
+  @Test
+  public void testGetBuiltInType_iterator() {
+    JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
+    assertType(typeRegistry.getGlobalType("Iterator"))
+        .isStructurallyEqualTo(typeRegistry.getNativeType(ITERATOR_TYPE));
+  }
+
+  @Test
+  public void testGetBuiltInType_generator() {
+    JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
+    assertType(typeRegistry.getGlobalType("Generator"))
+        .isStructurallyEqualTo(typeRegistry.getNativeType(GENERATOR_TYPE));
+  }
+
+  @Test
+  public void testGetBuildInType_iTemplateArray() {
+    JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
+    assertType(typeRegistry.getGlobalType("ITemplateArray"))
+        .isStructurallyEqualTo(typeRegistry.getNativeType(I_TEMPLATE_ARRAY_TYPE));
+  }
+
+  @Test
+  public void testGetBuiltInType_Promise() {
+    JSTypeRegistry registry = new JSTypeRegistry(null);
+    ObjectType promiseType = registry.getNativeObjectType(JSTypeNative.PROMISE_TYPE);
+    assertType(registry.getGlobalType("Promise")).isStructurallyEqualTo(promiseType);
+
+    // Test that it takes one parameter of type
+    // function(function((IThenable<TYPE>|TYPE|null|{then: ?})=): ?, function(*=): ?): ?
+    FunctionType promiseCtor = promiseType.getConstructor();
+    Node paramList = promiseCtor.getParametersNode();
+    Node firstParameter = paramList.getFirstChild();
+    assertNotNull(firstParameter);
+    FunctionType paramType = paramList.getFirstChild().getJSType().toMaybeFunctionType();
+    assertEquals(
+        "function(function((IThenable<TYPE>|TYPE|null|{then: ?})=): ?, function(*=): ?): ?",
+        paramType.toString());
+  }
+
+  @Test
   public void testGetDeclaredType() {
     JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
     JSType type = typeRegistry.createAnonymousObjectType(null);
     String name = "Foo";
-    typeRegistry.declareType(name, type);
-    assertTypeEquals(type, typeRegistry.getType(name));
+    typeRegistry.declareType(null, name, type);
+    assertType(typeRegistry.getType(null, name)).isStructurallyEqualTo(type);
 
     // Ensure different instances are independent.
     JSTypeRegistry typeRegistry2 = new JSTypeRegistry(null);
-    assertEquals(null, typeRegistry2.getType(name));
-    assertTypeEquals(type, typeRegistry.getType(name));
+    assertEquals(null, typeRegistry2.getType(null, name));
+    assertType(typeRegistry.getType(null, name)).isStructurallyEqualTo(type);
   }
 
+  @Test
   public void testPropertyOnManyTypes() {
+    // Given
     JSTypeRegistry typeRegistry = new JSTypeRegistry(null);
 
-    JSType type = null;
-
-    // By default the UnionTypeBuilder will treat a union of more than 20
+    // By default the UnionTypeBuilder will treat a union of more than 30
     // types as an unknown type. We don't want that for property checking
     // so test that the limit is higher.
     for (int i = 0; i < 100; i++) {
-      type = typeRegistry.createObjectType("type: " + i, null);
-      typeRegistry.registerPropertyOnType("foo", type);
-    }
+      JSType type = typeRegistry.createObjectType("type: " + i, null);
 
-    assertFalse(typeRegistry.getGreatestSubtypeWithProperty(type, "foo").isUnknownType());
+      // When
+      typeRegistry.registerPropertyOnType("foo", type);
+
+      // Then
+      assertWithMessage("Registered property `foo` on <%s> types.", i + 1)
+          .about(types())
+          .that(typeRegistry.getGreatestSubtypeWithProperty(type, "foo"))
+          .isNotUnknown();
+    }
   }
 
-  private void assertTypeEquals(JSType a, JSType b) {
-    Asserts.assertTypeEquals(a, b);
+  @Test
+  public void testReadableTypeName() {
+    JSTypeRegistry registry = new JSTypeRegistry(null);
+
+    assertEquals("*", getReadableTypeNameHelper(registry, ALL_TYPE));
+
+    assertEquals("boolean", getReadableTypeNameHelper(registry, BOOLEAN_TYPE));
+    assertEquals("Boolean", getReadableTypeNameHelper(registry, BOOLEAN_OBJECT_TYPE));
+    assertEquals("function", getReadableTypeNameHelper(registry, BOOLEAN_OBJECT_FUNCTION_TYPE));
+
+    assertEquals(
+        "(String|string)", getReadableTypeNameHelper(registry, STRING_VALUE_OR_OBJECT_TYPE));
+
+    assertEquals("(null|undefined)", getReadableTypeNameHelper(registry, NULL_VOID));
+    assertEquals("(null|undefined)", getReadableTypeNameHelper(registry, NULL_VOID, true));
+
+    assertEquals(
+        "(number|string|null)",
+        getReadableTypeNameHelper(registry, union(registry, NUMBER_TYPE, STRING_TYPE, NULL_TYPE)));
+
+    assertEquals(
+        "(Number|String)",
+        getReadableTypeNameHelper(
+            registry, union(registry, NUMBER_TYPE, STRING_TYPE, NULL_TYPE), true));
+  }
+
+  private JSType union(JSTypeRegistry registry, JSTypeNative... types) {
+    return registry.createUnionType(types);
+  }
+
+  private String getReadableTypeNameHelper(JSTypeRegistry registry, JSTypeNative type) {
+    return getReadableTypeNameHelper(registry, registry.getNativeType(type), false);
+  }
+
+  private String getReadableTypeNameHelper(
+      JSTypeRegistry registry, JSTypeNative type, boolean deref) {
+    return getReadableTypeNameHelper(registry, registry.getNativeType(type), deref);
+  }
+
+  private String getReadableTypeNameHelper(JSTypeRegistry registry, JSType type) {
+    return getReadableTypeNameHelper(registry, type, false);
+  }
+
+  private String getReadableTypeNameHelper(JSTypeRegistry registry, JSType type, boolean deref) {
+    Node n = new Node(Token.ADD);
+    n.setJSType(type);
+    return registry.getReadableJSTypeName(n, deref);
   }
 }

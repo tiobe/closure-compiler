@@ -40,16 +40,15 @@
 package com.google.javascript.rhino.testing;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
+import static com.google.common.truth.Truth.assertWithMessage;
+import static com.google.javascript.rhino.testing.TypeSubject.assertType;
+import static com.google.javascript.rhino.testing.TypeSubject.types;
 
 import com.google.common.collect.Iterables;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.jstype.JSType;
-import com.google.javascript.rhino.jstype.StaticTypedScope;
-
-import org.junit.Assert;
-
 import java.util.Iterator;
+import org.junit.Assert;
 
 /**
  * Helper methods for making assertions about the validity of types.
@@ -65,59 +64,13 @@ public class Asserts {
 
   /** @return The resolved type */
   public static JSType assertValidResolve(JSType type) {
-    return assertValidResolve(type, MapBasedScope.emptyScope());
-  }
-
-  /** @return The resolved type */
-  public static JSType assertValidResolve(
-      JSType type, StaticTypedScope<JSType> scope) {
-    ErrorReporter t = TestErrorReporter.forNoExpectedReports();
-    JSType resolvedType = type.resolve(t, scope);
-    assertTypeEquals("JSType#resolve should not affect object equality",
-        type, resolvedType);
+    ErrorReporter reporter = TestErrorReporter.forNoExpectedReports();
+    JSType resolvedType = type.resolve(reporter);
+    assertWithMessage("JSType#resolve should not affect object equality")
+        .about(types())
+        .that(resolvedType)
+        .isStructurallyEqualTo(type);
     return resolvedType;
-  }
-
-  public static void assertTypeNotEquals(JSType a, JSType b) {
-    assertTypeNotEquals("", a, b);
-  }
-
-  public static void assertTypeNotEquals(String message, JSType a, JSType b) {
-    Assert.assertFalse(
-        message +
-        (message.isEmpty() ? "" : "\n") +
-        "Type: " + b + "\n",
-        a.isEquivalentTo(b));
-    Assert.assertFalse(
-        message +
-        " Equals is not symmetric.\n" +
-        "Type: " + b + "\n",
-        b.isEquivalentTo(a));
-  }
-
-  public static void assertTypeEquals(JSType a, JSType b) {
-    assertTypeEquals("", a, b);
-  }
-
-  public static void assertTypeEquals(String message, JSType a, JSType b) {
-    assertEquals(
-        "Both types must be null, or both must be non-null " + a + "," + b,
-        (b == null), (a == null));
-    if (a == null) {
-      return;
-    }
-    Assert.assertTrue(
-        message +
-        (message.isEmpty() ? "" : "\n") +
-        "Expected: " + a + "\n" +
-        "Actual  : " + b,
-        a.isEquivalentTo(b));
-    Assert.assertTrue(
-        message +
-        " Equals is not symmetric.\n" +
-        "Expected: " + b + "\n" +
-        "Actual  : " + a,
-        b.isEquivalentTo(a));
   }
 
   public static <T extends JSType, S extends JSType> void
@@ -126,7 +79,7 @@ public class Asserts {
     Iterator<T> aIterator = a.iterator();
     Iterator<S> bIterator = b.iterator();
     while (aIterator.hasNext()) {
-      assertTypeEquals(aIterator.next(), bIterator.next());
+      assertType(bIterator.next()).isStructurallyEqualTo(aIterator.next());
     }
   }
 
@@ -135,25 +88,24 @@ public class Asserts {
    * should have trivial solutions (getGreatestSubtype, isEquivalentTo, etc)
    */
   public static void assertEquivalenceOperations(JSType a, JSType b) {
-    Assert.assertTrue(a.isEquivalentTo(b));
-    Assert.assertTrue(a.isEquivalentTo(a));
-    Assert.assertTrue(b.isEquivalentTo(b));
-    Assert.assertTrue(b.isEquivalentTo(a));
+    assertType(a).isStructurallyEqualTo(a);
+    assertType(b).isStructurallyEqualTo(a);
+    assertType(b).isStructurallyEqualTo(b);
 
-    Assert.assertTrue(a.isSubtype(b));
-    Assert.assertTrue(a.isSubtype(a));
-    Assert.assertTrue(b.isSubtype(b));
-    Assert.assertTrue(b.isSubtype(a));
+    Assert.assertTrue(a.isSubtypeOf(b));
+    Assert.assertTrue(a.isSubtypeOf(a));
+    Assert.assertTrue(b.isSubtypeOf(b));
+    Assert.assertTrue(b.isSubtypeOf(a));
 
-    assertTypeEquals(a, a.getGreatestSubtype(b));
-    assertTypeEquals(a, a.getGreatestSubtype(a));
-    assertTypeEquals(a, b.getGreatestSubtype(b));
-    assertTypeEquals(a, b.getGreatestSubtype(a));
+    assertType(a.getGreatestSubtype(b)).isStructurallyEqualTo(a);
+    assertType(a.getGreatestSubtype(a)).isStructurallyEqualTo(a);
+    assertType(b.getGreatestSubtype(b)).isStructurallyEqualTo(a);
+    assertType(b.getGreatestSubtype(a)).isStructurallyEqualTo(a);
 
-    assertTypeEquals(a, a.getLeastSupertype(b));
-    assertTypeEquals(a, a.getLeastSupertype(a));
-    assertTypeEquals(a, b.getLeastSupertype(b));
-    assertTypeEquals(a, b.getLeastSupertype(a));
+    assertType(a.getLeastSupertype(b)).isStructurallyEqualTo(a);
+    assertType(a.getLeastSupertype(a)).isStructurallyEqualTo(a);
+    assertType(b.getLeastSupertype(b)).isStructurallyEqualTo(a);
+    assertType(b.getLeastSupertype(a)).isStructurallyEqualTo(a);
 
     Assert.assertTrue(a.canCastTo(b));
     Assert.assertTrue(a.canCastTo(a));

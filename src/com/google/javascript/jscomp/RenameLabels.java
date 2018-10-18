@@ -169,7 +169,6 @@ final class RenameLabels implements CompilerPass {
         }
 
         String newName = getNameForId(currentDepth);
-        compiler.addToDebugLog("label renamed: ", name, " => ", newName);
       }
 
       return true;
@@ -248,7 +247,7 @@ final class RenameLabels implements CompilerPass {
         Node newChild = node.getLastChild();
         node.removeChild(newChild);
         parent.replaceChild(node, newChild);
-        if (newChild.isNormalBlock()) {
+        if (newChild.isBlock()) {
           NodeUtil.tryMergeBlock(newChild, false);
         }
         if (markChanges) {
@@ -281,7 +280,7 @@ final class RenameLabels implements CompilerPass {
   @Override
   public void process(Node externs, Node root) {
     // Do variable reference counting.
-    NodeTraversal.traverseEs6(compiler, root, new ProcessLabels(markChanges));
+    NodeTraversal.traverse(compiler, root, new ProcessLabels(markChanges));
   }
 
   private static class LabelInfo {

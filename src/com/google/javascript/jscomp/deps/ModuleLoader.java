@@ -29,9 +29,11 @@ import com.google.javascript.jscomp.DiagnosticType;
 import com.google.javascript.jscomp.ErrorHandler;
 import com.google.javascript.jscomp.JSError;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import javax.annotation.Nullable;
 
 /**
@@ -42,14 +44,18 @@ import javax.annotation.Nullable;
  */
 public final class ModuleLoader {
 
-  public static final DiagnosticType MODULE_CONFLICT = DiagnosticType.warning(
-      "JSC_MODULE_CONFLICT", "File has both goog.module and ES6 modules: {0}");
+  public static final DiagnosticType MODULE_CONFLICT =
+      DiagnosticType.warning(
+          "JSC_MODULE_CONFLICT",
+          "File cannot be a combination of goog.provide, goog.module, and/or ES6 module: {0}");
 
   /** According to the spec, the forward slash should be the delimiter on all platforms. */
   public static final String MODULE_SLASH = ModuleNames.MODULE_SLASH;
 
   /** The default module root, the current directory. */
   public static final String DEFAULT_FILENAME_PREFIX = "." + MODULE_SLASH;
+
+  public static final String JSC_BROWSER_BLACKLISTED_MARKER = "$jscomp$browser$blacklisted";
 
   public static final DiagnosticType LOAD_WARNING =
       DiagnosticType.error("JSC_JS_MODULE_LOAD_WARNING", "Failed to load module \"{0}\"");
@@ -58,7 +64,7 @@ public final class ModuleLoader {
       DiagnosticType.error(
           "JSC_INVALID_MODULE_PATH", "Invalid module path \"{0}\" for resolution mode \"{1}\"");
 
-  private final ErrorHandler errorHandler;
+  private ErrorHandler errorHandler;
 
   /** Root URIs to match module roots against. */
   private final ImmutableList<String> moduleRootPaths;
@@ -68,61 +74,59 @@ public final class ModuleLoader {
   /** Used to canonicalize paths before resolution. */
   private final PathResolver pathResolver;
 
+  private final PathEscaper pathEscaper;
+
   private final ModuleResolver moduleResolver;
 
   /**
    * Creates an instance of the module loader which can be used to locate ES6 and CommonJS modules.
    *
-   * @param inputs All inputs to the compilation process.
+   * @param moduleRoots path prefixes to strip from module paths
+   * @param inputs all inputs to the compilation process. Used to ensure that resolved paths
+   *     references an valid input.
+   * @param factory creates a module resolver, which determines how module identifiers are resolved
+   * @param pathResolver determines how to sanitize paths before resolving
+   * @param pathEscaper determines if / how paths should be escaped
    */
   public ModuleLoader(
       @Nullable ErrorHandler errorHandler,
       Iterable<String> moduleRoots,
       Iterable<? extends DependencyInfo> inputs,
+      ModuleResolverFactory factory,
       PathResolver pathResolver,
-      ResolutionMode resolutionMode,
-      Map<String, String> packageJsonMainEntries) {
+      PathEscaper pathEscaper) {
     checkNotNull(moduleRoots);
     checkNotNull(inputs);
     checkNotNull(pathResolver);
+    checkNotNull(pathEscaper);
     this.pathResolver = pathResolver;
+    this.pathEscaper = pathEscaper;
     this.errorHandler = errorHandler == null ? new NoopErrorHandler() : errorHandler;
-    this.moduleRootPaths = createRootPaths(moduleRoots, pathResolver);
+    this.moduleRootPaths = createRootPaths(moduleRoots, pathResolver, pathEscaper);
     this.modulePaths =
         resolvePaths(
-            Iterables.transform(Iterables.transform(inputs, UNWRAP_DEPENDENCY_INFO), pathResolver),
-            moduleRootPaths);
-
-    switch (resolutionMode) {
-      case BROWSER:
-        this.moduleResolver =
-            new BrowserModuleResolver(this.modulePaths, this.moduleRootPaths, this.errorHandler);
-        break;
-      case NODE:
-        this.moduleResolver =
-            new NodeModuleResolver(
-                this.modulePaths, this.moduleRootPaths, packageJsonMainEntries, this.errorHandler);
-        break;
-      default:
-        throw new RuntimeException("Unexpected resolution mode " + resolutionMode);
-    }
+            Iterables.transform(Iterables.transform(inputs, DependencyInfo::getName), pathResolver),
+            moduleRootPaths,
+            pathEscaper);
+    this.moduleResolver =
+        factory.create(this.modulePaths, this.moduleRootPaths, this.errorHandler, this.pathEscaper);
   }
 
   public ModuleLoader(
       @Nullable ErrorHandler errorHandler,
       Iterable<String> moduleRoots,
       Iterable<? extends DependencyInfo> inputs,
-      ResolutionMode resolutionMode) {
-    this(errorHandler, moduleRoots, inputs, PathResolver.RELATIVE, resolutionMode);
+      ModuleResolverFactory factory,
+      PathResolver pathResolver) {
+    this(errorHandler, moduleRoots, inputs, factory, pathResolver, PathEscaper.ESCAPE);
   }
 
   public ModuleLoader(
       @Nullable ErrorHandler errorHandler,
       Iterable<String> moduleRoots,
       Iterable<? extends DependencyInfo> inputs,
-      PathResolver pathResolver,
-      ResolutionMode resolutionMode) {
-    this(errorHandler, moduleRoots, inputs, pathResolver, resolutionMode, null);
+      ModuleResolverFactory factory) {
+    this(errorHandler, moduleRoots, inputs, factory, PathResolver.RELATIVE, PathEscaper.ESCAPE);
   }
 
   @VisibleForTesting
@@ -147,8 +151,16 @@ public final class ModuleLoader {
     }
 
     /**
+     * Determines if this path is the same as another path, ignoring any potential leading slashes
+     * on both.
+     */
+    public boolean equalsIgnoreLeadingSlash(ModulePath other) {
+      return other != null && toModuleName().equals(other.toModuleName());
+    }
+
+    /**
      * Turns a filename into a JS identifier that can be used in rewritten code.
-     * Removes leading ./, replaces / with $, removes trailing .js
+     * Removes leading /, replaces / with $, removes trailing .js
      * and replaces - with _.
      */
     public String toJSIdentifier() {
@@ -157,7 +169,7 @@ public final class ModuleLoader {
 
     /**
      * Turns a filename into a JS identifier that is used for moduleNames in
-     * rewritten code. Removes leading ./, replaces / with $, removes trailing .js
+     * rewritten code. Removes leading /, replaces / with $, removes trailing .js
      * and replaces - with _. All moduleNames get a "module$" prefix.
      */
     public String toModuleName() {
@@ -201,25 +213,13 @@ public final class ModuleLoader {
      * <p>Primarily used for per-file ES6 module transpilation
      */
     public ModulePath resolveModuleAsPath(String moduleAddress) {
-      if (!moduleAddress.endsWith(".js")) {
-        moduleAddress += ".js";
-      }
-      String path = ModuleNames.escapePath(moduleAddress);
-      if (isRelativeIdentifier(moduleAddress)) {
-        String ourPath = this.path;
-        int lastIndex = ourPath.lastIndexOf(MODULE_SLASH);
-        path =
-            ModuleNames.canonicalizePath(
-                ourPath.substring(0, lastIndex + MODULE_SLASH.length()) + path);
-      }
-      return new ModulePath(normalize(path, moduleRootPaths));
+      return new ModulePath(moduleResolver.resolveModuleAsPath(this.path, moduleAddress));
     }
   }
 
   /** Resolves a path into a {@link ModulePath}. */
   public ModulePath resolve(String path) {
-    return new ModulePath(
-        normalize(ModuleNames.escapePath(pathResolver.apply(path)), moduleRootPaths));
+    return new ModulePath(normalize(pathEscaper.escape(pathResolver.apply(path)), moduleRootPaths));
   }
 
   /** Whether this is relative to the current file, or a top-level identifier. */
@@ -243,20 +243,23 @@ public final class ModuleLoader {
   }
 
   /**
-   * @param roots List of module root paths. This path prefix will be removed from module paths when
-   *     resolved.
+   * Normalizes the given root paths, which are path prefixes to be removed from a module path when
+   * resolved.
    */
   private static ImmutableList<String> createRootPaths(
-      Iterable<String> roots, PathResolver resolver) {
-    ImmutableList.Builder<String> builder = ImmutableList.builder();
+      Iterable<String> roots, PathResolver resolver, PathEscaper escaper) {
+    // Sort longest length to shortest so that paths are applied most specific to least.
+    Set<String> builder =
+        new TreeSet<>(
+            Comparator.comparingInt(String::length).thenComparing(String::compareTo).reversed());
     for (String root : roots) {
-      String rootModuleName = ModuleNames.escapePath(resolver.apply(root));
+      String rootModuleName = escaper.escape(resolver.apply(root));
       if (isAmbiguousIdentifier(rootModuleName)) {
         rootModuleName = MODULE_SLASH + rootModuleName;
       }
       builder.add(rootModuleName);
     }
-    return builder.build();
+    return ImmutableList.copyOf(builder);
   }
 
   /**
@@ -266,11 +269,11 @@ public final class ModuleLoader {
    * @return List of normalized modules which always have a leading slash
    */
   private static ImmutableSet<String> resolvePaths(
-      Iterable<String> modulePaths, Iterable<String> roots) {
+      Iterable<String> modulePaths, Iterable<String> roots, PathEscaper escaper) {
     ImmutableSet.Builder<String> resolved = ImmutableSet.builder();
     Set<String> knownPaths = new HashSet<>();
     for (String name : modulePaths) {
-      String canonicalizedPath = ModuleNames.escapePath(name);
+      String canonicalizedPath = escaper.escape(name);
       if (!knownPaths.add(normalize(canonicalizedPath, roots))) {
         // Having root paths "a" and "b" and source files "a/f.js" and "b/f.js" is ambiguous.
         throw new IllegalArgumentException(
@@ -285,7 +288,7 @@ public final class ModuleLoader {
   }
 
   /** Normalizes the name and resolves it against the module roots. */
-  private static String normalize(String path, Iterable<String> moduleRootPaths) {
+  static String normalize(String path, Iterable<String> moduleRootPaths) {
     String normalizedPath = path;
     if (isAmbiguousIdentifier(normalizedPath)) {
       normalizedPath = MODULE_SLASH + normalizedPath;
@@ -306,6 +309,46 @@ public final class ModuleLoader {
     return path;
   }
 
+  public void setErrorHandler(ErrorHandler errorHandler) {
+    if (errorHandler == null) {
+      this.errorHandler = new NoopErrorHandler();
+    } else {
+      this.errorHandler = errorHandler;
+    }
+    this.moduleResolver.setErrorHandler(this.errorHandler);
+  }
+
+  public ErrorHandler getErrorHandler() {
+    return this.errorHandler;
+  }
+
+  /** Indicates whether to escape characters in paths. */
+  public enum PathEscaper {
+    /**
+     * Escapes characters in paths according to {@link ModuleNames#escapePath(String)} and then
+     * canonicalizes it.
+     */
+    ESCAPE {
+      @Override
+      public String escape(String path) {
+        return ModuleNames.escapePath(path);
+      }
+    },
+
+    /**
+     * Does not escaped characters in paths, but does canonicalize it according to {@link
+     * ModuleNames#canonicalizePath(String)}.
+     */
+    CANONICALIZE_ONLY {
+      @Override
+      public String escape(String path) {
+        return ModuleNames.canonicalizePath(path);
+      }
+    };
+
+    public abstract String escape(String path);
+  }
+
   /** An enum indicating whether to absolutize paths. */
   public enum PathResolver implements Function<String, String> {
     RELATIVE {
@@ -324,23 +367,25 @@ public final class ModuleLoader {
     };
   }
 
-  private static final Function<DependencyInfo, String> UNWRAP_DEPENDENCY_INFO =
-      new Function<DependencyInfo, String>() {
-        @Override
-        public String apply(DependencyInfo info) {
-          return info.getName();
-        }
-      };
+  /** An enum used to specify what algorithm to use to locate non path-based modules */
+  @FunctionalInterface
+  public interface ModuleResolverFactory {
+    ModuleResolver create(
+        ImmutableSet<String> modulePaths,
+        ImmutableList<String> moduleRootPaths,
+        ErrorHandler errorHandler,
+        PathEscaper pathEscaper);
+  }
 
   /** A trivial module loader with no roots. */
   public static final ModuleLoader EMPTY =
       new ModuleLoader(
-          null,
-          ImmutableList.<String>of(),
-          ImmutableList.<DependencyInfo>of(),
-          ResolutionMode.BROWSER);
+          /** errorReporter= */ null,
+          ImmutableList.of(),
+          ImmutableList.of(),
+          BrowserModuleResolver.FACTORY);
 
-  /** An enum used to specify what algorithm to use to locate non path-based modules */
+  /** Standard path base resolution algorithms that are accepted as a command line flag. */
   public enum ResolutionMode {
     /**
      * Mimics the behavior of MS Edge.
@@ -353,14 +398,26 @@ public final class ModuleLoader {
     BROWSER,
 
     /**
+     * A limited superset of BROWSER that transforms some path prefixes.
+     *
+     * <p>For example one could configure this so that "@root/" is replaced with
+     * "/my/path/to/project/" within import paths.</p>
+     */
+    BROWSER_WITH_TRANSFORMED_PREFIXES,
+
+    /**
      * Uses the node module resolution algorithm.
      *
-     * Modules which do not begin with a "." or "/" character are looked up from the appropriate
-     * node_modules folder.
-     * Includes the ability to require directories and JSON files.
-     * Exact match, then ".js", then ".json" file extensions are searched.
+     * <p>Modules which do not begin with a "." or "/" character are looked up from the appropriate
+     * node_modules folder. Includes the ability to require directories and JSON files. Exact match,
+     * then ".js", then ".json" file extensions are searched.
      */
-    NODE
+    NODE,
+
+    /**
+     * Uses a lookup map provided by webpack to locate modules from a numeric id used during import
+     */
+    WEBPACK,
   }
 
   private static final class NoopErrorHandler implements ErrorHandler {

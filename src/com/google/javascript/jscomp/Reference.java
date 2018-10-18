@@ -24,7 +24,10 @@ import com.google.javascript.rhino.StaticSourceFile;
 import com.google.javascript.rhino.Token;
 import java.io.Serializable;
 
-/** Represents a single declaration or reference to a variable. */
+/**
+ * Represents a single declaration or reference to a variable. Note that references can only be used
+ * with untyped scopes and traversals.
+ */
 public final class Reference implements StaticRef, Serializable {
 
   private static final ImmutableSet<Token> DECLARATION_PARENTS =
@@ -35,8 +38,7 @@ public final class Reference implements StaticRef, Serializable {
           Token.PARAM_LIST,
           Token.FUNCTION,
           Token.CLASS,
-          Token.CATCH,
-          Token.REST);
+          Token.CATCH);
 
   private final Node nameNode;
   private final BasicBlock basicBlock;
@@ -45,6 +47,13 @@ public final class Reference implements StaticRef, Serializable {
 
   Reference(Node nameNode, NodeTraversal t, BasicBlock basicBlock) {
     this(nameNode, basicBlock, t.getScope(), t.getInput().getInputId());
+  }
+
+  private Reference(Node nameNode, BasicBlock basicBlock, Scope scope, InputId inputId) {
+    this.nameNode = nameNode;
+    this.basicBlock = basicBlock;
+    this.scope = scope;
+    this.inputId = inputId;
   }
 
   @Override
@@ -60,13 +69,6 @@ public final class Reference implements StaticRef, Serializable {
   @VisibleForTesting
   static Reference createRefForTest(CompilerInput input) {
     return new Reference(new Node(Token.NAME), null, null, input.getInputId());
-  }
-
-  private Reference(Node nameNode, BasicBlock basicBlock, Scope scope, InputId inputId) {
-    this.nameNode = nameNode;
-    this.basicBlock = basicBlock;
-    this.scope = scope;
-    this.inputId = inputId;
   }
 
   /** Makes a copy of the current reference using a new Scope instance. */
@@ -118,6 +120,7 @@ public final class Reference implements StaticRef, Serializable {
     // Special cases for destructuring patterns.
     if (parent.isDestructuringLhs()
         || parent.isDestructuringPattern()
+        || parent.isRest()
         || (parent.isStringKey() && parent.getParent().isObjectPattern())
         || (parent.isComputedProp()
             && parent.getParent().isObjectPattern()
@@ -163,7 +166,7 @@ public final class Reference implements StaticRef, Serializable {
     // VAR and LET are the only types of variable declarations that may not initialize
     // their variables. Catch blocks, named functions, and parameters all do.
     return (isDeclaration() && !getParent().isVar() && !getParent().isLet())
-        || nameNode.getFirstChild() != null;
+        || nameNode.hasChildren();
   }
 
   /**
@@ -207,21 +210,22 @@ public final class Reference implements StaticRef, Serializable {
       case VAR:
       case LET:
       case CONST:
-        return (nameNode.getFirstChild() != null || isLhsOfEnhancedForExpression(nameNode));
+        return (nameNode.hasChildren() || isLhsOfEnhancedForExpression(nameNode));
       case DEFAULT_VALUE:
         return parent.getFirstChild() == nameNode;
       case INC:
       case DEC:
       case CATCH:
       case REST:
+      case PARAM_LIST:
         return true;
       case FOR:
       case FOR_IN:
       case FOR_OF:
         return NodeUtil.isEnhancedFor(parent) && parent.getFirstChild() == nameNode;
-      case OBJECT_PATTERN:
       case ARRAY_PATTERN:
       case STRING_KEY:
+      case COMPUTED_PROP:
         return NodeUtil.isLhsByDestructuring(nameNode);
       default:
         return (NodeUtil.isAssignmentOp(parent) && parent.getFirstChild() == nameNode);

@@ -50,9 +50,13 @@ abstract class ValueType extends JSType {
   }
 
   @Override
-  final JSType resolveInternal(ErrorReporter t, StaticTypedScope<JSType> scope) {
+  final JSType resolveInternal(ErrorReporter reporter) {
     return this;
   }
+
+  // Subclasses must override and return non-null.
+  @Override
+  public abstract String getDisplayName();
 
   @Override
   public boolean hasDisplayName() {
@@ -61,5 +65,20 @@ abstract class ValueType extends JSType {
 
   @Override <T> T visit(RelationshipVisitor<T> visitor, JSType that) {
     return visitor.caseValueType(this, that);
+  }
+
+  @Override
+  public HasPropertyKind getPropertyKind(String propertyName, boolean autobox) {
+    if (autobox && isBoxableScalar()) {
+      return autoboxesTo().getPropertyKind(propertyName, autobox);
+    } else {
+      return super.getPropertyKind(propertyName, autobox);
+    }
+  }
+
+  @Override
+  final int recursionUnsafeHashCode() {
+    // Subclasses of this type are unique within a JSTypeRegisty.
+    return System.identityHashCode(this);
   }
 }

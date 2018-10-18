@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-'require es6/symbol';
+'require es6/conformance';
 'require es6/util/makeiterator';
 'require util/defineproperty';
 'require util/owns';
@@ -46,9 +46,16 @@ $jscomp.polyfill('WeakMap',
       return false;
     }
   }
-  if (isConformant()) return NativeWeakMap;
+  if ($jscomp.USE_PROXY_FOR_ES6_CONFORMANCE_CHECKS) {
+    if (NativeWeakMap && $jscomp.ES6_CONFORMANCE) return NativeWeakMap;
+  } else {
+    if (isConformant()) return NativeWeakMap;
+  }
 
-  var prop = '$jscomp_hidden_' + Math.random().toString().substring(2);
+  var prop = '$jscomp_hidden_' + Math.random();
+
+  /** @constructor */
+  function WeakMapMembership() {}
 
   /**
    * Inserts the hidden property into the target.
@@ -56,7 +63,7 @@ $jscomp.polyfill('WeakMap',
    */
   function insert(target) {
     if (!$jscomp.owns(target, prop)) {
-      var obj = {};
+      var obj = new WeakMapMembership();
       // TODO(sdh): This property will be enumerated in IE8.  If this becomes
       // a problem, we could avoid it by copying an infrequently-used non-enum
       // method (like toLocaleString) onto the object itself and encoding the
@@ -75,8 +82,12 @@ $jscomp.polyfill('WeakMap',
     var prev = Object[name];
     if (prev) {
       Object[name] = function(target) {
-        insert(target);
-        return prev(target);
+        if (target instanceof WeakMapMembership) {
+          return target;
+        } else {
+          insert(target);
+          return prev(target);
+        }
       };
     }
   }
@@ -111,8 +122,6 @@ $jscomp.polyfill('WeakMap',
     this.id_ = (index += (Math.random() + 1)).toString();
 
     if (opt_iterable) {
-      $jscomp.initSymbol();
-      $jscomp.initSymbolIterator();
       var iter = $jscomp.makeIterator(opt_iterable);
       var entry;
       while (!(entry = iter.next()).done) {

@@ -18,14 +18,15 @@ package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.javascript.jscomp.newtypes.JSTypeCreatorFromJSDoc;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-/**
- * Test case for {@link GatherExternProperties}.
- */
-public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
+/** Test case for {@link GatherExternProperties}. */
+@RunWith(JUnit4.class)
+public final class GatherExternPropertiesTest extends CompilerTestCase {
 
-  private static final String EXTERNS = LINE_JOINER.join(
+  private static final String EXTERNS = lines(
       "/**",
       " * @constructor",
       " * @param {*=} opt_value",
@@ -44,10 +45,6 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
       " */",
       "function String(arg) {}",
       "/**",
-      " * @record",
-      " * @template VALUE",
-      " */",
-      "/**",
       " * @template T",
       " * @constructor ",
       " * @param {...*} var_args",
@@ -59,19 +56,12 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
     super(EXTERNS);
   }
 
-  @Override void checkMinimalExterns(Iterable<SourceFile> externs) {}
-
-  @Override
-  protected void setUp() throws Exception {
-    super.setUp();
-    this.mode = TypeInferenceMode.BOTH;
-  }
-
   @Override
   protected CompilerPass getProcessor(Compiler compiler) {
     return new GatherExternProperties(compiler);
   }
 
+  @Test
   public void testGatherExternProperties() {
     // Properties.
     assertExternProperties(
@@ -96,6 +86,25 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "foo['bar'] = {};");
   }
 
+  @Test
+  public void testGatherExternTypedefProperties() {
+    String typedefExtern =
+        lines(
+            "/**",
+            " * @typedef {{",
+            " *    typedefPropA: { 'subTypedefProp': string },",  // quotes should be stripped
+            " *  }}",
+            " */",
+            "var TypedefExtern;",
+            "/**",
+            " * @param {!{ paramProp1, paramProp2: number }} p",
+            " */",
+            "function externFunction(p) {}");
+    assertExternProperties(
+        typedefExtern, "typedefPropA", "subTypedefProp", "paramProp1", "paramProp2");
+  }
+
+  @Test
   public void testGatherExternPropertiesIncludingRecordTypes() {
     // Properties.
     assertExternProperties(
@@ -136,7 +145,7 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "bar", "baz");
 
     // Record types in function parameters and return types.
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/** @type {function(string, {bar: string}): {baz: string}} */",
         "var foo;"),
         "bar", "baz");
@@ -147,7 +156,7 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "bar", "baz");
 
     // Record types in implemented interfaces.
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/**",
         " * @interface",
         " * @template T",
@@ -161,7 +170,7 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "bar", "baz");
 
     // Record types in extended class.
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/**",
         " * @constructor",
         " * @template T",
@@ -177,7 +186,7 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
     // Record types in enum.
     // Note that "baz" exists only in the type of the enum,
     // but it is still picked up.
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/** @enum {{bar: string, baz: (string|undefined)}} */",
         "var FooEnum = {VALUE: {bar: ''}};"),
         "VALUE", "bar", "baz");
@@ -188,14 +197,14 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "bar", "baz", "foobar");
 
     // Recursive @record types.
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/** @record */",
         "function D1() { /** @type {D2} */ this.a; }",
         "",
         "/** @record */",
         "function D2() { /** @type {D1} */ this.b; }"),
         "a", "b");
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/** @record */",
         "function D1() { /** @type {function(D2)} */ this.a; }",
         "",
@@ -204,15 +213,14 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "a", "b");
 
     // Recursive types
-    ignoreWarnings(JSTypeCreatorFromJSDoc.CIRCULAR_TYPEDEF_ENUM);
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/** @typedef {{a: D2}} */",
         "var D1;",
         "",
         "/** @typedef {{b: D1}} */",
         "var D2;"),
         "a", "b");
-    assertExternProperties(LINE_JOINER.join(
+    assertExternProperties(lines(
         "/** @typedef {{a: function(D2)}} */",
         "var D1;",
         "",
@@ -229,10 +237,10 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         expectExterns());
   }
 
-  public void testExternClassNoTypeCheck() {
-    this.mode = TypeInferenceMode.NEITHER;
+  @Test
+  public void testExternClass() {
     assertExternProperties(
-        LINE_JOINER.join(
+        lines(
             "class Foo {",
             "  bar() {",
             "    return this;",
@@ -243,50 +251,19 @@ public final class GatherExternPropertiesTest extends TypeICompilerTestCase {
         "bar");
   }
 
-  public void testExternClassWithTypeCheck() {
-    allowExternsChanges();
-    enableTranspile();
-    assertExternProperties(
-        LINE_JOINER.join(
-            "class Foo {",
-            "  bar() {",
-            "    return this;",
-            "  }",
-            "}",
-            "var baz = new Foo();",
-            "var bar = baz.bar;"),
-        "prototype", "bar");
-  }
-
+  @Test
   public void testExternWithMethod() {
-    this.mode = TypeInferenceMode.NEITHER;
     assertExternProperties(
-        LINE_JOINER.join(
+        lines(
             "foo = {",
             "  method() {}",
             "}"),
         "method");
   }
 
-  public void testExternAsyncFunction() {
-    this.mode = TypeInferenceMode.NEITHER;
-    assertExternProperties(
-        LINE_JOINER.join(
-            "function *gen() {",
-            " var x = 0;",
-            " yield x;",
-            "}",
-            "var foo = gen();",
-            "gen.next().value;"),
-        "next", "value");
-  }
-
   private static Postcondition expectExterns(final String... properties) {
-    return new Postcondition() {
-      @Override void verify(Compiler compiler) {
+    return compiler ->
         assertThat(compiler.getExternProperties()).containsExactly((Object[]) properties);
-      }
-    };
   }
 
   private void assertExternProperties(String externs, String... properties) {

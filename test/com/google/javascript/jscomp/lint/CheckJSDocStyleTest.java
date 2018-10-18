@@ -19,7 +19,6 @@ import static com.google.javascript.jscomp.lint.CheckJSDocStyle.CLASS_DISALLOWED
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.CONSTRUCTOR_DISALLOWED_JSDOC;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.EXTERNS_FILES_SHOULD_BE_ANNOTATED;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.INCORRECT_PARAM_NAME;
-import static com.google.javascript.jscomp.lint.CheckJSDocStyle.INVALID_SUPPRESS;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MISSING_JSDOC;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MISSING_PARAMETER_JSDOC;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MISSING_RETURN_JSDOC;
@@ -27,6 +26,7 @@ import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MIXED_PARAM_JSDO
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MUST_BE_PRIVATE;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.MUST_HAVE_TRAILING_UNDERSCORE;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.OPTIONAL_PARAM_NOT_MARKED_OPTIONAL;
+import static com.google.javascript.jscomp.lint.CheckJSDocStyle.PREFER_BACKTICKS_TO_AT_SIGN_CODE;
 import static com.google.javascript.jscomp.lint.CheckJSDocStyle.WRONG_NUMBER_OF_PARAMS;
 
 import com.google.javascript.jscomp.CheckLevel;
@@ -38,10 +38,14 @@ import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.CompilerTestCase;
 import com.google.javascript.jscomp.GoogleCodingConvention;
+import com.google.javascript.jscomp.parsing.Config;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-/**
- * Test case for {@link CheckJSDocStyle}.
- */
+/** Test case for {@link CheckJSDocStyle}. */
+@RunWith(JUnit4.class)
 public final class CheckJSDocStyleTest extends CompilerTestCase {
   public CheckJSDocStyleTest() {
     super("/** @fileoverview\n * @externs\n */");
@@ -50,7 +54,8 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   private CodingConvention codingConvention;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     codingConvention = new GoogleCodingConvention();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_NEXT);
@@ -64,6 +69,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
   @Override
   protected CompilerOptions getOptions(CompilerOptions options) {
     super.getOptions(options);
+    options.setParseJsDocDocumentation(Config.JsDocParsing.INCLUDE_DESCRIPTIONS_NO_WHITESPACE);
     options.setWarningLevel(CheckJSDocStyle.ALL_DIAGNOSTICS, CheckLevel.WARNING);
     return options;
   }
@@ -73,67 +79,26 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     return codingConvention;
   }
 
-  public void testInvalidSuppress() {
-    testSame("/** @suppress {missingRequire} */ var x = new y.Z();");
-    testSame("/** @suppress {missingRequire} */ function f() { var x = new y.Z(); }");
-    testSame("/** @suppress {missingRequire} */ var f = function() { var x = new y.Z(); }");
-    testSame(
-        LINE_JOINER.join(
-            "var obj = {",
-            "  /** @suppress {uselessCode} */",
-            "  f: function() {},",
-            "}"));
-    testSame(
-        LINE_JOINER.join(
-            "var obj = {",
-            "  /** @suppress {uselessCode} */",
-            "  f() {},",
-            "}"));
-    testSame(
-        LINE_JOINER.join(
-            "class Example {",
-            "  /** @suppress {uselessCode} */",
-            "  f() {}",
-            "}"));
-    testSame(
-        LINE_JOINER.join(
-            "class Example {",
-            "  /** @suppress {uselessCode} */",
-            "  static f() {}",
-            "}"));
-    testSame(
-        LINE_JOINER.join(
-            "class Example {",
-            "  /** @suppress {uselessCode} */",
-            "  get f() {}",
-            "}"));
-    testSame(
-        LINE_JOINER.join(
-            "class Example {",
-            "  /**",
-            "   * @param {string} val",
-            "   * @suppress {uselessCode}",
-            "   */",
-            "  set f(val) {}",
-            "}"));
-
-    testWarning("/** @suppress {uselessCode} */ goog.require('unused.Class');", INVALID_SUPPRESS);
-    testSame("/** @suppress {extraRequire} */ goog.require('unused.Class');");
-    testSame("/** @const @suppress {duplicate} */ var google = {};");
-    testSame("/** @suppress {const} */ var google = {};");
+  @Test
+  public void testValidSuppress_onDeclaration() {
+    testSame("/** @const */ var global = this;");
+    testSame("/** @const */ goog.global = this;");
   }
 
+  @Test
   public void testValidSuppress_withES6Modules01() {
     testSame("export /** @suppress {missingRequire} */ var x = new y.Z();");
   }
 
+  @Test
   public void testValidSuppress_withES6Modules03() {
     testSame("export /** @const @suppress {duplicate} */ var google = {};");
   }
 
+  @Test
   public void testExtraneousClassAnnotations() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @constructor",
             " */",
@@ -141,7 +106,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         CLASS_DISALLOWED_JSDOC);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @constructor",
             " */",
@@ -151,7 +116,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     // TODO(tbreisacher): Warn for @extends too. We need to distinguish between cases like this
     // which are totally redundant...
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @extends {Y}",
             " */",
@@ -159,21 +124,21 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
 
     // ... and ones like this which are not.
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @extends {Y<number>}",
             " */",
             "class X extends Y {};"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @implements {Z}",
             " */",
             "class X extends Y {};"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @interface",
             " * @extends {Y}",
@@ -181,7 +146,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "class X extends Y {};"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @record",
             " * @extends {Y}",
@@ -189,9 +154,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "class X extends Y {};"));
   }
 
+  @Test
   public void testInvalidExtraneousClassAnnotations_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @constructor",
@@ -200,13 +166,15 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         CLASS_DISALLOWED_JSDOC);
   }
 
+  @Test
   public void testValidExtraneousClassAnnotations_withES6Modules() {
     testSame("export /** @extends {Y} */ class X extends Y {};");
   }
 
+  @Test
   public void testNestedArrowFunctions() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {Object} a",
             " * @return {function(Object): boolean}",
@@ -214,9 +182,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "var haskellStyleEquals = a => b => a == b;"));
   }
 
+  @Test
   public void testNestedArrowFunctions_withES6Modules() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {Object} a",
@@ -225,6 +194,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "var haskellStyleEquals = a => b => a == b;"));
   }
 
+  @Test
   public void testGetterSetterMissingJsDoc() {
     testWarning("class Foo { get twentyone() { return 21; } }", MISSING_JSDOC);
     testWarning("class Foo { set someString(s) { this.someString_ = s; } }", MISSING_JSDOC);
@@ -233,10 +203,12 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("class Foo { /** @param {string} s */ set someString(s) { this.someString_ = s; } }");
   }
 
+  @Test
   public void testGetterSetter_withES6Modules() {
     testSame("export class Foo { /** @return {number} */ get twentyone() { return 21; } }");
   }
 
+  @Test
   public void testMissingJsDoc() {
     testWarning("function f() {}", MISSING_JSDOC);
     testWarning("var f = function() {}", MISSING_JSDOC);
@@ -268,26 +240,32 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("Polymer({ /** @return {null} */ method: function() {} });");
   }
 
+  @Test
   public void testMissingJsDoc_withES6Modules01() {
     testWarning("export function f() {}", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_withES6Modules02() {
     testWarning("export var f = function() {}", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_withES6Modules03() {
     testWarning("export let f = function() {}", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_withES6Modules04() {
     testWarning("export const f = function() {}", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_withES6Modules09() {
     testWarning("export var f = async function() {};", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_noWarningIfInlineJsDocIsPresent() {
     testSame("function /** string */ f() {}");
     testSame("function f(/** string */ x) {}");
@@ -300,10 +278,12 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("var Foo = class { bar(/** string */ x) {} };");
   }
 
+  @Test
   public void testMissingJsDoc_noWarningIfInlineJsDocIsPresent_withES6Modules() {
     testSame("export function /** string */ f() {}");
   }
 
+  @Test
   public void testMissingJsDoc_noWarningIfNotTopLevel() {
     testSame(inIIFE("function f() {}"));
     testSame(inIIFE("var f = function() {}"));
@@ -315,14 +295,14 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
 
     testSame("myArray.forEach(function(elem) { alert(elem); });");
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "Polymer({",
         "  is: 'example-elem',",
         "  /** @return {null} */",
         "  someMethod: function() {},",
         "});"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "Polymer({",
         "  is: 'example-elem',",
         "  /** @return {null} */",
@@ -330,14 +310,16 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         "});"));
   }
 
+  @Test
   public void testMissingJsDoc_noWarningIfNotTopLevelAndNoParams() {
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "describe('a karma test', function() {",
         "  /** @ngInject */",
         "  var helperFunction = function($compile, $rootScope) {};",
         "})"));
   }
 
+  @Test
   public void testMissingJsDoc_noWarningOnTestFunctions() {
     testSame("function testSomeFunctionality() {}");
     testSame("var testSomeFunctionality = function() {};");
@@ -351,52 +333,64 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("var tearDown = function() {};");
   }
 
+  @Test
   public void testMissingJsDoc_noWarningOnTestFunctions_withES6Modules() {
     testSame("export function testSomeFunctionality() {}");
   }
 
+  @Test
   public void testMissingJsDoc_noWarningOnEmptyConstructor() {
     testSame("class Foo { constructor() {} }");
   }
 
+  @Test
   public void testMissingJsDoc_noWarningOnEmptyConstructor_withES6Modules() {
     testSame("export class Foo { constructor() {} }");
   }
 
+  @Test
   public void testMissingJsDoc_googModule() {
     testWarning("goog.module('a.b.c'); function f() {}", MISSING_JSDOC);
     testWarning("goog.module('a.b.c'); var f = function() {};", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module01() {
     testWarning("export default abc; function f() {}", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module02() {
     testWarning("export default abc; var f = function() {};", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module03() {
     testWarning("export function f() {};", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module04() {
     testWarning("export default function () {}", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module05() {
     testWarning("export default (foo) => { alert(foo); }", MISSING_JSDOC);
   }
 
+  @Test
   public void testMissingJsDoc_googModule_noWarning() {
     testSame("goog.module('a.b.c'); /** @type {function()} */ function f() {}");
     testSame("goog.module('a.b.c'); /** @type {function()} */ var f = function() {};");
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module_noWarning01() {
     testSame("export default abc; /** @type {function()} */ function f() {}");
   }
 
+  @Test
   public void testMissingJsDoc_ES6Module_noWarning02() {
     testSame("export default abc; /** @type {function()} */ var f = function() {};");
   }
@@ -405,25 +399,26 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     return "(function() {\n" + js + "\n})()";
   }
 
+  @Test
   public void testMissingParam_noWarning() {
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "/**",
         " * @param {string} x",
         " * @param {string} y",
         " */",
         "function f(x, y) {}"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "/** @override */",
         "Foo.bar = function(x, y) {}"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "/**",
         " * @param {string=} x",
         " */",
         "function f(x = 1) {}"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "/**",
         " * @param {number=} x",
         " * @param {number=} y",
@@ -431,18 +426,18 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         " */",
         "function f(x = 1, y = 2, z = 3) {}"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "/**",
         " * @param {...string} args",
         " */",
         "function f(...args) {}"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "(function() {",
         "  myArray.forEach(function(elem) { alert(elem); });",
         "})();"));
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "(function() {",
         "  myArray.forEach(elem => alert(elem));",
         "})();"));
@@ -459,13 +454,15 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("class Foo { /** @export */ method(/** string */ inlineArg) {} }");
   }
 
+  @Test
   public void testMissingParam_noWarning_withES6Modules() {
     testSame("export class Foo { /** @export */ method(/** string */ inlineArg) {} }");
   }
 
+  @Test
   public void testMissingParam() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} x",
             // No @param for y.
@@ -474,7 +471,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} x",
             " */",
@@ -482,7 +479,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} x",
             // No @param for y.
@@ -499,9 +496,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testWarning(inIIFE("function /** string */ f(x) {}"), MISSING_PARAMETER_JSDOC);
   }
 
+  @Test
   public void testMissingParam_withES6Modules01() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {string} x",
@@ -511,19 +509,22 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
   }
 
+  @Test
   public void testMissingParam_withES6Modules02() {
     testWarning(
         "export /** @param {string} x */ function f(x = 1) {}",
         OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
   }
 
+  @Test
   public void testMissingParam_withES6Modules03() {
     testWarning("export function f(/** string */ x, y) {}", MISSING_PARAMETER_JSDOC);
   }
 
+  @Test
   public void testMissingParamWithDestructuringPattern() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} namedParam",
             " * @return {void}",
@@ -533,7 +534,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} namedParam",
             " * @return {void}",
@@ -543,7 +544,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} namedParam",
             " * @return {void}",
@@ -553,7 +554,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} namedParam",
             " * @return {void}",
@@ -563,7 +564,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {{",
             " *   a: (string|undefined),",
@@ -576,7 +577,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
 
     // Same as above except there's an '=' to indicate that it's optional.
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {{",
             " *   a: (string|undefined),",
@@ -587,9 +588,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "function create({a = 'hello', b = 8, c = false} = {}) {}"));
   }
 
+  @Test
   public void testInvalidMissingParamWithDestructuringPattern_withES6Modules01() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {string} namedParam",
@@ -600,9 +602,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
   }
 
+  @Test
   public void testInvalidMissingParamWithDestructuringPattern_withES6Modules02() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {{",
@@ -615,9 +618,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
   }
 
+  @Test
   public void testValidMissingParamWithDestructuringPattern_withES6Modules() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {{",
@@ -629,9 +633,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "function create({a = 'hello', b = 8, c = false} = {}) {}"));
   }
 
+  @Test
   public void testMissingParamWithDestructuringPatternWithDefault() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} namedParam",
             " * @return {void}",
@@ -641,7 +646,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {string} namedParam",
             " * @return {void}",
@@ -651,9 +656,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
   }
 
+  @Test
   public void testMissingParamWithDestructuringPatternWithDefault_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {string} namedParam",
@@ -664,18 +670,20 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         WRONG_NUMBER_OF_PARAMS);
   }
 
+  @Test
   public void testParamWithNoTypeInfo() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param x A param with no type information.",
             " */",
             "function f(x) { }"));
   }
 
+  @Test
   public void testParamWithNoTypeInfo_withES6Modules() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param x A param with no type information.",
@@ -683,10 +691,11 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "function f(x) { }"));
   }
 
+  @Test
   public void testMissingPrivate_noWarningWithClosureConvention() {
     codingConvention = new ClosureCodingConvention();
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @return {number}",
             " * @private",
@@ -694,21 +703,22 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "X.prototype.foo = function() { return 0; }"));
   }
 
+  @Test
   public void testMissingPrivate() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/** @return {number} */",
             "X.prototype.foo_ = function() { return 0; }"),
         MUST_BE_PRIVATE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/** @type {?number} */",
             "X.prototype.foo_ = null;"),
         MUST_BE_PRIVATE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @return {number}",
             " * @private",
@@ -717,7 +727,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_HAVE_TRAILING_UNDERSCORE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @type {number}",
             " * @private",
@@ -726,7 +736,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_HAVE_TRAILING_UNDERSCORE);
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @return {number}",
             " * @private",
@@ -734,7 +744,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "X.prototype.foo_ = function() { return 0; }"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @type {number}",
             " * @private",
@@ -742,14 +752,15 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
             "X.prototype.foo_ = 0;"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/** @type {number} */",
             "X.prototype['@some_special_property'] = 0;"));
   }
 
+  @Test
   public void testMissingPrivate_class() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "class Example {",
             "  /** @return {number} */",
             "  foo_() { return 0; }",
@@ -757,7 +768,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_BE_PRIVATE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "class Example {",
             "  /** @return {number} */",
             "  get foo_() { return 0; }",
@@ -765,7 +776,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_BE_PRIVATE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "class Example {",
             "  /** @param {number} val */",
             "  set foo_(val) {}",
@@ -773,7 +784,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_BE_PRIVATE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "class Example {",
             "  /**",
             "   * @return {number}",
@@ -784,7 +795,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_HAVE_TRAILING_UNDERSCORE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "class Example {",
             "  /**",
             "   * @return {number}",
@@ -795,7 +806,7 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_HAVE_TRAILING_UNDERSCORE);
 
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "class Example {",
             "  /**",
             "   * @param {number} val",
@@ -806,15 +817,17 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_HAVE_TRAILING_UNDERSCORE);
   }
 
+  @Test
   public void testMissingPrivate_class_withES6Modules01() {
     testWarning(
         "export class Example { /** @return {number} */ foo_() { return 0; } }",
         MUST_BE_PRIVATE);
   }
 
+  @Test
   public void testMissingPrivate_class_withES6Modules02() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export class Example {",
             "  /**",
             "   * @return {number}",
@@ -825,55 +838,61 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MUST_HAVE_TRAILING_UNDERSCORE);
   }
 
+  @Test
   public void testMissingPrivate_dontWarnOnObjectLiteral() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "var obj = {",
             "  /** @return {number} */",
             "  foo_() { return 0; }",
             "}"));
   }
 
+  @Test
   public void testMissingPrivate_dontWarnOnObjectLiteral_withES6Modules() {
     testSame("export var obj = { /** @return {number} */ foo_() { return 0; } }");
   }
 
+  @Test
   public void testOptionalArgs() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {number=} n",
             " */",
             "function f(n) {}"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {number} opt_n",
             " */",
             "function f(opt_n) {}"),
         OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
 
-    testSame(LINE_JOINER.join(
+    testSame(lines(
         "/**",
         " * @param {number=} opt_n",
         " */",
         "function f(opt_n) {}"));
   }
 
+  @Test
   public void testValidOptionalArgs_withES6Modules() {
     testSame("export /** @param {number=} n */ function f(n) {}");
   }
 
+  @Test
   public void testInvalidOptionalArgs_withES6Modules() {
     testSame(
         "export /** @param {number} opt_n */ function f(opt_n) {}",
         OPTIONAL_PARAM_NOT_MARKED_OPTIONAL);
   }
 
+  @Test
   public void testParamsOutOfOrder() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {?} second",
             " * @param {?} first",
@@ -882,9 +901,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         INCORRECT_PARAM_NAME);
   }
 
+  @Test
   public void testParamsOutOfOrder_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {?} second",
@@ -894,9 +914,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         INCORRECT_PARAM_NAME);
   }
 
+  @Test
   public void testMixedStyles() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {?} first",
             " * @param {string} second",
@@ -905,9 +926,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MIXED_PARAM_JSDOC_STYLES);
   }
 
+  @Test
   public void testMixedStyles_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {?} first",
@@ -917,9 +939,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MIXED_PARAM_JSDOC_STYLES);
   }
 
+  @Test
   public void testDestructuring() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {{x: number, y: number}} point",
             " */",
@@ -928,54 +951,71 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
     testSame("function getDistanceFromZero(/** {x: number, y: number} */ {x, y}) {}");
   }
 
+  @Test
   public void testDestructuring_withES6Modules() {
     testSame("export function getDistanceFromZero(/** {x: number, y: number} */ {x, y}) {}");
   }
 
+  @Test
   public void testMissingReturn_functionStatement_noWarning() {
     testSame("/** @param {number} x */ function f(x) {}");
     testSame("/** @constructor */ function f() {}");
     testSame("/** @param {number} x */ function f(x) { function bar() { return x; } }");
     testSame("/** @param {number} x */ function f(x) { return; }");
-    testSame("/** @param {number} x @return {number} */ function f(x) { return x; }");
+    testSame("/** @param {number} x\n * @return {number} */ function f(x) { return x; }");
     testSame("/** @param {number} x */ function /** number */ f(x) { return x; }");
     testSame("/** @inheritDoc */ function f(x) { return x; }");
     testSame("/** @override */ function f(x) { return x; }");
   }
 
+  @Test
   public void testMissingReturn_functionStatement_noWarning_withES6Modules() {
     testSame("export /** @param {number} x */ function f(x) {}");
   }
 
+  @Test
   public void testMissingReturn_assign_noWarning() {
     testSame("/** @param {number} x */ f = function(x) {}");
     testSame("/** @constructor */ f = function() {}");
     testSame("/** @param {number} x */ f = function(x) { function bar() { return x; } }");
     testSame("/** @param {number} x */ f = function(x) { return; }");
-    testSame("/** @param {number} x @return {number} */ f = function(x) { return x; }");
+    testSame("/** @param {number} x\n * @return {number} */ f = function(x) { return x; }");
     testSame("/** @inheritDoc */ f = function(x) { return x; }");
     testSame("/** @override */ f = function(x) { return x; }");
   }
 
+  @Test
   public void testMissingReturn_var_noWarning() {
     testSame("/** @param {number} x */ var f = function(x) {}");
     testSame("/** @constructor */ var f = function() {}");
     testSame("/** @param {number} x */ var f = function(x) { function bar() { return x; } }");
     testSame("/** @param {number} x */ var f = function(x) { return; }");
-    testSame("/** @param {number} x @return {number} */ var f = function(x) { return x; }");
+    testSame("/** @param {number} x\n * @return {number} */ var f = function(x) { return x; }");
     testSame("/** @const {function(number): number} */ var f = function(x) { return x; }");
     testSame("/** @inheritDoc */ var f = function(x) { return x; }");
     testSame("/** @override */ var f = function(x) { return x; }");
   }
 
+  @Test
+  public void testMissingReturn_constructor_noWarning() {
+    testSame("/** @constructor */ var C = function() { return null; }");
+  }
+
+  @Test
+  public void testMissingReturn_class_constructor_noWarning() {
+    testSame("class C { /** @param {Array} x */ constructor(x) { return x; } }");
+  }
+
+  @Test
   public void testMissingReturn_var_noWarning_withES6Modules() {
     testSame("export /** @param {number} x */ var f = function(x) {}");
   }
 
+  @Test
   public void testMissingReturn_functionStatement() {
     testWarning("/** @param {number} x */ function f(x) { return x; }", MISSING_RETURN_JSDOC);
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/** @param {number} x */",
             "function f(x) {",
             "  /** @param {number} x */",
@@ -990,15 +1030,17 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         "/** @param {number} x @constructor */ function f(x) { return x; }", MISSING_RETURN_JSDOC);
   }
 
+  @Test
   public void testMissingReturn_functionStatement_withES6Modules() {
     testWarning(
         "export /** @param {number} x */ function f(x) { return x; }", MISSING_RETURN_JSDOC);
   }
 
+  @Test
   public void testMissingReturn_assign() {
     testWarning("/** @param {number} x */ f = function(x) { return x; }", MISSING_RETURN_JSDOC);
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/** @param {number} x */",
             "function f(x) {",
             "  /** @param {number} x */",
@@ -1015,9 +1057,10 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MISSING_RETURN_JSDOC);
   }
 
+  @Test
   public void testMissingReturn_assign_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/** @param {number} x */",
             "export",
             "function f(x) {",
@@ -1029,10 +1072,11 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MISSING_RETURN_JSDOC);
   }
 
+  @Test
   public void testMissingReturn_var() {
     testWarning("/** @param {number} x */ var f = function(x) { return x; }", MISSING_RETURN_JSDOC);
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/** @param {number} x */",
             "function f(x) {",
             "  /** @param {number} x */",
@@ -1049,27 +1093,31 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         MISSING_RETURN_JSDOC);
   }
 
+  @Test
   public void testMissingReturn_var_withES6Modules() {
     testWarning(
         "export /** @param {number} x */ var f = function(x) { return x; }", MISSING_RETURN_JSDOC);
   }
 
+  @Test
   public void testExternsAnnotation() {
-    testSame(
-        "function Example() {}",
-        "",
-        EXTERNS_FILES_SHOULD_BE_ANNOTATED);
+    test(
+        externs("function Example() {}"),
+        srcs(""),
+        warning(EXTERNS_FILES_SHOULD_BE_ANNOTATED));
 
     testSame(
-        "/** @fileoverview Some super cool externs.\n * @externs\n */ function Example() {}",
-        "");
+        externs(
+            "/** @fileoverview Some super cool externs.\n * @externs\n */ function Example() {}"),
+        srcs(""));
 
     testSame(
-        LINE_JOINER.join(
-            "/** @fileoverview Some super cool externs.\n * @externs\n */",
-            "/** @constructor */ function Example() {}",
-            "/** @param {number} x */ function example2(x) {}"),
-        "");
+        externs(
+            lines(
+                "/** @fileoverview Some super cool externs.\n * @externs\n */",
+                "/** @constructor */ function Example() {}",
+                "/** @param {number} x */ function example2(x) {}")),
+        srcs(""));
 
     test(
         new String[] {
@@ -1079,20 +1127,38 @@ public final class CheckJSDocStyleTest extends CompilerTestCase {
         new String[] {});
   }
 
+  @Test
   public void testInvalidExternsAnnotation_withES6Modules() {
-    testSame("export function Example() {}", "", EXTERNS_FILES_SHOULD_BE_ANNOTATED);
+    test(
+        externs("export function Example() {}"),
+        srcs(""),
+        warning(EXTERNS_FILES_SHOULD_BE_ANNOTATED));
   }
 
+  @Test
   public void testValidExternsAnnotation_withES6Modules() {
     testSame(
-        "export /** @fileoverview Some super cool externs.\n * @externs\n */ function Example() {}",
-        "");
+        externs(
+            lines(
+                "export /** @fileoverview Some super cool externs.",
+                " * @externs",
+                " */",
+                "function Example() {}")),
+        srcs(""));
   }
 
+  @Test
   public void testConstructorsDontHaveVisibility() {
     testSame(inIIFE("/** @private */ class Foo { constructor() {} }"));
 
     testWarning(
         inIIFE("class Foo { /** @private */ constructor() {} }"), CONSTRUCTOR_DISALLOWED_JSDOC);
+  }
+
+  @Test
+  public void testAtSignCodeDetectedWhenPresent() {
+    testWarning(
+        "/** blah blah {@code blah blah} blah blah */ function f() {}",
+        PREFER_BACKTICKS_TO_AT_SIGN_CODE);
   }
 }

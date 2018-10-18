@@ -116,13 +116,15 @@ final class RefasterJs {
     scanner.loadRefasterJsTemplate(refasterJsTemplate);
     CompilerOptions options = new CompilerOptions();
     options.setEnvironment(environment);
-    RefactoringDriver driver = new RefactoringDriver.Builder(scanner)
-        .addExterns(CommandLineRunner.getBuiltinExterns(environment))
-        .addExternsFromFile(getExterns())
-        .addInputsFromFile(fileInputs)
-        .build();
+    RefactoringDriver driver =
+        new RefactoringDriver.Builder()
+            .addExterns(CommandLineRunner.getBuiltinExterns(environment))
+            .addExternsFromFile(getExterns())
+            .addInputsFromFile(fileInputs)
+            .build();
     System.out.println("Compiling JavaScript code and searching for suggested fixes.");
-    List<SuggestedFix> fixes = driver.drive();
+    // TODO(bangert): allow picking a non-default choice in RefasterJS, e.g. via a switch.
+    List<SuggestedFix> fixes = driver.drive(scanner);
 
     if (!verbose) {
       // When running in quiet mode, the Compiler's error manager will not have printed

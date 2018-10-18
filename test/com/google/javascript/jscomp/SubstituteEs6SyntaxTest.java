@@ -16,15 +16,21 @@
 
 package com.google.javascript.jscomp;
 
-/**
- * Tests for {@link SubstituteEs6Syntax} in isolation.
- */
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+
+/** Tests for {@link SubstituteEs6Syntax} in isolation. */
+@RunWith(JUnit4.class)
 public final class SubstituteEs6SyntaxTest extends CompilerTestCase {
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
+    disableScriptFeatureValidation();
   }
 
   @Override
@@ -32,6 +38,7 @@ public final class SubstituteEs6SyntaxTest extends CompilerTestCase {
     return new SubstituteEs6Syntax(compiler);
   }
 
+  @Test
   public void testArrowFunctions() {
     testSame("function f() {}");
     testSame("(function() { this.x = 5; })");
@@ -45,17 +52,23 @@ public final class SubstituteEs6SyntaxTest extends CompilerTestCase {
     test("(x)=>{ return x++,5; }", "(x) => (x++,5)");
   }
 
+  @Test
   public void testObjectPattern() {
-    test("const {x: x} = y;", "const {x} = y;");
-    testSame("const {x: y} = z;");
-    testSame("const {[x]: x} = y;");
-    testSame("const {['x']: x} = y;");
+    // Tree comparisons don't fail on node property differences, so compare as strings instead.
+    disableCompareAsTree();
+    test("const {x:x}=y", "const {x}=y");
+    testSame("const {x:y}=z");
+    testSame("const {[x]:x}=y");
+    testSame("const {[\"x\"]:x}=y");
   }
 
+  @Test
   public void testObjectLiteral() {
-    test("const o = {x: x};", "const o = {x};");
-    testSame("const o = {x: y}");
-    testSame("const o = {[x]: x};");
-    testSame("const o = {['x']: x};");
+    // Tree comparisons don't fail on node property differences, so compare as strings instead.
+    disableCompareAsTree();
+    testSame("const o={x:y}");
+    testSame("const o={[x]:x}");
+    testSame("const o={[\"x\"]:x}");
+    test("const o={x:x}", "const o={x}");
   }
 }

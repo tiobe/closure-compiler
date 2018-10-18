@@ -21,10 +21,10 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.isNullOrEmpty;
 
+import com.google.common.collect.ImmutableList;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 
@@ -70,12 +70,123 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
       }
 
       if (NodeUtil.isGet(callTarget)) {
+        if (isASTNormalized() && callTarget.getFirstChild().isQualifiedName()) {
+          switch (callTarget.getFirstChild().getQualifiedName()) {
+            case "Math":
+              return tryFoldKnownMathMethods(subtree, callTarget);
+            default: // fall out
+          }
+        }
         subtree = tryFoldKnownStringMethods(subtree, callTarget);
       } else if (callTarget.isName()) {
         subtree = tryFoldKnownNumericMethods(subtree, callTarget);
       }
     }
 
+    return subtree;
+  }
+
+  /** Tries to evaluate a method on the Math object */
+  private strictfp Node tryFoldKnownMathMethods(Node subtree, Node callTarget) {
+    // first collect the arguments, if they are all numbers then we proceed
+    List<Double> args = ImmutableList.of();
+    for (Node arg = callTarget.getNext(); arg != null; arg = arg.getNext()) {
+      Double d = NodeUtil.getNumberValue(arg);
+      if (d != null) {
+        if (args.isEmpty()) {
+          // lazily allocate, most calls will not be optimizable
+          args = new ArrayList<>();
+        }
+        args.add(d);
+      } else {
+        return subtree;
+      }
+    }
+    Double replacement = null;
+    String methodName = callTarget.getFirstChild().getNext().getString();
+    // NOTE: the standard does not define precision for these methods, but we are conservative, so
+    // for now we only implement the methods that are guaranteed to not increase the size of the
+    // numeric constants.
+    if (args.size() == 1) {
+      double arg = args.get(0);
+      switch (methodName) {
+        case "abs":
+          replacement = Math.abs(arg);
+          break;
+        case "ceil":
+          replacement = Math.ceil(arg);
+          break;
+        case "floor":
+          replacement = Math.floor(arg);
+          break;
+        case "fround":
+          if (Double.isNaN(arg) || Double.isInfinite(arg) || arg == 0) {
+            replacement = arg;
+            // if the double is exactly representable as a float, then just cast since no rounding
+            // is involved
+          } else if ((float) arg == arg) {
+            replacement = Double.valueOf((float) arg);
+          } else {
+            // (float) arg does not necessarily use the correct rounding mode, so don't do anything
+            replacement = null;
+          }
+          break;
+        case "round":
+          if (Double.isNaN(arg) || Double.isInfinite(arg)) {
+            replacement = arg;
+          } else {
+            replacement = Double.valueOf(Math.round(arg));
+          }
+          break;
+        case "sign":
+          replacement = Math.signum(arg);
+          break;
+        case "trunc":
+          if (Double.isNaN(arg) || Double.isInfinite(arg)) {
+            replacement = arg;
+          } else {
+            replacement = Math.signum(arg) * Math.floor(Math.abs(arg));
+          }
+          break;
+        case "clz32":
+          replacement = Double.valueOf(Integer.numberOfLeadingZeros(NodeUtil.toUInt32(arg)));
+          break;
+        default: // fall out
+      }
+    }
+    // handle the variadic functions now if we haven't already
+    // For each of these we could allow for some of the values to be unknown and either reduce to
+    // NaN or simplify the existing args. e.g. Math.max(3, x, 2) -> Math.max(3, x)
+    if (replacement == null) {
+      switch (methodName) {
+        case "max":
+          {
+            double result = Double.NEGATIVE_INFINITY;
+            for (Double d : args) {
+              result = Math.max(result, d);
+            }
+            replacement = result;
+            break;
+          }
+        case "min":
+          {
+            double result = Double.POSITIVE_INFINITY;
+            for (Double d : args) {
+              result = Math.min(result, d);
+            }
+            replacement = result;
+            break;
+          }
+        default: // fall out
+      }
+    }
+
+    if (replacement != null) {
+      Node numberNode = NodeUtil.numberNode(replacement, subtree);
+      subtree.replaceWith(numberNode);
+      compiler.reportChangeToEnclosingScope(numberNode);
+      return numberNode;
+    }
     return subtree;
   }
 
@@ -107,6 +218,8 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
             return tryFoldStringToLowerCase(subtree, stringNode);
           case "toUpperCase":
             return tryFoldStringToUpperCase(subtree, stringNode);
+          case "trim":
+            return tryFoldStringTrim(subtree, stringNode);
           default: // fall out
         }
       } else {
@@ -132,8 +245,8 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     if (useTypes
         && firstArg != null
         && (isStringLiteral
-            || (stringNode.getTypeI() != null
-                && stringNode.getTypeI().isStringValueType()))) {
+            || (stringNode.getJSType() != null
+                && stringNode.getJSType().isStringValueType()))) {
       if (subtree.hasXChildren(3)) {
         Double maybeStart = NodeUtil.getNumberValue(firstArg);
         if (maybeStart != null) {
@@ -150,7 +263,8 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
               case "substring":
               case "slice":
                 int end = maybeLengthOrEnd.intValue();
-                if (end - start == 1) {
+                // unlike slice and substring, chatAt can not be used with negative indexes
+                if (start >= 0 && end - start == 1) {
                   return replaceWithCharAt(subtree, callTarget, firstArg);
                 }
                 break;
@@ -202,6 +316,20 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     // From Rhino, NativeString.java. See ECMA 15.5.4.12
     String upped = stringNode.getString().toUpperCase(Locale.ROOT);
     Node replacement = IR.string(upped);
+    subtree.replaceWith(replacement);
+    compiler.reportChangeToEnclosingScope(replacement);
+    return replacement;
+  }
+
+  /** @return The trimmed string Node. */
+  private Node tryFoldStringTrim(Node subtree, Node stringNode) {
+    // See ECMA 15.5.4.20, 7.2, and 7.3
+    // All Unicode 10.0 whitespace + BOM
+    String whitespace =
+        "[ \t\n-\r\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+";
+    String trimmed =
+        stringNode.getString().replaceAll("^" + whitespace + "|" + whitespace + "$", "");
+    Node replacement = IR.string(trimmed);
     subtree.replaceWith(replacement);
     compiler.reportChangeToEnclosingScope(replacement);
     return replacement;
@@ -440,7 +568,7 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
     }
 
     String joinString = (right == null) ? "," : NodeUtil.getStringValue(right);
-    List<Node> arrayFoldedChildren = new LinkedList<>();
+    List<Node> arrayFoldedChildren = new ArrayList<>();
     StringBuilder sb = null;
     int foldedSize = 0;
     Node prev = null;
@@ -494,21 +622,20 @@ class PeepholeReplaceKnownMethods extends AbstractPeepholeOptimization {
         if (foldedStringNode.isSpread() || foldedSize > originalSize) {
           return n;
         }
-        arrayNode.detachChildren();
-        if (!foldedStringNode.isString()) {
-          // If the Node is not a string literal, ensure that
-          // it is coerced to a string.
-          Node replacement = IR.add(
-              IR.string("").srcref(n),
-              foldedStringNode);
-          foldedStringNode = replacement;
+        if (foldedStringNode.isString()) {
+          arrayNode.detachChildren();
+          n.replaceWith(foldedStringNode);
+          compiler.reportChangeToEnclosingScope(foldedStringNode);
+          return foldedStringNode;
+        } else {
+          // Because of special case behavior for `null` and `undefined` values, there's no safe way
+          // to convert `[someNonStringValue].join()` to something shorter.
+          // e.g. String(someNonStringValue) would turn `null` into `"null"`, which isn't right.
+          return n;
         }
-        n.getParent().replaceChild(n, foldedStringNode);
-        compiler.reportChangeToEnclosingScope(foldedStringNode);
-        return foldedStringNode;
       default:
-        // No folding could actually be performed.
         if (arrayNode.hasXChildren(arrayFoldedChildren.size())) {
+          // No folding could actually be performed.
           return n;
         }
         int kJoinOverhead = "[].join()".length();

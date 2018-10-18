@@ -38,6 +38,11 @@ public class ThreadSafeDelegatingErrorManager implements ErrorManager {
   }
 
   @Override
+  public boolean hasHaltingErrors() {
+    return delegated.hasHaltingErrors();
+  }
+
+  @Override
   public synchronized int getErrorCount() {
     return delegated.getErrorCount();
   }
@@ -67,4 +72,9 @@ public class ThreadSafeDelegatingErrorManager implements ErrorManager {
     return delegated.getTypedPercent();
   }
 
+  @Override
+  public synchronized boolean shouldReportConformanceViolation(
+      Requirement requirement, JSError diagnostic) {
+    return delegated.shouldReportConformanceViolation(requirement, diagnostic);
+  }
 }

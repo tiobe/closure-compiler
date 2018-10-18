@@ -48,20 +48,15 @@ final class CompilerOptionsPreprocessor {
           + "remove_unused_prototype_props to be turned on.");
     }
 
-    if (!options.inlineFunctions
+    if (options.getInlineFunctionsLevel() == CompilerOptions.Reach.NONE
         && options.maxFunctionSizeAfterInlining
-        != CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING) {
+            != CompilerOptions.UNLIMITED_FUN_SIZE_AFTER_INLINING) {
       throw new InvalidOptionsException(
-          "max_function_size_after_inlining has no effect if inlining is"
-          + " disabled.");
-    }
-
-    if (options.getNewTypeInference()) {
-      options.checkGlobalThisLevel = CheckLevel.OFF;
+          "max_function_size_after_inlining has no effect if inlining is disabled.");
     }
 
     if (options.dartPass) {
-      if (!options.getLanguageOut().toFeatureSet().contains(FeatureSet.ES5)) {
+      if (!options.getOutputFeatureSet().contains(FeatureSet.ES5)) {
         throw new InvalidOptionsException("Dart requires --language_out=ES5 or higher.");
       }
       // --dart_pass does not support type-aware property renaming yet.

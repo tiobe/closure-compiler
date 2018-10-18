@@ -19,12 +19,26 @@
  */
 
 /**
- * @typedef {{dir: (string|undefined), lang: (string|undefined),
- *            body: (string|undefined), tag: (string|undefined),
- *            icon: (string|undefined),
- *            requireInteraction: (boolean|undefined),
- *            actions: (!Array<!NotificationAction>|undefined)}}
- * @see http://notifications.spec.whatwg.org/#notificationoptions
+ * @typedef {{
+ *     dir: (string|undefined),
+ *     lang: (string|undefined),
+ *     body: (string|undefined),
+ *     tag: (string|undefined),
+ *     image: (string|undefined),
+ *     icon: (string|undefined),
+ *     badge: (string|undefined),
+ *     vibrate: (!Array<number>|undefined),
+ *     timestamp: (number|undefined),
+ *     renotify: (boolean|undefined),
+ *     silent: (boolean|undefined),
+ *     requireInteraction: (boolean|undefined),
+ *     data: (*|undefined),
+ *     actions: (!Array<!NotificationAction>|undefined),
+ * }}
+ * TODO(user): change the type of data to a serializable object
+ * (https://html.spec.whatwg.org/multipage/structured-data.html).
+ *
+ * @see http://notifications.spec.whatwg.org/#notification
  */
 var NotificationOptions;
 
@@ -109,6 +123,11 @@ Notification.prototype.tag;
  * @deprecated Use NotificationOptions.tag instead.
  */
 Notification.prototype.replaceId;
+
+/**
+ * @type {*}
+ */
+Notification.prototype.data;
 
 /**
  * The string used by clients to specify the directionality (rtl/ltr) of the
@@ -232,5 +251,8 @@ Window.prototype.webkitNotifications;
  */
 function NotificationEvent(type, opt_eventInitDict) {}
 
-/** @type {?Notification} */
+/** @type {!Notification} */
 NotificationEvent.prototype.notification;
+
+/** @type {string} */
+NotificationEvent.prototype.action;

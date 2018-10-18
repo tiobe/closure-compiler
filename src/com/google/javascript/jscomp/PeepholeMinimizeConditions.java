@@ -753,6 +753,11 @@ class PeepholeMinimizeConditions
    * @param n The IF node to examine.
    */
   private void tryRemoveRepeatedStatements(Node n) {
+    // Only run this if variable names are guaranteed to be unique. Otherwise bad things can happen:
+    // see PeepholeMinimizeConditionsTest#testDontRemoveDuplicateStatementsWithoutNormalization
+    if (!isASTNormalized()) {
+      return;
+    }
     checkState(n.isIf(), n);
 
     Node parent = n.getParent();
@@ -787,7 +792,7 @@ class PeepholeMinimizeConditions
    *     an expression.
    */
   private static boolean isFoldableExpressBlock(Node n) {
-    if (n.isNormalBlock()) {
+    if (n.isBlock()) {
       if (n.hasOneChild()) {
         Node maybeExpr = n.getFirstChild();
         if (maybeExpr.isExprResult()) {
@@ -832,7 +837,7 @@ class PeepholeMinimizeConditions
    *     an return with or without an expression.
    */
   private static boolean isReturnBlock(Node n) {
-    if (n.isNormalBlock()) {
+    if (n.isBlock()) {
       if (n.hasOneChild()) {
         Node first = n.getFirstChild();
         return first.isReturn();
@@ -847,7 +852,7 @@ class PeepholeMinimizeConditions
    *     an return.
    */
   private static boolean isReturnExpressBlock(Node n) {
-    if (n.isNormalBlock()) {
+    if (n.isBlock()) {
       if (n.hasOneChild()) {
         Node first = n.getFirstChild();
         if (first.isReturn()) {
@@ -882,7 +887,7 @@ class PeepholeMinimizeConditions
    *     a VAR declaration of a single variable.
    */
   private static boolean isVarBlock(Node n) {
-    if (n.isNormalBlock()) {
+    if (n.isBlock()) {
       if (n.hasOneChild()) {
         Node first = n.getFirstChild();
         if (first.isVar()) {

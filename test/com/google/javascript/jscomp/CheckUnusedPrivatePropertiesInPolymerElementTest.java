@@ -17,14 +17,19 @@
 package com.google.javascript.jscomp;
 
 import com.google.javascript.rhino.Node;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Checks that references to properties in strings, in Polymer elements, are counted as usages of
  * those properties.
  */
-public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends TypeICompilerTestCase {
+@RunWith(JUnit4.class)
+public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends CompilerTestCase {
 
-  private static final String EXTERNS = LINE_JOINER.join(
+  private static final String EXTERNS = lines(
       DEFAULT_EXTERNS,
       "var Polymer = function(descriptor) {};",
       "/** @constructor */",
@@ -35,8 +40,10 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
+    enableTypeCheck();
     enableGatherExternProperties();
     enableTranspile();
   }
@@ -46,7 +53,7 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
     return new CompilerPass() {
       @Override
       public void process(Node externs, Node root) {
-        new PolymerPass(compiler, 1, true).process(externs, root);
+        new PolymerPass(compiler, 1, PolymerExportPolicy.LEGACY, true).process(externs, root);
         new CheckUnusedPrivateProperties(compiler).process(externs, root);
       }
     };
@@ -58,7 +65,6 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
     options.setWarningLevel(DiagnosticGroups.ANALYZER_CHECKS, CheckLevel.WARNING);
     options.setWarningLevel(DiagnosticGroups.MISSING_PROPERTIES, CheckLevel.OFF);
     // Global this is used deliberately to refer to Window in these tests
-    options.setWarningLevel(new DiagnosticGroup(NewTypeInference.GLOBAL_THIS), CheckLevel.OFF);
     options.setPolymerVersion(1);
     return options;
   }
@@ -68,10 +74,11 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
     return 1;
   }
 
+  @Test
   public void testPolymerPropertyUsedAsObserver1() {
     allowExternsChanges();
     testNoWarning(
-        LINE_JOINER.join(
+        lines(
             "Polymer({",
             "  is: 'example-elem',",
             "  properties: {",
@@ -86,10 +93,11 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
             "});"));
   }
 
+  @Test
   public void testPolymerPropertyUsedAsObserver2() {
     allowExternsChanges();
     testNoWarning(
-        LINE_JOINER.join(
+        lines(
             "Polymer({",
             "  is: 'example-elem',",
             "  properties: {",
@@ -104,11 +112,12 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
             "});"));
   }
 
+  @Test
   public void testBehaviorPropertyUsedAsObserver() {
     allowExternsChanges();
     test(
         new String[] {
-            LINE_JOINER.join(
+            lines(
                 "/** @polymerBehavior */",
                 "var Behavior = {",
                 "  properties: {",
@@ -121,14 +130,14 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
                 "  /** @private */",
                 "  fooChanged_: function() {},",
                 "};"),
-            LINE_JOINER.join(
+            lines(
                 "Polymer({",
                 "  is: 'example-elem',",
                 "  behaviors: [Behavior],",
                 "});"),
         },
         new String[] {
-            LINE_JOINER.join(
+            lines(
                 "/** @polymerBehavior @nocollapse */",
                 "var Behavior = {",
                 "  properties: {",
@@ -141,7 +150,7 @@ public final class CheckUnusedPrivatePropertiesInPolymerElementTest extends Type
                 "  /** @suppress {checkTypes|globalThis|visibility} */",
                 "  fooChanged_: function() {},",
                 "};"),
-            LINE_JOINER.join(
+            lines(
                 "/**",
                 " * @constructor",
                 " * @extends {PolymerElement}",

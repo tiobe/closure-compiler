@@ -16,6 +16,8 @@
 
 package com.google.javascript.jscomp.parsing;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -32,7 +34,6 @@ import com.google.javascript.jscomp.parsing.parser.trees.ProgramTree;
 import com.google.javascript.jscomp.parsing.parser.util.SourcePosition;
 import com.google.javascript.rhino.ErrorReporter;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.SimpleSourceFile;
 import com.google.javascript.rhino.StaticSourceFile;
 import java.util.HashSet;
 import java.util.List;
@@ -81,14 +82,15 @@ public final class ParserRunner {
       effectiveAnnotationNames = new HashSet<>(annotationNames);
       effectiveAnnotationNames.addAll(extraAnnotationNames);
     }
-    return new Config(
-        effectiveAnnotationNames,
-        jsdocParsingMode,
-        runMode,
-        suppressionNames,
-        languageMode,
-        parseInlineSourceMaps,
-        strictMode);
+    return Config.builder()
+        .setExtraAnnotationNames(effectiveAnnotationNames)
+        .setJsDocParsingMode(jsdocParsingMode)
+        .setRunMode(runMode)
+        .setSuppressionNames(suppressionNames)
+        .setLanguageMode(languageMode)
+        .setParseInlineSourceMaps(parseInlineSourceMaps)
+        .setStrictMode(strictMode)
+        .build();
   }
 
   public static Set<String> getReservedVars() {
@@ -107,7 +109,7 @@ public final class ParserRunner {
     reservedVars = extractList(config.getString("compiler.reserved.vars"));
   }
 
-  private static Set<String> extractList(String configProp) {
+  private static ImmutableSet<String> extractList(String configProp) {
     return ImmutableSet.copyOf(Splitter.on(',').trimResults().split(configProp));
   }
 
@@ -121,7 +123,7 @@ public final class ParserRunner {
     String sourceName = sourceFile.getName();
     try {
       SourceFile file = new SourceFile(sourceName, sourceString);
-      boolean keepGoing = config.keepGoing == Config.RunMode.KEEP_GOING;
+      boolean keepGoing = config.runMode() == Config.RunMode.KEEP_GOING;
       Es6ErrorReporter es6ErrorReporter = new Es6ErrorReporter(errorReporter, keepGoing);
       com.google.javascript.jscomp.parsing.parser.Parser.Config es6config = newParserConfig(config);
       Parser p = new Parser(es6config, es6ErrorReporter, file);
@@ -136,7 +138,7 @@ public final class ParserRunner {
         features = features.union(factory.getFeatures());
         root.putProp(Node.FEATURE_SET, features);
 
-        if (config.parseJsDocDocumentation.shouldParseDescriptions()) {
+        if (config.jsDocParsingMode().shouldParseDescriptions()) {
           comments = p.getComments();
         }
       }
@@ -148,9 +150,9 @@ public final class ParserRunner {
 
   private static com.google.javascript.jscomp.parsing.parser.Parser.Config newParserConfig(
       Config config) {
-    LanguageMode languageMode = config.languageMode;
-    boolean isStrictMode = config.strictMode == StrictMode.STRICT;
-    Mode parserConfigLanguageMode;
+    LanguageMode languageMode = config.languageMode();
+    boolean isStrictMode = config.strictMode().isStrict();
+    Mode parserConfigLanguageMode = null;
     switch (languageMode) {
       case TYPESCRIPT:
         parserConfigLanguageMode = Mode.TYPESCRIPT;
@@ -165,32 +167,19 @@ public final class ParserRunner {
         break;
 
       case ECMASCRIPT6:
-        parserConfigLanguageMode = Mode.ES6;
-        break;
       case ECMASCRIPT7:
-        parserConfigLanguageMode = Mode.ES7;
+        parserConfigLanguageMode = Mode.ES6_OR_ES7;
         break;
       case ECMASCRIPT8:
+      case ECMASCRIPT_2018:
         parserConfigLanguageMode = Mode.ES8_OR_GREATER;
         break;
-
-      default:
-        throw new IllegalStateException("unexpected language mode: " + languageMode);
+      case ES_NEXT:
+        parserConfigLanguageMode = Mode.ES_NEXT;
+        break;
     }
     return new com.google.javascript.jscomp.parsing.parser.Parser.Config(
-        parserConfigLanguageMode, isStrictMode);
-  }
-
-  // TODO(sdh): this is less useful if we end up needing the node for library version detection
-  public static FeatureSet detectFeatures(String sourcePath, String sourceString) {
-    SourceFile file = new SourceFile(sourcePath, sourceString);
-    ErrorReporter reporter = IRFactory.NULL_REPORTER;
-    com.google.javascript.jscomp.parsing.parser.Parser.Config config =
-        newParserConfig(IRFactory.NULL_CONFIG);
-    Parser p = new Parser(config, new Es6ErrorReporter(reporter, false), file);
-    ProgramTree tree = p.parseProgram();
-    StaticSourceFile simpleSourceFile = new SimpleSourceFile(sourcePath, false);
-    return IRFactory.detectFeatures(tree, simpleSourceFile, sourceString).union(p.getFeatures());
+        checkNotNull(parserConfigLanguageMode), isStrictMode);
   }
 
   private static class Es6ErrorReporter

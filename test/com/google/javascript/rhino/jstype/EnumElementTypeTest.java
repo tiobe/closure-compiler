@@ -39,14 +39,19 @@
 package com.google.javascript.rhino.jstype;
 
 import com.google.javascript.rhino.testing.BaseJSTypeTestCase;
-
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for EnumElementTypes.
+ *
  * @author nicksantos@google.com (Nick Santos)
  */
+@RunWith(JUnit4.class)
 public class EnumElementTypeTest extends BaseJSTypeTestCase {
-  public void testSubtypeRelation() throws Exception {
+  @Test
+  public void testSubtypeRelation() {
     EnumElementType typeA = registry.createEnumType(
         "typeA", null, NUMBER_TYPE).getElementsType();
     EnumElementType typeB = registry.createEnumType(
@@ -55,14 +60,15 @@ public class EnumElementTypeTest extends BaseJSTypeTestCase {
     assertFalse(typeA.isSubtype(typeB));
     assertFalse(typeB.isSubtype(typeA));
 
-    assertFalse(NUMBER_TYPE.isSubtype(typeB));
-    assertFalse(NUMBER_TYPE.isSubtype(typeA));
+    assertFalse(NUMBER_TYPE.isSubtypeOf(typeB));
+    assertFalse(NUMBER_TYPE.isSubtypeOf(typeA));
 
     assertTrue(typeA.isSubtype(NUMBER_TYPE));
     assertTrue(typeB.isSubtype(NUMBER_TYPE));
   }
 
-  public void testMeet() throws Exception {
+  @Test
+  public void testMeet() {
     EnumElementType typeA = registry.createEnumType(
         "typeA", null, createUnionType(NUMBER_TYPE, STRING_TYPE))
         .getElementsType();
@@ -70,11 +76,11 @@ public class EnumElementTypeTest extends BaseJSTypeTestCase {
     JSType stringsOfA = typeA.getGreatestSubtype(STRING_TYPE);
     assertFalse(stringsOfA.isEmptyType());
     assertEquals("typeA<string>", stringsOfA.toString());
-    assertTrue(stringsOfA.isSubtype(typeA));
+    assertTrue(stringsOfA.isSubtypeOf(typeA));
 
     JSType numbersOfA = NUMBER_TYPE.getGreatestSubtype(typeA);
     assertFalse(numbersOfA.isEmptyType());
     assertEquals("typeA<number>", numbersOfA.toString());
-    assertTrue(numbersOfA.isSubtype(typeA));
+    assertTrue(numbersOfA.isSubtypeOf(typeA));
   }
 }

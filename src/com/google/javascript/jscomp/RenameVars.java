@@ -85,9 +85,6 @@ final class RenameVars implements CompilerPass {
   /** Counter for each assignment */
   private int assignmentCount = 0;
 
-  /** Logs all name assignments */
-  private StringBuilder assignmentLog;
-
   // Logic for bleeding functions, where the name leaks into the outer
   // scope on IE but not on other browsers.
   private final Set<Var> localBleedingFunctions = new HashSet<>();
@@ -205,8 +202,7 @@ final class RenameVars implements CompilerPass {
 
     @Override
     public void enterScope(NodeTraversal t) {
-      if (t.inGlobalHoistScope() ||
-          !shouldTemporarilyRenameLocalsInScope(t.getScope())) {
+      if (t.inGlobalHoistScope() || !shouldTemporarilyRenameLocalsInScope(t.getScope())) {
         return;
       }
       Scope scope = t.getScope();
@@ -246,9 +242,10 @@ final class RenameVars implements CompilerPass {
       // scope, because IE has bugs in how it handles bleeding
       // functions.
       Var var = t.getScope().getVar(name);
-      boolean local = (var != null) && var.isLocal() &&
-          (!var.scope.getParent().isGlobal() ||
-           !var.isBleedingFunction());
+      boolean local =
+          var != null
+              && var.isLocal()
+              && (var.scope.getParent().isLocal() || !var.isBleedingFunction());
 
       // Never rename references to the arguments array
       if (var != null && var.isArguments()) {
@@ -348,17 +345,15 @@ final class RenameVars implements CompilerPass {
     this.externNames = NodeUtil.collectExternVariableNames(this.compiler, externs);
 
     originalNameByNode.clear();
-    assignmentLog = new StringBuilder();
 
     // Do variable reference counting.
-    NodeTraversal.traverseEs6(compiler, root, new ProcessVars());
+    NodeTraversal.traverse(compiler, root, new ProcessVars());
 
     // Make sure that new names don't overlap with extern names.
     reservedNames.addAll(externNames);
 
     // Rename vars, sorted by frequency of occurrence to minimize code size.
-    SortedSet<Assignment> varsByFrequency =
-        new TreeSet<>(FREQUENCY_COMPARATOR);
+    SortedSet<Assignment> varsByFrequency = new TreeSet<>(FREQUENCY_COMPARATOR);
     varsByFrequency.addAll(assignments.values());
 
     if (shouldShadow) {
@@ -369,7 +364,7 @@ final class RenameVars implements CompilerPass {
 
     // First try to reuse names from an earlier compilation.
     if (prevUsedRenameMap != null) {
-      reusePreviouslyUsedVariableMap();
+      reusePreviouslyUsedVariableMap(varsByFrequency);
     }
 
     // Assign names, sorted by descending frequency to minimize code size.
@@ -384,10 +379,6 @@ final class RenameVars implements CompilerPass {
     for (Node n : localNameNodes) {
       setNameAndReport(n, getNewLocalName(n));
     }
-
-    // Lastly, write the name assignments to the debug log.
-    compiler.addToDebugLog("JS var assignments:\n" + assignmentLog);
-    assignmentLog = null;
   }
 
   private void setNameAndReport(Node n, @Nullable String newName) {
@@ -443,16 +434,15 @@ final class RenameVars implements CompilerPass {
   }
 
   /**
-   * Runs through the assignments and reuses as many names as possible from the
-   * previously used variable map. Updates reservedNames with the set of names
-   * that were reused.
+   * Runs through the assignments and reuses as many names as possible from the previously used
+   * variable map. Updates reservedNames with the set of names that were reused.
    */
-  private void reusePreviouslyUsedVariableMap() {
+  private void reusePreviouslyUsedVariableMap(SortedSet<Assignment> varsToRename) {
     // If prevUsedRenameMap had duplicate values then this pass would be
     // non-deterministic.
     // In such a case, the following will throw an IllegalArgumentException.
     checkNotNull(prevUsedRenameMap.getNewNameToOriginalNameMap());
-    for (Assignment a : assignments.values()) {
+    for (Assignment a : varsToRename) {
       String prevNewName = prevUsedRenameMap.lookupNewName(a.oldName);
       if (prevNewName == null || reservedNames.contains(prevNewName)) {
         continue;
@@ -559,9 +549,6 @@ final class RenameVars implements CompilerPass {
 
     // Keep track of the mapping
     renameMap.put(a.oldName, newName);
-
-    // Log the mapping
-    assignmentLog.append(a.oldName).append(" => ").append(newName).append('\n');
   }
 
   /**
@@ -590,8 +577,7 @@ final class RenameVars implements CompilerPass {
       throw new IllegalArgumentException("Var is not local");
     }
 
-    boolean isBleedingIntoScope = s.getParent() != null &&
-        localBleedingFunctions.contains(v);
+    boolean isBleedingIntoScope = s.getParent() != null && localBleedingFunctions.contains(v);
 
     while (s.getParent() != null) {
       if (isBleedingIntoScope) {
@@ -619,7 +605,6 @@ final class RenameVars implements CompilerPass {
    * be the same temporary name used when the rename map was created.
    */
   private boolean shouldTemporarilyRenameLocalsInScope(Scope s) {
-    return (!preferStableNames ||
-        s.getVarCount() <= MAX_LOCALS_IN_SCOPE_TO_TEMP_RENAME);
+    return (!preferStableNames || s.getVarCount() <= MAX_LOCALS_IN_SCOPE_TO_TEMP_RENAME);
   }
 }

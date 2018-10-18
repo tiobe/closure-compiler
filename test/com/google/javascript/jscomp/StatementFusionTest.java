@@ -16,19 +16,25 @@
 
 package com.google.javascript.jscomp;
 
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+
 /**
  * Unit tests for {@link StatementFusion}.
  *
  */
-public final class StatementFusionTest extends CompilerTestCase  {
+@RunWith(JUnit4.class)
+public final class StatementFusionTest extends CompilerTestCase {
 
   private boolean favorsCommas = false;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     favorsCommas = false;
-    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT5);
   }
 
   @Override
@@ -39,6 +45,7 @@ public final class StatementFusionTest extends CompilerTestCase  {
     return peepholePass;
   }
 
+  @Test
   public void testNothingToDo() {
     fuseSame("");
     fuseSame("a");
@@ -46,6 +53,7 @@ public final class StatementFusionTest extends CompilerTestCase  {
     fuseSame("if(a()){}");
   }
 
+  @Test
   public void testFoldBlockWithStatements() {
     fuse("a;b;c", "a,b,c");
     fuse("a();b();c();", "a(),b(),c()");
@@ -54,6 +62,7 @@ public final class StatementFusionTest extends CompilerTestCase  {
     fuse("a(),b(),c();d()", "a(),b(),c(),d()");
   }
 
+  @Test
   public void testFoldBlockIntoIf() {
     fuse("a;b;c;if(x){}", "if(a,b,c,x){}");
     fuse("a;b;c;if(x,y){}else{}", "if(a,b,c,x,y){}else{}");
@@ -64,6 +73,7 @@ public final class StatementFusionTest extends CompilerTestCase  {
     fuseSame("a();if(a()){}a()");
   }
 
+  @Test
   public void testFoldBlockReturn() {
     fuse("a;b;c;return x", "return a,b,c,x");
     fuse("a;b;c;return x+y", "return a,b,c,x+y");
@@ -72,32 +82,47 @@ public final class StatementFusionTest extends CompilerTestCase  {
     fuseSame("a;b;c;return x;a;b;c");
   }
 
+  @Test
   public void testFoldBlockThrow() {
     fuse("a;b;c;throw x", "throw a,b,c,x");
     fuse("a;b;c;throw x+y", "throw a,b,c,x+y");
     fuseSame("a;b;c;throw x;a;b;c");
   }
 
+  @Test
   public void testFoldSwitch() {
     fuse("a;b;c;switch(x){}", "switch(a,b,c,x){}");
   }
 
+  @Test
   public void testFuseIntoForIn1() {
     fuse("a;b;c;for(x in y){}", "for(x in a,b,c,y){}");
   }
 
+  @Test
   public void testFuseIntoForIn2() {
+    // This test case causes a parse warning in ES5 strict out, but is a parse error in ES6+ out.
+    setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT5_STRICT);
     setExpectParseWarningsThisTest();
     fuseSame("a();for(var x = b() in y){}");
   }
 
-  public void testFuseIntoVanillaFor() {
+  @Test
+  public void testFuseIntoVanillaFor1() {
     fuse("a;b;c;for(;g;){}", "for(a,b,c;g;){}");
     fuse("a;b;c;for(d;g;){}", "for(a,b,c,d;g;){}");
     fuse("a;b;c;for(d,e;g;){}", "for(a,b,c,d,e;g;){}");
     fuseSame("a();for(var x;g;){}");
   }
 
+  @Test
+  public void testFuseIntoVanillaFor2() {
+    fuseSame("a;b;c;for(var d;g;){}");
+    fuseSame("a;b;c;for(let d;g;){}");
+    fuseSame("a;b;c;for(const d = 5;g;){}");
+  }
+
+  @Test
   public void testFuseIntoLabel() {
     fuse("a;b;c;label:for(x in y){}", "label:for(x in a,b,c,y){}");
     fuse("a;b;c;label:for(;g;){}", "label:for(a,b,c;g;){}");
@@ -105,6 +130,7 @@ public final class StatementFusionTest extends CompilerTestCase  {
     fuseSame("a;b;c;label:while(true){}");
   }
 
+  @Test
   public void testFuseIntoBlock() {
     fuse("a;b;c;{d;e;f}", "{a,b,c,d,e,f}");
     fuse("a;b; label: { if(q) break label; bar(); }",
@@ -113,43 +139,74 @@ public final class StatementFusionTest extends CompilerTestCase  {
     fuseSame("a;b;c;label:{break label;d;e;}");
   }
 
+  @Test
   public void testNoFuseIntoWhile() {
     fuseSame("a;b;c;while(x){}");
   }
 
+  @Test
   public void testNoFuseIntoDo() {
     fuseSame("a;b;c;do{}while(x)");
   }
 
+  @Test
+  public void testNoFuseIntoBlock() {
+    // Never fuse a statement into a block that contains let/const/class declarations, or you risk
+    // colliding variable names. (unless the AST is normalized).
+    fuse("a; {b;}", "{a,b;}");
+    fuse("a; {b; var a = 1;}", "{a,b; var a = 1;}");
+    fuseSame("a; { b; let a = 1; }");
+    fuseSame("a; { b; const a = 1; }");
+    fuseSame("a; { b; class a {} }");
+    fuseSame("a; { b; function a() {} }");
+    fuseSame("a; { b; label: let a = 1; }");
+    fuseSame("a; { b; const otherVariable = 1; }");
+
+    enableNormalize();
+    test(
+        "function f(a) { if (COND) { a; { b; let a = 1; } } }",
+        "function f(a) { if (COND) { { a,b; let a$jscomp$1 = 1; } } }");
+    test(
+        "function f(a) { if (COND) { a; { b; let otherVariable = 1; } } }",
+        "function f(a) { if (COND) {  { a,b; let otherVariable = 1; } } }");
+  }
+
+  @Test
   public void testFavorComma1() {
     favorsCommas = true;
     test("a;b;c", "a,b,c");
   }
 
+  @Test
   public void testFavorComma2() {
     favorsCommas = true;
     test("a;b;c;if(d){}", "if(a,b,c,d){}");
   }
 
+  @Test
   public void testFavorComma3() {
     favorsCommas = true;
     test("a;b;c;if(d){} d;e;f", "if(a,b,c,d){}d,e,f");
   }
 
+  @Test
   public void testFavorComma4() {
     favorsCommas = true;
     test("if(d){} d;e;f", "if(d){}d,e,f");
   }
 
+  @Test
   public void testFavorComma5() {
     favorsCommas = true;
     test("a;b;c;if(d){}d;e;f;if(g){}", "if(a,b,c,d){}if(d,e,f,g){}");
   }
 
-  public void testNoGlobalSchopeChanges() {
+  @Test
+  public void testNoGlobalScopeChanges() {
     testSame("a,b,c");
   }
 
+  @Test
   public void testNoFunctionBlockChanges() {
     testSame("function foo() { a,b,c }");
   }

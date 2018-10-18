@@ -21,9 +21,9 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.LinkedHashMultimap;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
@@ -34,13 +34,15 @@ import com.google.javascript.jscomp.NodeTraversal.Callback;
 import com.google.javascript.jscomp.NodeTraversal.ChangeScopeRootCallback;
 import com.google.javascript.rhino.JSDocInfo;
 import com.google.javascript.rhino.Node;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 
 /**
- * Simple name-based definition gatherer that implements {@link DefinitionProvider}.
+ * Simple name-based definition gatherer.
  *
  * <p>It treats all variable writes as happening in the global scope and treats all objects as
  * capable of having the same set of properties. The current implementation only handles definitions
@@ -52,7 +54,7 @@ import java.util.Set;
  * use the type system to make this more accurate, in practice after disambiguate properties has
  * run, names are unique enough that this works well enough to accept the performance gain.
  */
-public class NameBasedDefinitionProvider implements DefinitionProvider, CompilerPass {
+public class NameBasedDefinitionProvider implements CompilerPass {
 
   protected final AbstractCompiler compiler;
 
@@ -83,10 +85,10 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
 
     this.hasProcessBeenRun = true;
 
-    NodeTraversal.traverseEs6(compiler, externs, new DefinitionGatheringCallback(true));
+    NodeTraversal.traverse(compiler, externs, new DefinitionGatheringCallback(true));
     dropUntypedExterns();
 
-    NodeTraversal.traverseEs6(compiler, source, new DefinitionGatheringCallback(false));
+    NodeTraversal.traverse(compiler, source, new DefinitionGatheringCallback(false));
   }
 
   public void rebuildScopeRoots(List<Node> changedScopeRoots, List<Node> deletedScopeRoots) {
@@ -100,7 +102,7 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
     }
 
     DefinitionGatheringCallback cb = new DefinitionGatheringCallback();
-    NodeTraversal.traverseEs6ScopeRoots(compiler, null, changedScopeRoots, cb, cb, false);
+    NodeTraversal.traverseScopeRoots(compiler, null, changedScopeRoots, cb, cb, false);
   }
 
   /** @return Whether the node has a JSDoc that actually declares something. */
@@ -127,7 +129,7 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
    */
   private void dropUntypedExterns() {
     for (String name : definitionsByName.keySet()) {
-      for (Definition definition : Lists.newArrayList(definitionsByName.get(name))) {
+      for (Definition definition : new ArrayList<>(definitionsByName.get(name))) {
         if (!(definition instanceof ExternalNameOnlyDefinition)) {
           continue;
         }
@@ -156,13 +158,16 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
     }
   }
 
-  @Override
+  /**
+   * Returns a collection of definitions that characterize the possible values of a variable or
+   * property.
+   */
   public Collection<Definition> getDefinitionsReferencedAt(Node useSiteNode) {
     checkState(hasProcessBeenRun, "Hasn't been initialized with process() yet.");
-    checkArgument(useSiteNode.isGetProp() || useSiteNode.isName());
+    checkArgument(useSiteNode.isGetProp() || useSiteNode.isName(), useSiteNode);
 
     if (definitionNodes.contains(useSiteNode)) {
-      return null;
+      return ImmutableList.of();
     }
 
     if (useSiteNode.isGetProp()) {
@@ -174,10 +179,9 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
 
     String name = getSimplifiedName(useSiteNode);
     if (name != null) {
-      Collection<Definition> definitions = definitionsByName.get(name);
-      return definitions.isEmpty() ? null : definitions;
+      return definitionsByName.get(name);
     }
-    return null;
+    return ImmutableList.of();
   }
 
   private class DefinitionGatheringCallback implements Callback, ChangeScopeRootCallback {
@@ -215,13 +219,13 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
     @Override
     public void visit(NodeTraversal traversal, Node node, Node parent) {
       if (inExterns) {
-        visitExterns(traversal, node, parent);
+        visitExterns(traversal, node);
       } else {
         visitCode(traversal, node);
       }
     }
 
-    private void visitExterns(NodeTraversal traversal, Node node, Node parent) {
+    private void visitExterns(NodeTraversal traversal, Node node) {
       if (node.getJSDocInfo() != null) {
         for (Node typeRoot : node.getJSDocInfo().getTypeNodes()) {
           traversal.traverse(typeRoot);
@@ -301,6 +305,7 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
    * <p>TODO(user) revisit. it would be helpful to at least use fully qualified names in the case of
    * namespaces. Might not matter as much if this pass runs after {@link CollapseProperties}.
    */
+  @Nullable
   public static String getSimplifiedName(Node node) {
     if (node.isName()) {
       String name = node.getString();
@@ -311,6 +316,8 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
       }
     } else if (node.isGetProp()) {
       return "this." + node.getLastChild().getString();
+    } else if (node.isMemberFunctionDef()) {
+      return "this." + node.getString();
     }
     return null;
   }
@@ -320,7 +327,6 @@ public class NameBasedDefinitionProvider implements DefinitionProvider, Compiler
    *
    * @return definition site collection.
    */
-  @Override
   public Collection<DefinitionSite> getDefinitionSites() {
     checkState(hasProcessBeenRun, "Hasn't been initialized with process() yet.");
     return definitionSitesByDefinitionSiteNode.values();

@@ -17,17 +17,23 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.base.Joiner;
-import com.google.javascript.rhino.FunctionTypeI;
 import com.google.javascript.rhino.Node;
-import com.google.javascript.rhino.TypeI;
+import com.google.javascript.rhino.jstype.FunctionType;
+import com.google.javascript.rhino.jstype.JSType;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link DevirtualizePrototypeMethods}
  *
  */
-public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCase {
+@RunWith(JUnit4.class)
+public final class DevirtualizePrototypeMethodsTest extends CompilerTestCase {
   private static final String EXTERNAL_SYMBOLS =
       DEFAULT_EXTERNS + "var extern;extern.externalMethod";
 
@@ -42,9 +48,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
-    this.mode = TypeInferenceMode.NEITHER;
+    disableTypeCheck();
   }
 
   /**
@@ -54,9 +61,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     return Joiner.on(";").join(parts);
   }
 
-  public void testRewritePrototypeMethodsWithCorrectTypes() throws Exception {
+  @Test
+  public void testRewritePrototypeMethodsWithCorrectTypes() {
     String input =
-        LINE_JOINER.join(
+        lines(
             "/** @constructor */",
             "function A() { this.x = 3; }",
             "/** @return {number} */",
@@ -70,7 +78,7 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
             "o.bar(2);",
             "o.baz()");
     String expected =
-        LINE_JOINER.join(
+        lines(
             "/** @constructor */",
             "function A(){ this.x = 3; }",
             "var JSCompiler_StaticMethods_foo = ",
@@ -89,30 +97,27 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
             "JSCompiler_StaticMethods_bar(o, 2);",
             "JSCompiler_StaticMethods_baz(o)");
 
-    this.mode = TypeInferenceMode.OTI_ONLY;
-    test(input, expected);
-    checkTypeOfRewrittenMethods();
-
-    this.mode = TypeInferenceMode.NTI_ONLY;
+    enableTypeCheck();
     test(input, expected);
     checkTypeOfRewrittenMethods();
   }
 
   private void checkTypeOfRewrittenMethods() {
-    TypeI thisType = getTypeAtPosition(0).toMaybeFunctionType().getInstanceType();
-    FunctionTypeI fooType = getTypeAtPosition(1, 0, 0).toMaybeFunctionType();
-    FunctionTypeI barType = getTypeAtPosition(2, 0, 0).toMaybeFunctionType();
-    FunctionTypeI bazType = getTypeAtPosition(3, 0, 0).toMaybeFunctionType();
-    TypeI fooResultType = getTypeAtPosition(5, 0);
-    TypeI barResultType = getTypeAtPosition(6, 0);
-    TypeI bazResultType = getTypeAtPosition(7, 0);
+    JSType thisType = getTypeAtPosition(0).toMaybeFunctionType().getInstanceType();
+    FunctionType fooType = getTypeAtPosition(1, 0, 0).toMaybeFunctionType();
+    FunctionType barType = getTypeAtPosition(2, 0, 0).toMaybeFunctionType();
+    FunctionType bazType = getTypeAtPosition(3, 0, 0).toMaybeFunctionType();
+    JSType fooResultType = getTypeAtPosition(5, 0);
+    JSType barResultType = getTypeAtPosition(6, 0);
+    JSType bazResultType = getTypeAtPosition(7, 0);
 
-    TypeI number = fooResultType;
-    TypeI receiver = fooType.getTypeOfThis();
-    assertTrue("Expected number: " + number, number.isNumberValueType());
-    // NOTE: OTI has the receiver as unknown, NTI has it as null.
-    assertTrue(
-        "Expected null or unknown: " + receiver, receiver == null || receiver.isUnknownType());
+    JSType number = fooResultType;
+    JSType receiver = fooType.getTypeOfThis();
+    assertWithMessage("Expected number: " + number).that(number.isNumberValueType()).isTrue();
+    // NOTE: The type checker has the receiver as unknown
+    assertWithMessage("Expected null or unknown: " + receiver)
+        .that(receiver == null || receiver.isUnknownType())
+        .isTrue();
     assertThat(barResultType).isEqualTo(number);
 
     // Check that foo's type is {function(A): number}
@@ -125,38 +130,39 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     assertThat(barType.getReturnType()).isEqualTo(number);
     assertThat(barType.getTypeOfThis()).isEqualTo(receiver);
 
-    // Check that baz's type is {function(A): undefined} in OTI and {function(A): ?} in NTI
+    // Check that baz's type is {function(A): undefined}
     assertThat(bazType.getParameterTypes()).containsExactly(thisType);
     assertThat(bazType.getTypeOfThis()).isEqualTo(receiver);
 
     // TODO(sdh): NTI currently fails to infer the result of the baz() call (b/37351897)
     // so we handle it more carefully.  When methods are deferred, this should be changed
     // to check that it's exactly unknown.
-    assertTrue(
-        "Expected undefined or unknown: " + bazResultType,
-        bazResultType.isVoidType() || bazResultType.isUnknownType());
-    assertTrue(
-        "Expected undefined: " + bazType.getReturnType(), bazType.getReturnType().isVoidType());
+    assertWithMessage("Expected undefined or unknown: " + bazResultType)
+        .that(bazResultType.isVoidType() || bazResultType.isUnknownType())
+        .isTrue();
+    assertWithMessage("Expected undefined: " + bazType.getReturnType())
+        .that(bazType.getReturnType().isVoidType())
+        .isTrue();
   }
 
-  private TypeI getTypeAtPosition(int... indices) {
+  private JSType getTypeAtPosition(int... indices) {
     Node node = getLastCompiler().getJsRoot().getFirstChild();
     for (int index : indices) {
       node = node.getChildAtIndex(index);
     }
-    return node.getTypeI();
+    return node.getJSType();
   }
 
-
-  public void testRewriteChained() throws Exception {
+  @Test
+  public void testRewriteChained() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "A.prototype.foo = function(){return this.b};",
             "B.prototype.bar = function(){};",
             "o.foo().bar()");
 
     String expected =
-        LINE_JOINER.join(
+        lines(
             "var JSCompiler_StaticMethods_foo = ",
             "function(JSCompiler_StaticMethods_foo$self) {",
             "  return JSCompiler_StaticMethods_foo$self.b",
@@ -178,7 +184,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     private NoRewriteDeclarationUsedAsRValue() {}
   }
 
-  public void testRewriteDeclIsExpressionStatement() throws Exception {
+  @Test
+  public void testRewriteDeclIsExpressionStatement() {
     test(semicolonJoin(NoRewriteDeclarationUsedAsRValue.DECL,
                        NoRewriteDeclarationUsedAsRValue.CALL),
          "var JSCompiler_StaticMethods_foo =" +
@@ -186,12 +193,14 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
          "JSCompiler_StaticMethods_foo(o)");
   }
 
-  public void testNoRewriteDeclUsedAsAssignmentRhs() throws Exception {
+  @Test
+  public void testNoRewriteDeclUsedAsAssignmentRhs() {
     testSame(semicolonJoin("var c = " + NoRewriteDeclarationUsedAsRValue.DECL,
                            NoRewriteDeclarationUsedAsRValue.CALL));
   }
 
-  public void testNoRewriteDeclUsedAsCallArgument() throws Exception {
+  @Test
+  public void testNoRewriteDeclUsedAsCallArgument() {
     testSame(semicolonJoin("f(" + NoRewriteDeclarationUsedAsRValue.DECL + ")",
                            NoRewriteDeclarationUsedAsRValue.CALL));
   }
@@ -201,7 +210,7 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
    */
   private static class NoRewriteIfNotInGlobalScopeTestInput {
     static final String INPUT =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype.foo = function() {return this.x};",
             "var o = new a;",
@@ -210,9 +219,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     private NoRewriteIfNotInGlobalScopeTestInput() {}
   }
 
-  public void testRewriteInGlobalScope() throws Exception {
+  @Test
+  public void testRewriteInGlobalScope() {
     String expected =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "var JSCompiler_StaticMethods_foo = ",
             "function(JSCompiler_StaticMethods_foo$self) {",
@@ -224,30 +234,34 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     test(NoRewriteIfNotInGlobalScopeTestInput.INPUT, expected);
   }
 
-  public void testNoRewriteIfNotInGlobalScope1() throws Exception {
+  @Test
+  public void testNoRewriteIfNotInGlobalScope1() {
     setAcceptedLanguage(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     testSame("if(true){" + NoRewriteIfNotInGlobalScopeTestInput.INPUT + "}");
   }
 
-  public void testNoRewriteIfNotInGlobalScope2() throws Exception {
+  @Test
+  public void testNoRewriteIfNotInGlobalScope2() {
     testSame("function enclosingFunction() {" +
              NoRewriteIfNotInGlobalScopeTestInput.INPUT +
              "}");
   }
 
-  public void testNoRewriteNamespaceFunctions() throws Exception {
+  @Test
+  public void testNoRewriteNamespaceFunctions() {
     String source = "function a(){}; a.foo = function() {return this.x}; a.foo()";
     testSame(source);
   }
 
-  public void testRewriteIfDuplicates() throws Exception {
+  @Test
+  public void testRewriteIfDuplicates() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function A(){}; A.prototype.getFoo = function() { return 1; }; ",
             "function B(){}; B.prototype.getFoo = function() { return 1; }; ",
             "var x = Math.random() ? new A() : new B();",
             "alert(x.getFoo());"),
-        LINE_JOINER.join(
+        lines(
             "function A(){}; ",
             "var JSCompiler_StaticMethods_getFoo=",
             "function(JSCompiler_StaticMethods_getFoo$self){return 1};",
@@ -257,16 +271,17 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
             "alert(JSCompiler_StaticMethods_getFoo(x));"));
   }
 
-  public void testRewriteIfDuplicatesWithThis() throws Exception {
+  @Test
+  public void testRewriteIfDuplicatesWithThis() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function A(){}; A.prototype.getFoo = ",
             "function() { return this._foo + 1; }; ",
             "function B(){}; B.prototype.getFoo = ",
             "function() { return this._foo + 1; }; ",
             "var x = Math.random() ? new A() : new B();",
             "alert(x.getFoo());"),
-        LINE_JOINER.join(
+        lines(
             "function A(){}; ",
             "var JSCompiler_StaticMethods_getFoo=",
             "function(JSCompiler_StaticMethods_getFoo$self){",
@@ -278,9 +293,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
             "alert(JSCompiler_StaticMethods_getFoo(x));"));
   }
 
-  public void testNoRewriteIfDuplicates() throws Exception {
+  @Test
+  public void testNoRewriteIfDuplicates() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "function A(){}; A.prototype.getFoo = function() { return 1; }; ",
             "function B(){}; B.prototype.getFoo = function() { return 2; }; ",
             "var x = Math.random() ? new A() : new B();",
@@ -298,58 +314,65 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     private NoRewritePrototypeObjectLiteralsTestInput() {}
   }
 
-  public void testRewritePrototypeNoObjectLiterals() throws Exception {
+  @Test
+  public void testRewritePrototypeNoObjectLiterals() {
     test(
         semicolonJoin(
             NoRewritePrototypeObjectLiteralsTestInput.REGULAR,
             NoRewritePrototypeObjectLiteralsTestInput.CALL),
-        LINE_JOINER.join(
+        lines(
             "var JSCompiler_StaticMethods_foo = ",
             "function(JSCompiler_StaticMethods_foo$self) { return 1; };",
             "JSCompiler_StaticMethods_foo(o)"));
   }
 
-  public void testRewritePrototypeObjectLiterals1() throws Exception {
+  @Test
+  public void testRewritePrototypeObjectLiterals1() {
     test(
         semicolonJoin(
             NoRewritePrototypeObjectLiteralsTestInput.OBJ_LIT,
             NoRewritePrototypeObjectLiteralsTestInput.CALL),
-        LINE_JOINER.join(
+        lines(
             "a.prototype={};",
             "var JSCompiler_StaticMethods_foo=",
             "function(JSCompiler_StaticMethods_foo$self){ return 2; };",
             "JSCompiler_StaticMethods_foo(o)"));
   }
 
-  public void testNoRewritePrototypeObjectLiterals2() throws Exception {
+  @Test
+  public void testNoRewritePrototypeObjectLiterals2() {
     testSame(semicolonJoin(NoRewritePrototypeObjectLiteralsTestInput.OBJ_LIT,
                            NoRewritePrototypeObjectLiteralsTestInput.REGULAR,
                            NoRewritePrototypeObjectLiteralsTestInput.CALL));
   }
 
-  public void testNoRewriteExternalMethods1() throws Exception {
+  @Test
+  public void testNoRewriteExternalMethods1() {
     testSame("a.externalMethod()");
   }
 
-  public void testNoRewriteExternalMethods2() throws Exception {
+  @Test
+  public void testNoRewriteExternalMethods2() {
     testSame("A.prototype.externalMethod = function(){}; o.externalMethod()");
   }
 
-  public void testNoRewriteCodingConvention() throws Exception {
+  @Test
+  public void testNoRewriteCodingConvention() {
     // no rename, leading _ indicates exported symbol
     testSame("a.prototype._foo = function() {};");
   }
 
-  public void testRewriteNoVarArgs() throws Exception {
+  @Test
+  public void testRewriteNoVarArgs() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype.foo = function(args) {return args};",
             "var o = new a;",
             "o.foo()");
 
     String expected =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "var JSCompiler_StaticMethods_foo = ",
             "  function(JSCompiler_StaticMethods_foo$self, args) {return args};",
@@ -359,9 +382,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     test(source, expected);
   }
 
-  public void testNoRewriteVarArgs() throws Exception {
+  @Test
+  public void testNoRewriteVarArgs() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype.foo = function(var_args) {return arguments};",
             "var o = new a;",
@@ -379,9 +403,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     private NoRewriteNonCallReferenceTestInput() {}
   }
 
-  public void testRewriteCallReference() throws Exception {
+  @Test
+  public void testRewriteCallReference() {
     String expected =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "var JSCompiler_StaticMethods_foo = ",
             "function(JSCompiler_StaticMethods_foo$self) {",
@@ -393,11 +418,13 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     test(NoRewriteNonCallReferenceTestInput.BASE + "o.foo()", expected);
   }
 
-  public void testNoRewriteNoReferences() throws Exception {
+  @Test
+  public void testNoRewriteNoReferences() {
     testSame(NoRewriteNonCallReferenceTestInput.BASE);
   }
 
-  public void testNoRewriteNonCallReference() throws Exception {
+  @Test
+  public void testNoRewriteNonCallReference() {
     testSame(NoRewriteNonCallReferenceTestInput.BASE + "o.foo && o.foo()");
   }
 
@@ -417,7 +444,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     private NoRewriteNestedFunctionTestInput() {}
   }
 
-  public void testRewriteNoNestedFunction() throws Exception {
+  @Test
+  public void testRewriteNoNestedFunction() {
     test(semicolonJoin(
              NoRewriteNestedFunctionTestInput.PREFIX + "}",
              NoRewriteNestedFunctionTestInput.SUFFIX,
@@ -430,7 +458,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
              "JSCompiler_StaticMethods_bar(o)"));
   }
 
-  public void testNoRewriteNestedFunction() throws Exception {
+  @Test
+  public void testNoRewriteNestedFunction() {
     test(NoRewriteNestedFunctionTestInput.PREFIX +
          NoRewriteNestedFunctionTestInput.INNER + "};" +
          NoRewriteNestedFunctionTestInput.SUFFIX,
@@ -439,15 +468,16 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
          NoRewriteNestedFunctionTestInput.EXPECTED_SUFFIX);
   }
 
-  public void testRewriteImplementedMethod() throws Exception {
+  @Test
+  public void testRewriteImplementedMethod() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype.foo = function(args) {return args};",
             "var o = new a;",
             "o.foo()");
     String expected =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "var JSCompiler_StaticMethods_foo = ",
             "  function(JSCompiler_StaticMethods_foo$self, args) {return args};",
@@ -456,9 +486,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     test(source, expected);
   }
 
-  public void testRewriteImplementedMethod2() throws Exception {
+  @Test
+  public void testRewriteImplementedMethod2() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype['foo'] = function(args) {return args};",
             "var o = new a;",
@@ -466,9 +497,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     testSame(source);
   }
 
-  public void testRewriteImplementedMethod3() throws Exception {
+  @Test
+  public void testRewriteImplementedMethod3() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype.foo = function(args) {return args};",
             "var o = new a;",
@@ -476,9 +508,10 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     testSame(source);
   }
 
-  public void testRewriteImplementedMethod4() throws Exception {
+  @Test
+  public void testRewriteImplementedMethod4() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype['foo'] = function(args) {return args};",
             "var o = new a;",
@@ -486,14 +519,16 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     testSame(source);
   }
 
-  public void testRewriteImplementedMethod5() throws Exception {
+  @Test
+  public void testRewriteImplementedMethod5() {
     String source = "(function() {this.foo()}).prototype.foo = function() {extern();};";
     testSame(source);
   }
 
-  public void testRewriteImplementedMethodInObj() throws Exception {
+  @Test
+  public void testRewriteImplementedMethodInObj() {
     String source =
-        LINE_JOINER.join(
+        lines(
             "function a(){}",
             "a.prototype = {foo: function(args) {return args}};",
             "var o = new a;",
@@ -507,32 +542,38 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
         "JSCompiler_StaticMethods_foo(o)");
   }
 
-  public void testNoRewriteGet1() throws Exception {
+  @Test
+  public void testNoRewriteGet1() {
     // Getters and setter require special handling.
     testSame("function a(){}; a.prototype = {get foo(){return f}}; var o = new a; o.foo()");
   }
 
-  public void testNoRewriteGet2() throws Exception {
+  @Test
+  public void testNoRewriteGet2() {
     // Getters and setter require special handling.
     testSame("function a(){}; a.prototype = {get foo(){return 1}}; var o = new a; o.foo");
   }
 
-  public void testNoRewriteSet1() throws Exception {
+  @Test
+  public void testNoRewriteSet1() {
     // Getters and setter require special handling.
     String source = "function a(){}; a.prototype = {set foo(a){}}; var o = new a; o.foo()";
     testSame(source);
   }
 
-  public void testNoRewriteSet2() throws Exception {
+  @Test
+  public void testNoRewriteSet2() {
     // Getters and setter require special handling.
     String source = "function a(){}; a.prototype = {set foo(a){}}; var o = new a; o.foo = 1";
     testSame(source);
   }
 
-  public void testNoRewriteNotImplementedMethod() throws Exception {
+  @Test
+  public void testNoRewriteNotImplementedMethod() {
     testSame("function a(){}; var o = new a; o.foo()");
   }
 
+  @Test
   public void testWrapper() {
     testSame("(function() {})()");
   }
@@ -550,7 +591,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
     private ModuleTestInput() {}
   }
 
-  public void testRewriteSameModule1() throws Exception {
+  @Test
+  public void testRewriteSameModule1() {
     JSModule[] modules = createModuleStar(
         // m1
         semicolonJoin(ModuleTestInput.DEFINITION,
@@ -567,7 +609,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
       });
   }
 
-  public void testRewriteSameModule2() throws Exception {
+  @Test
+  public void testRewriteSameModule2() {
     JSModule[] modules = createModuleStar(
         // m1
         "",
@@ -584,7 +627,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
       });
   }
 
-  public void testRewriteSameModule3() throws Exception {
+  @Test
+  public void testRewriteSameModule3() {
     JSModule[] modules = createModuleStar(
         // m1
         semicolonJoin(ModuleTestInput.USE,
@@ -601,7 +645,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
       });
   }
 
-  public void testRewriteDefinitionBeforeUse() throws Exception {
+  @Test
+  public void testRewriteDefinitionBeforeUse() {
     JSModule[] modules = createModuleStar(
         // m1
         ModuleTestInput.DEFINITION,
@@ -616,7 +661,8 @@ public final class DevirtualizePrototypeMethodsTest extends TypeICompilerTestCas
       });
   }
 
-  public void testNoRewriteUseBeforeDefinition() throws Exception {
+  @Test
+  public void testNoRewriteUseBeforeDefinition() {
     JSModule[] modules = createModuleStar(
         // m1
         ModuleTestInput.USE,

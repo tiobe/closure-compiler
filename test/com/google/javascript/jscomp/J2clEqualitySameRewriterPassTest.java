@@ -15,17 +15,24 @@
  */
 package com.google.javascript.jscomp;
 
-public class J2clEqualitySameRewriterPassTest extends TypeICompilerTestCase {
-  private static final String EXTERN = "Equality.$same = function(a, b) {};";
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+
+@RunWith(JUnit4.class)
+public class J2clEqualitySameRewriterPassTest extends CompilerTestCase {
+  private static final String EXTERN = "Equality.$same = function(opt_a, opt_b) {};";
 
   public J2clEqualitySameRewriterPassTest() {
     super(MINIMAL_EXTERNS + EXTERN);
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
-    this.mode = TypeInferenceMode.BOTH;
+    enableTypeCheck();
   }
 
   @Override
@@ -40,9 +47,10 @@ public class J2clEqualitySameRewriterPassTest extends TypeICompilerTestCase {
     return compiler;
   }
 
+  @Test
   public void testRewriteEqualitySame() {
     test(
-        LINE_JOINER.join(
+        lines(
             "Equality.$same(0, '');",
             "var a = 'ABC';",
             "Equality.$same(a, 'ABC');",
@@ -51,7 +59,7 @@ public class J2clEqualitySameRewriterPassTest extends TypeICompilerTestCase {
             "Equality.$same(b, []);",
             "Equality.$same(b, null);",
             "Equality.$same(null, b);"),
-        LINE_JOINER.join(
+        lines(
             "0 === '';",
             "var a = 'ABC';",
             "a === 'ABC';",
@@ -62,9 +70,10 @@ public class J2clEqualitySameRewriterPassTest extends TypeICompilerTestCase {
             "null == b;"));
   }
 
+  @Test
   public void testNotRewriteEqualitySame() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "Equality.$same(c, d);",
             "/** @type {number} */",
             "var num = 5",
@@ -77,9 +86,10 @@ public class J2clEqualitySameRewriterPassTest extends TypeICompilerTestCase {
             "Equality.$same(str, allType);"));
   }
 
+  @Test
   public void testNotRewriteEqualitySame_sameTypes() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "/** @type {number|undefined} */",
             "var num1 = 5;",
             "/** @type {?number} */",
@@ -102,5 +112,13 @@ public class J2clEqualitySameRewriterPassTest extends TypeICompilerTestCase {
             "/** @type {*} */",
             "var allType2 = '1';",
             "Equality.$same(allType1, allType2);"));
+  }
+
+  @Test
+  public void testNotRewriteEqualitySame_parametersOptimizedAway() {
+    testSame(
+        lines(
+            "Equality.$same(null);",
+            "Equality.$same();"));
   }
 }

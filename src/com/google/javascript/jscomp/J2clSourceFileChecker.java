@@ -20,14 +20,13 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.javascript.rhino.Node;
 
 /**
- * Checks whether there are J2CL generated source files with pattern:
- * "path/foo.js.zip!path/bar.java.js".
+ * Checks whether there are J2CL generated source files with pattern "*.java.js".
  */
 final class J2clSourceFileChecker implements CompilerPass {
 
-  private AbstractCompiler compiler;
-  // The Annotation value type should be Boolean.
   static final String HAS_J2CL_ANNOTATION_KEY = "HAS_J2CL";
+
+  private final AbstractCompiler compiler;
 
   J2clSourceFileChecker(AbstractCompiler compiler) {
     this.compiler = compiler;

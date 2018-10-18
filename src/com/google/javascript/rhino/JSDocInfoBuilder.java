@@ -63,7 +63,7 @@ public final class JSDocInfoBuilder {
   private boolean populated;
 
   // whether to include the documentation itself when parsing the JsDoc
-  private boolean parseDocumentation;
+  private final boolean parseDocumentation;
 
   // the current marker, if any.
   private JSDocInfo.Marker currentMarker;
@@ -147,35 +147,14 @@ public final class JSDocInfoBuilder {
     return currentInfo.getDescription() != null;
   }
 
-
   /**
-   * Builds a {@link JSDocInfo} object based on the populated information and
-   * returns it.
+   * Builds a {@link JSDocInfo} object based on the populated information and returns it.
    *
-   * @return a {@link JSDocInfo} object populated with the values given to this
-   *     builder. If no value was populated, this method simply returns
-   *     {@code null}
+   * @return a {@link JSDocInfo} object populated with the values given to this builder. If no value
+   *     was populated, this method simply returns {@code null}
    */
   public JSDocInfo build() {
     return build(false);
-  }
-
-  /**
-   * Builds a {@link JSDocInfo} object based on the populated information and
-   * returns it. Once this method is called, the builder can be reused to build
-   * another {@link JSDocInfo} object.
-   *
-   * @return a {@link JSDocInfo} object populated with the values given to this
-   *     builder. If no value was populated, this method simply returns
-   *     {@code null}
-   */
-  public JSDocInfo buildAndReset() {
-    JSDocInfo info = build(false);
-    if (currentInfo == null) {
-      currentInfo = new JSDocInfo(parseDocumentation);
-      populated = false;
-    }
-    return info;
   }
 
   /**
@@ -198,6 +177,24 @@ public final class JSDocInfoBuilder {
     } else {
       return null;
     }
+  }
+
+  /**
+   * Builds a {@link JSDocInfo} object based on the populated information and
+   * returns it. Once this method is called, the builder can be reused to build
+   * another {@link JSDocInfo} object.
+   *
+   * @return a {@link JSDocInfo} object populated with the values given to this
+   *     builder. If no value was populated, this method simply returns
+   *     {@code null}
+   */
+  public JSDocInfo buildAndReset() {
+    JSDocInfo info = build(false);
+    if (currentInfo == null) {
+      currentInfo = new JSDocInfo(parseDocumentation);
+      populated = false;
+    }
+    return info;
   }
 
   /** Generate defaults when certain parameters are not specified. */
@@ -534,15 +531,12 @@ public final class JSDocInfoBuilder {
   }
 
   /**
-   * Records the list of suppressed warnings.
+   * Records the list of suppressed warnings, possibly adding to the set of already configured
+   * warnings.
    */
-  public boolean recordSuppressions(Set<String> suppressions) {
-    if (currentInfo.setSuppressions(suppressions)) {
-      populated = true;
-      return true;
-    } else {
-      return false;
-    }
+  public void recordSuppressions(Set<String> suppressions) {
+    currentInfo.addSuppressions(suppressions);
+    populated = true;
   }
 
   public void addSuppression(String suppression) {
@@ -743,7 +737,7 @@ public final class JSDocInfoBuilder {
    *     if it was already defined
    */
   public boolean recordConstancy() {
-    if (!currentInfo.isConstant()) {
+    if (!currentInfo.hasConstAnnotation()) {
       currentInfo.setConstant(true);
       populated = true;
       return true;
@@ -880,6 +874,23 @@ public final class JSDocInfoBuilder {
   public boolean recordNoCollapse() {
     if (!currentInfo.isNoCollapse()) {
       currentInfo.setNoCollapse(true);
+      populated = true;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * Records that the {@link JSDocInfo} being built should have its
+   * {@link JSDocInfo#isNoInline()} flag set to {@code true}.
+   *
+   * @return {@code true} if the no inline flag was recorded and {@code false}
+   *     if it was already recorded
+   */
+  public boolean recordNoInline() {
+    if (!currentInfo.isNoInline()) {
+      currentInfo.setNoInline(true);
       populated = true;
       return true;
     } else {
@@ -1030,20 +1041,6 @@ public final class JSDocInfoBuilder {
   public boolean recordOverride() {
     if (!currentInfo.isOverride()) {
       currentInfo.setOverride(true);
-      populated = true;
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  /**
-   * Records that the {@link JSDocInfo} being built should have its
-   * {@link JSDocInfo#isNoAlias()} flag set to {@code true}.
-   */
-  public boolean recordNoAlias() {
-    if (!currentInfo.isNoAlias()) {
-      currentInfo.setNoAlias(true);
       populated = true;
       return true;
     } else {
@@ -1240,86 +1237,6 @@ public final class JSDocInfoBuilder {
     } else {
       return false;
     }
-  }
-
-  /**
-   * Returns whether current JSDoc is annotated with {@code @jaggerInject}.
-   */
-  public boolean isJaggerInjectRecorded() {
-    return currentInfo.isJaggerInject();
-  }
-
-  /**
-   * Records annotation with {@code @jaggerInject}.
-   */
-  public boolean recordJaggerInject(boolean inject) {
-    if (!isJaggerInjectRecorded()) {
-      currentInfo.setJaggerInject(inject);
-      populated = true;
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Returns whether current JSDoc is annotated with {@code @jaggerModule}.
-   */
-  public boolean isJaggerModuleRecorded() {
-    return currentInfo.isJaggerModule();
-  }
-
-  /**
-   * Records annotation with {@code @jaggerModule}.
-   */
-  public boolean recordJaggerModule(boolean jaggerModule) {
-    if (!isJaggerModuleRecorded()) {
-      currentInfo.setJaggerModule(jaggerModule);
-      populated = true;
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Returns whether current JSDoc is annotated with {@code @jaggerProvide}.
-   */
-  public boolean isJaggerProvideRecorded() {
-    return currentInfo.isJaggerProvide();
-  }
-
-  /**
-   * Records annotation with {@code @jaggerProvide}.
-   */
-  public boolean recordJaggerProvide(boolean jaggerProvide) {
-    if (!isJaggerProvideRecorded()) {
-      currentInfo.setJaggerProvide(jaggerProvide);
-      populated = true;
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Returns whether current JSDoc is annotated with {@code @jaggerProvide}.
-   */
-  public boolean isJaggerProvidePromiseRecorded() {
-    return currentInfo.isJaggerProvidePromise();
-  }
-
-  /**
-   * Records annotation with {@code @jaggerProvide}.
-   */
-  public boolean recordJaggerProvidePromise(boolean jaggerPromise) {
-    if (!isJaggerProvidePromiseRecorded()) {
-      currentInfo.setJaggerProvidePromise(jaggerPromise);
-      populated = true;
-      return true;
-    }
-
-    return false;
   }
 
   /**

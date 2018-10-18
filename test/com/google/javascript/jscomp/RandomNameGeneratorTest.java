@@ -17,6 +17,7 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
@@ -24,7 +25,11 @@ import java.util.Collections;
 import java.util.Random;
 import java.util.Set;
 import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public final class RandomNameGeneratorTest extends TestCase {
 
   private static String[] generate(RandomNameGenerator ng, int count)
@@ -36,30 +41,34 @@ public final class RandomNameGeneratorTest extends TestCase {
     return result;
   }
 
-  public static void testConstructorInvalidPrefixes() throws Exception {
+  @Test
+  public void testConstructorInvalidPrefixes() throws Exception {
     Random random = new Random(0);
 
     try {
       new RandomNameGenerator(Collections.<String>emptySet(), "123abc",
           null, random);
-      fail("Constructor should throw exception when the first char of prefix "
-          + "is invalid");
+      assertWithMessage(
+              "Constructor should throw exception when the first char of prefix is invalid")
+          .fail();
     } catch (IllegalArgumentException ex) {
       // The error messages should contain meaningful information.
-      assertThat(ex.getMessage()).contains("W, X, Y, Z, $");
+      assertThat(ex).hasMessageThat().contains("W, X, Y, Z, $");
     }
 
     try {
       new RandomNameGenerator(Collections.<String>emptySet(), "abc%",
           null, random);
-      fail("Constructor should throw exception when one of prefix characters "
-          + "is invalid");
+      assertWithMessage(
+              "Constructor should throw exception when one of prefix characters is invalid")
+          .fail();
     } catch (IllegalArgumentException ex) {
-      assertThat(ex.getMessage()).contains("W, X, Y, Z, _, 0, 1");
+      assertThat(ex).hasMessageThat().contains("W, X, Y, Z, _, 0, 1");
     }
   }
 
-  public static void testGenerate() throws Exception {
+  @Test
+  public void testGenerate() throws Exception {
     // Since there's a hash function involved, there's not much point in
     // mocking Random to get nicer values. Instead, let's just try to
     // verify the sanity of the results.
@@ -122,7 +131,8 @@ public final class RandomNameGeneratorTest extends TestCase {
     assertThat(100.0 * countPass / countTest).isGreaterThan(25.0); // arbitrary threshold
   }
 
-  public static void testFirstCharAlphabet() throws Exception {
+  @Test
+  public void testFirstCharAlphabet() throws Exception {
     Random random = new Random(0);
     Set<String> reservedNames = ImmutableSet.of();
     RandomNameGenerator ng = new RandomNameGenerator(
@@ -153,7 +163,8 @@ public final class RandomNameGeneratorTest extends TestCase {
     }
   }
 
-  public static void testPrefix() throws Exception {
+  @Test
+  public void testPrefix() throws Exception {
     Random random = new Random(0);
     Set<String> reservedNames = ImmutableSet.of();
     String prefix = "prefix";
@@ -171,7 +182,8 @@ public final class RandomNameGeneratorTest extends TestCase {
     }
   }
 
-  public static void testSeeds() throws Exception {
+  @Test
+  public void testSeeds() throws Exception {
     // Using different seeds should return different names.
     Random random0 = new Random(0);
     Random random1 = new Random(1);
@@ -195,7 +207,8 @@ public final class RandomNameGeneratorTest extends TestCase {
     assertThat(100.0 * countPass / countTest).isGreaterThan(90.0); // arbitrary threshold
   }
 
-  public static void testReservedNames() throws Exception {
+  @Test
+  public void testReservedNames() throws Exception {
     Random random = new Random(0);
     Set<String> reservedNames = ImmutableSet.of("x", "ba");
     RandomNameGenerator ng = new RandomNameGenerator(
@@ -214,7 +227,8 @@ public final class RandomNameGeneratorTest extends TestCase {
     assertThat(result).hasSize(count);
   }
 
-  public static void testReservedCharacters() throws Exception {
+  @Test
+  public void testReservedCharacters() throws Exception {
     Random random = new Random(0);
     Set<String> reservedNames = ImmutableSet.of();
     RandomNameGenerator ng = new RandomNameGenerator(

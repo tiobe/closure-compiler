@@ -16,6 +16,7 @@
 
 package com.google.javascript.jscomp;
 
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.javascript.jscomp.TypeMatchingStrategy.EXACT;
 import static com.google.javascript.jscomp.TypeMatchingStrategy.LOOSE;
 import static com.google.javascript.jscomp.TypeMatchingStrategy.STRICT_NULLABILITY;
@@ -23,12 +24,16 @@ import static com.google.javascript.jscomp.TypeMatchingStrategy.SUBTYPES;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
+import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.TypeMatchingStrategy.MatchResult;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.jstype.JSType;
-
 import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public final class TypeMatchingStrategyTest extends TestCase {
 
   private static final String EXTERNS = Joiner.on("\n").join(
@@ -39,6 +44,7 @@ public final class TypeMatchingStrategyTest extends TestCase {
       "/** @constructor @extends {SuperType} */",
       "var SubType = function() {};");
 
+  @Test
   public void testMatch_default() {
     assertMatch(LOOSE, "!SuperType", "!SuperType", true, false);
     assertMatch(LOOSE, "!SuperType", "?SuperType", true, false);
@@ -54,6 +60,7 @@ public final class TypeMatchingStrategyTest extends TestCase {
     assertMatch(LOOSE, "?", "string", true, false);
   }
 
+  @Test
   public void testMatch_respectNullability() {
     assertMatch(STRICT_NULLABILITY, "!SuperType", "!SuperType", true, false);
     assertMatch(STRICT_NULLABILITY, "!SuperType", "?SuperType", false, false);
@@ -69,6 +76,7 @@ public final class TypeMatchingStrategyTest extends TestCase {
     assertMatch(STRICT_NULLABILITY, "?", "string", true, false);
   }
 
+  @Test
   public void testMatch_subtypes() {
     assertMatch(SUBTYPES, "!SuperType", "!SuperType", true, false);
     assertMatch(SUBTYPES, "!SuperType", "?SuperType", false, false);
@@ -101,6 +109,7 @@ public final class TypeMatchingStrategyTest extends TestCase {
     assertMatch(SUBTYPES, "*", "?", false, false);
   }
 
+  @Test
   public void testMatch_exact() {
     assertMatch(EXACT, "!SuperType", "!SuperType", true, false);
     assertMatch(EXACT, "!SuperType", "?SuperType", false, false);
@@ -128,6 +137,7 @@ public final class TypeMatchingStrategyTest extends TestCase {
     Compiler compiler = new Compiler();
     compiler.disableThreads();
     CompilerOptions options = new CompilerOptions();
+    options.setLanguageIn(LanguageMode.ECMASCRIPT3);
     options.setCheckTypes(true);
 
     compiler.compile(
@@ -145,17 +155,17 @@ public final class TypeMatchingStrategyTest extends TestCase {
     JSType jsType = yNode.getFirstChild().getJSType();
 
     MatchResult matchResult = typeMatchingStrategy.match(templateJsType, jsType);
-    assertEquals(
-        isMatch
-            ? "'" + templateJsType + "' should match '" + jsType + "'"
-            : "'" + templateType + "' should not match '" + type + "'",
-        isMatch,
-        matchResult.isMatch());
-    assertEquals(
-        isLooseMatch
-            ? "'" + templateType + "' should loosely match '" + type + "'"
-            : "'" + templateType + "' should not loosely match '" + type + "'",
-        isLooseMatch,
-        matchResult.isLooseMatch());
+    assertWithMessage(
+            isMatch
+                ? "'" + templateJsType + "' should match '" + jsType + "'"
+                : "'" + templateType + "' should not match '" + type + "'")
+        .that(matchResult.isMatch())
+        .isEqualTo(isMatch);
+    assertWithMessage(
+            isLooseMatch
+                ? "'" + templateType + "' should loosely match '" + type + "'"
+                : "'" + templateType + "' should not loosely match '" + type + "'")
+        .that(matchResult.isLooseMatch())
+        .isEqualTo(isLooseMatch);
   }
 }

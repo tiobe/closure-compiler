@@ -17,6 +17,7 @@
 package com.google.javascript.jscomp.graph;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.util.Comparator.comparing;
 
 import com.google.common.collect.Ordering;
 import com.google.javascript.jscomp.graph.Graph.GraphEdge;
@@ -24,13 +25,18 @@ import com.google.javascript.jscomp.graph.GraphColoring.Color;
 import com.google.javascript.jscomp.graph.GraphColoring.GreedyGraphColoring;
 import java.util.Comparator;
 import junit.framework.TestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link com.google.javascript.jscomp.graph.GraphColoring}.
  *
  */
+@RunWith(JUnit4.class)
 public final class GraphColoringTest extends TestCase {
 
+  @Test
   public void testNoEdge() {
     Graph<String, String> graph = LinkedUndirectedGraph.create();
     for (int i = 0; i < 5; i++) {
@@ -46,6 +52,7 @@ public final class GraphColoringTest extends TestCase {
     }
   }
 
+  @Test
   public void testTwoNodesConnected() {
     Graph<String, String> graph = LinkedUndirectedGraph.create();
     graph.createNode("A");
@@ -59,6 +66,7 @@ public final class GraphColoringTest extends TestCase {
     assertThat(coloring.getPartitionSuperNode("B")).isEqualTo("B");
   }
 
+  @Test
   public void testGreedy() {
     Graph<String, String> graph = LinkedUndirectedGraph.create();
     graph.createNode("A");
@@ -77,6 +85,7 @@ public final class GraphColoringTest extends TestCase {
     assertThat(coloring.getPartitionSuperNode("C")).isEqualTo("C");
   }
 
+  @Test
   public void testFullyConnected() {
     final int count = 100;
     Graph<String, String> graph = LinkedUndirectedGraph.create();
@@ -98,6 +107,7 @@ public final class GraphColoringTest extends TestCase {
     }
   }
 
+  @Test
   public void testAllConnectedToOneNode() {
     final int count = 10;
     Graph<String, String> graph = LinkedUndirectedGraph.create();
@@ -116,6 +126,7 @@ public final class GraphColoringTest extends TestCase {
     }
   }
 
+  @Test
   public void testTwoFullyConnected() {
     final int count = 100;
     // A graph with two disconnected disjunct cliques.
@@ -147,6 +158,7 @@ public final class GraphColoringTest extends TestCase {
     validateColoring(graph);
   }
 
+  @Test
   public void testDeterministic() {
     // A pentagon.
     Graph<String, String> graph = LinkedUndirectedGraph.create();
@@ -168,13 +180,7 @@ public final class GraphColoringTest extends TestCase {
     assertThat(coloring.getPartitionSuperNode("A")).isEqualTo("A");
     assertThat(coloring.getPartitionSuperNode("C")).isEqualTo("A");
 
-    Comparator<String> biasD =
-        new Comparator<String>() {
-          @Override
-          public int compare(String o1, String o2) {
-            return o1.replace('D', '@').compareTo(o2.replace('D', '@'));
-          }
-        };
+    Comparator<String> biasD = comparing(arg -> arg.replace('D', '@'));
 
     coloring = new GreedyGraphColoring<>(graph, biasD);
     assertThat(coloring.color()).isEqualTo(3);
@@ -189,13 +195,13 @@ public final class GraphColoringTest extends TestCase {
    */
   private static <N, E> void validateColoring(Graph<N, E> graph) {
     for (GraphNode<N, E> node : graph.getNodes()) {
-      assertNotNull(node.getAnnotation());
+      assertThat(node.<Annotation>getAnnotation()).isNotNull();
     }
     for (GraphEdge<N, E> edge : graph.getEdges()) {
       Color c1 = edge.getNodeA().getAnnotation();
       Color c2 = edge.getNodeB().getAnnotation();
-      assertNotNull(c1);
-      assertNotNull(c2);
+      assertThat(c1).isNotNull();
+      assertThat(c2).isNotNull();
       assertThat(c1.equals(c2)).isFalse();
     }
   }

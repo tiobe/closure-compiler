@@ -17,10 +17,12 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.CompilerOptions.TracerMode;
 import com.google.javascript.jscomp.PhaseOptimizer.Loop;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
@@ -28,11 +30,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import junit.framework.TestCase;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /**
  * Tests for {@link PhaseOptimizer}.
+ *
  * @author nicksantos@google.com (Nick Santos)
  */
+@RunWith(JUnit4.class)
 public final class PhaseOptimizerTest extends TestCase {
   private final List<String> passesRun = new ArrayList<>();
   private Node dummyExternsRoot;
@@ -43,6 +51,7 @@ public final class PhaseOptimizerTest extends TestCase {
   private PerformanceTracker tracker;
 
   @Override
+  @Before
   public void setUp() {
     passesRun.clear();
     dummyExternsRoot = new Node(Token.ROOT);
@@ -55,23 +64,27 @@ public final class PhaseOptimizerTest extends TestCase {
     compiler.setPhaseOptimizer(optimizer);
   }
 
+  @Test
   public void testOneRun() {
     addOneTimePass("x");
     assertPasses("x");
   }
 
+  @Test
   public void testLoop1() {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", 0);
     assertPasses("x");
   }
 
+  @Test
   public void testLoop2() {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", 3);
     assertPasses("x", "x", "x", "x");
   }
 
+  @Test
   public void testSchedulingOfLoopablePasses() {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", 3);
@@ -80,6 +93,7 @@ public final class PhaseOptimizerTest extends TestCase {
     assertPasses("x", "y", "x", "y", "x", "x", "y");
   }
 
+  @Test
   public void testCapLoopIterations() {
     CompilerOptions options = compiler.getOptions();
     options.optimizationLoopMaxIterations = 1;
@@ -89,25 +103,29 @@ public final class PhaseOptimizerTest extends TestCase {
     assertPasses(PassNames.PEEPHOLE_OPTIMIZATIONS);
   }
 
+  @Test
   public void testNotInfiniteLoop() {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", PhaseOptimizer.MAX_LOOPS - 2);
     optimizer.process(null, dummyRoot);
-    assertEquals("There should be no errors.", 0, compiler.getErrorCount());
+    assertWithMessage("There should be no errors.").that(compiler.getErrorCount()).isEqualTo(0);
   }
 
+  @Test
   public void testInfiniteLoop() {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", PhaseOptimizer.MAX_LOOPS + 1);
     try {
       optimizer.process(null, dummyRoot);
-      fail("Expected RuntimeException");
+      assertWithMessage("Expected RuntimeException").fail();
     } catch (RuntimeException e) {
-      assertTrue(e.getMessage(),
-          e.getMessage().contains(PhaseOptimizer.OPTIMIZE_LOOP_ERROR));
+      assertWithMessage(e.getMessage())
+          .that(e.getMessage().contains(PhaseOptimizer.OPTIMIZE_LOOP_ERROR))
+          .isTrue();
     }
   }
 
+  @Test
   public void testSchedulingOfAnyKindOfPasses1() {
     addOneTimePass("a");
     Loop loop = optimizer.addFixedPointLoop();
@@ -117,6 +135,7 @@ public final class PhaseOptimizerTest extends TestCase {
     assertPasses("a", "x", "y", "x", "y", "x", "x", "y", "z");
   }
 
+  @Test
   public void testSchedulingOfAnyKindOfPasses2() {
     optimizer.consume(
         ImmutableList.of(
@@ -131,6 +150,7 @@ public final class PhaseOptimizerTest extends TestCase {
     assertPasses("a", "b", "c", "d", "b", "c", "d", "c", "b", "d", "e", "f");
   }
 
+  @Test
   public void testSchedulingOfAnyKindOfPasses3() {
     optimizer.consume(
         ImmutableList.of(
@@ -140,6 +160,7 @@ public final class PhaseOptimizerTest extends TestCase {
     assertPasses("a", "a", "a", "b", "c", "c");
   }
 
+  @Test
   public void testSchedulingOfAnyKindOfPasses4() {
     optimizer.consume(
         ImmutableList.of(
@@ -149,17 +170,19 @@ public final class PhaseOptimizerTest extends TestCase {
     assertPasses("a", "b", "c");
   }
 
+  @Test
   public void testDuplicateLoop() {
     Loop loop = optimizer.addFixedPointLoop();
     addLoopedPass(loop, "x", 1);
     try {
       addLoopedPass(loop, "x", 1);
-      fail("Expected exception");
+      assertWithMessage("Expected exception").fail();
     } catch (IllegalArgumentException e) {
       return;
     }
   }
 
+  @Test
   public void testPassOrdering() {
     Loop loop = optimizer.addFixedPointLoop();
     List<String> optimalOrder = new ArrayList<>(
@@ -170,9 +193,10 @@ public final class PhaseOptimizerTest extends TestCase {
           loop, optimalOrder.remove(random.nextInt(optimalOrder.size())), 0);
     }
     optimizer.process(null, dummyRoot);
-    assertEquals(PhaseOptimizer.OPTIMAL_ORDER, passesRun);
+    assertThat(passesRun).isEqualTo(PhaseOptimizer.OPTIMAL_ORDER);
   }
 
+  @Test
   public void testProgress() {
     final List<Double> progressList = new ArrayList<>();
     compiler = new Compiler() {
@@ -189,15 +213,29 @@ public final class PhaseOptimizerTest extends TestCase {
     addOneTimePass("x4");
     optimizer.process(null, dummyRoot);
     assertThat(progressList).hasSize(4);
-    assertEquals(25, Math.round(progressList.get(0)));
-    assertEquals(50, Math.round(progressList.get(1)));
-    assertEquals(75, Math.round(progressList.get(2)));
-    assertEquals(100, Math.round(progressList.get(3)));
+    assertThat(Math.round(progressList.get(0))).isEqualTo(25);
+    assertThat(Math.round(progressList.get(1))).isEqualTo(50);
+    assertThat(Math.round(progressList.get(2))).isEqualTo(75);
+    assertThat(Math.round(progressList.get(3))).isEqualTo(100);
+  }
+
+  @Test
+  public void testSetSkipUnsupportedPasses() {
+    compiler.getOptions().setSkipUnsupportedPasses(true);
+    addUnsupportedPass("testPassFactory");
+    assertPasses();
+  }
+
+  @Test
+  public void testSetDontSkipUnsupportedPasses() {
+    compiler.getOptions().setSkipUnsupportedPasses(false);
+    addUnsupportedPass("testPassFactory");
+    assertPasses("testPassFactory");
   }
 
   public void assertPasses(String ... names) {
     optimizer.process(null, dummyRoot);
-    assertEquals(ImmutableList.copyOf(names), passesRun);
+    assertThat(passesRun).isEqualTo(ImmutableList.copyOf(names));
   }
 
   private void addOneTimePass(String name) {
@@ -210,6 +248,13 @@ public final class PhaseOptimizerTest extends TestCase {
         createPassFactory(name, numChanges, false));
   }
 
+  /** Adds a pass with the given name that does not support some of the features used in the AST. */
+  private void addUnsupportedPass(String name) {
+    compiler.setFeatureSet(FeatureSet.latest());
+    optimizer.addOneTimePass(
+        createPassFactory(name, createPass(name, 0), true, FeatureSet.BARE_MINIMUM));
+  }
+
   private PassFactory createPassFactory(
       String name, int numChanges, boolean isOneTime) {
     return createPassFactory(name, createPass(name, numChanges), isOneTime);
@@ -217,10 +262,20 @@ public final class PhaseOptimizerTest extends TestCase {
 
   private PassFactory createPassFactory(
       String name, final CompilerPass pass, boolean isOneTime) {
+    return createPassFactory(name, pass, isOneTime, FeatureSet.latest());
+  }
+
+  private PassFactory createPassFactory(
+      String name, final CompilerPass pass, boolean isOneTime, FeatureSet featureSet) {
     return new PassFactory(name, isOneTime) {
       @Override
       protected CompilerPass create(AbstractCompiler compiler) {
         return pass;
+      }
+
+      @Override
+      public FeatureSet featureSet() {
+        return featureSet;
       }
     };
   }

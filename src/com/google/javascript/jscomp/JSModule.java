@@ -35,11 +35,22 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * A JavaScript module has a unique name, consists of a list of compiler inputs,
- * and can depend on other modules.
+ * A JavaScript module has a unique name, consists of a list of compiler inputs, and can depend on
+ * other modules.
  *
  */
-public final class JSModule implements DependencyInfo, Serializable {
+public final class JSModule extends DependencyInfo.Base implements Serializable {
+  // The name of the artificial module containing all strong sources when there is no module spec.
+  // If there is a module spec, strong sources go in their respective modules, and this module does
+  // not exist.
+  public static final String STRONG_MODULE_NAME = "$strong$";
+
+  // The name of the artificial module containing all weak sources. Regardless of the module spec,
+  // weak sources are moved into this module, which is made to depend on every other module. This is
+  // necessary so that removing weak sources (as an optimization) does not accidentally remove
+  // namespace declarations whose existence strong sources rely upon.
+  public static final String WEAK_MODULE_NAME = "$weak$";
+
   private static final long serialVersionUID = 1;
 
   /** Module name */
@@ -81,17 +92,23 @@ public final class JSModule implements DependencyInfo, Serializable {
   }
 
   @Override
-  public List<String> getProvides() {
+  public ImmutableList<String> getProvides() {
     return ImmutableList.of(name);
   }
 
   @Override
-  public List<String> getRequires() {
-    ImmutableList.Builder<String> builder = ImmutableList.builder();
+  public ImmutableList<Require> getRequires() {
+    ImmutableList.Builder<Require> builder = ImmutableList.builder();
     for (JSModule m : deps) {
-      builder.add(m.getName());
+      builder.add(Require.compilerModule(m.getName()));
     }
     return builder.build();
+  }
+
+  @Override
+  public ImmutableList<String> getWeakRequires() {
+    // TODO(blickly): Actually allow weak module deps
+    return ImmutableList.of();
   }
 
   @Override
@@ -167,8 +184,8 @@ public final class JSModule implements DependencyInfo, Serializable {
    *
    * @return A list that may be empty but not null
    */
-  public List<JSModule> getDependencies() {
-    return deps;
+  public ImmutableList<JSModule> getDependencies() {
+    return ImmutableList.copyOf(deps);
   }
 
   /**
@@ -213,6 +230,16 @@ public final class JSModule implements DependencyInfo, Serializable {
     return deps;
   }
 
+  /** Returns the number of source code inputs. */
+  public int getInputCount() {
+    return inputs.size();
+  }
+
+  /** Returns the i-th source code input. */
+  public CompilerInput getInput(int i) {
+    return inputs.get(i);
+  }
+
   /**
    * Gets this module's list of source code inputs.
    *
@@ -247,6 +274,14 @@ public final class JSModule implements DependencyInfo, Serializable {
       }
     }
     return found;
+  }
+
+  /**
+   * Returns whether this module is synthetic (i.e. one of the special strong or weak modules
+   * created by the compiler.
+   */
+  public boolean isSynthetic() {
+    return name.equals(STRONG_MODULE_NAME) || name.equals(WEAK_MODULE_NAME);
   }
 
   /** Returns the module name (primarily for debugging). */

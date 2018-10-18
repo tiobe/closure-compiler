@@ -21,7 +21,11 @@ import static com.google.javascript.jscomp.lint.CheckPrimitiveAsObject.PRIMITIVE
 import com.google.javascript.jscomp.Compiler;
 import com.google.javascript.jscomp.CompilerPass;
 import com.google.javascript.jscomp.CompilerTestCase;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public final class CheckPrimitiveAsObjectTest extends CompilerTestCase {
 
   @Override
@@ -29,63 +33,77 @@ public final class CheckPrimitiveAsObjectTest extends CompilerTestCase {
     return new CheckPrimitiveAsObject(compiler);
   }
 
+  @Test
   public void testWarningForBooleanObjectCreation() {
     testWarning("new Boolean(false)", NEW_PRIMITIVE_OBJECT);
   }
 
+  @Test
   public void testWarningForNumberObjectCreation() {
     testWarning("new Number(5)", NEW_PRIMITIVE_OBJECT);
   }
 
+  @Test
   public void testWarningForStringObjectCreation() {
     testWarning("new String(\"hello\")", NEW_PRIMITIVE_OBJECT);
   }
 
+  @Test
   public void testNoWarningForObjectCreation() {
     testSame("new Object()");
   }
 
+  @Test
   public void testNoWarningForQualifiedClassCreation() {
     testSame("new my.qualified.ClassName()");
   }
 
+  @Test
   public void testWarningForBooleanTypeDeclaration() {
     testWarning("/** @type {Boolean} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForBooleanTypeDeclaration_withES6Modules() {
     testWarning("export /** @type {Boolean} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForNumberTypeDeclaration() {
     testWarning("/** @type {Number} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForNumberTypeDeclaration_withES6Modules() {
     testWarning("export /** @type {Number} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForStringTypeDeclaration() {
     testWarning("/** @type {String} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForStringTypeDeclaration_withES6Modules() {
     testWarning("export /** @type {String} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForBooleanInsideTypeDeclaration() {
     testWarning("/** @type {function(): Boolean} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
     testWarning("/** @type {function(Boolean)} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
     testWarning("/** @type {{b: Boolean}} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForBooleanInsideTypeDeclaration_withES6Modules() {
     testWarning("export /** @type {function(): Boolean} */ var x;", PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForNumberParameterDeclaration() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @param {Number=} x",
             " * @return {number}",
@@ -96,9 +114,10 @@ public final class CheckPrimitiveAsObjectTest extends CompilerTestCase {
         PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForNumberParameterDeclaration_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @param {Number=} x",
@@ -110,16 +129,18 @@ public final class CheckPrimitiveAsObjectTest extends CompilerTestCase {
         PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForBooleanParameterDeclarationInTypedef() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "/**", " * @typedef {function(Boolean=)}", " */", "var takesOptionalBoolean;"),
         PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForBooleanParameterDeclarationInTypedef_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export",
             "/**",
             " * @typedef {function(Boolean=)}",
@@ -128,15 +149,17 @@ public final class CheckPrimitiveAsObjectTest extends CompilerTestCase {
         PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForNumberReturnDeclaration() {
     testWarning(
-        LINE_JOINER.join("/**", " * @return {Number}", " */", "function f() {", "  return 5;", "}"),
+        lines("/**", " * @return {Number}", " */", "function f() {", "  return 5;", "}"),
         PRIMITIVE_OBJECT_DECLARATION);
   }
 
+  @Test
   public void testWarningForNumberReturnDeclaration_withES6Modules() {
     testWarning(
-        LINE_JOINER.join(
+        lines(
             "export", "/**", " * @return {Number}", " */", "function f() {", "  return 5;", "}"),
         PRIMITIVE_OBJECT_DECLARATION);
   }

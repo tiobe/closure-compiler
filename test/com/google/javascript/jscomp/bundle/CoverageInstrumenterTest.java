@@ -26,12 +26,17 @@ import com.google.javascript.jscomp.JSError;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import junit.framework.TestCase;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 /** Tests for {@link CoverageInstrumenter}. */
 @GwtIncompatible
 
+@RunWith(JUnit4.class)
 public final class CoverageInstrumenterTest extends TestCase {
 
   private Source.Transformer instrumenter;
@@ -45,6 +50,7 @@ public final class CoverageInstrumenterTest extends TestCase {
   private static final JSError[] NO_ERRORS = new JSError[] {};
 
   @Override
+  @Before
   public void setUp() {
     MockitoAnnotations.initMocks(this);
     instrumenter = new CoverageInstrumenter(mockCompiler);
@@ -53,6 +59,7 @@ public final class CoverageInstrumenterTest extends TestCase {
 
   // Tests for CoverageInstrumenter
 
+  @Test
   public void testCoverageInstrumenter_instrument() {
     when(mockCompiler.compile(FOO_JS, "bar"))
         .thenReturn(new CoverageInstrumenter.CompileResult("result", NO_ERRORS, true, "srcmap"));
@@ -66,6 +73,7 @@ public final class CoverageInstrumenterTest extends TestCase {
                 .build());
   }
 
+  @Test
   public void testCoverageInstrumenter_noInstrumentation() {
     when(mockCompiler.compile(FOO_JS, "bar"))
         .thenReturn(new CoverageInstrumenter.CompileResult("result", NO_ERRORS, false, "srcmap"));
@@ -78,17 +86,20 @@ public final class CoverageInstrumenterTest extends TestCase {
 
   // Tests for CompilerSupplier
 
+  @Test
   public void testCompilerSupplier_instruments() {
     CoverageInstrumenter.CompileResult result = compiler.compile(SOURCE_JS, "var x = 42;");
-    String[] expected = new String[]{
-      "if(!self.window){self.window=self;self.window.top=self}",
-      "var __jscov=window.top.__jscov||",
-      "(window.top.__jscov={fileNames:[],instrumentedLines:[],executedLines:[]});",
-      "var JSCompiler_lcov_data_source_js=[];",
-      "__jscov.executedLines.push(JSCompiler_lcov_data_source_js);",
-      "__jscov.instrumentedLines.push(\"01\");",
-      "__jscov.fileNames.push(\"source.js\");",
-      "JSCompiler_lcov_data_source_js[0]=true;var x=42;"};
+    String[] expected =
+        new String[] {
+          "if(!self.window){self.window=self;self.window.top=self}",
+          "var __jscov=window.top[\"__jscov\"]||",
+          "(window.top[\"__jscov\"]={\"fileNames\":[],\"instrumentedLines\":[],\"executedLines\":[]});",
+          "var JSCompiler_lcov_data_source_js=[];",
+          "__jscov[\"executedLines\"].push(JSCompiler_lcov_data_source_js);",
+          "__jscov[\"instrumentedLines\"].push(\"01\");",
+          "__jscov[\"fileNames\"].push(\"source.js\");",
+          "JSCompiler_lcov_data_source_js[0]=true;var x=42;"
+        };
 
     assertThat(result.source).isEqualTo(Joiner.on("").join(expected));
     assertThat(result.errors).isEmpty();

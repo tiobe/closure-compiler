@@ -19,6 +19,8 @@ package com.google.javascript.jscomp;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
 import com.google.javascript.jscomp.NodeTraversal.AbstractPostOrderCallback;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet;
+import com.google.javascript.jscomp.parsing.parser.FeatureSet.Feature;
 import com.google.javascript.rhino.Node;
 import java.util.HashSet;
 import java.util.Set;
@@ -33,6 +35,8 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
     implements HotSwapCompilerPass {
 
   private final AbstractCompiler compiler;
+  private static final FeatureSet transpiledFeatures =
+      FeatureSet.BARE_MINIMUM.with(Feature.DEFAULT_PARAMETERS, Feature.COMPUTED_PROPERTIES);
 
   public Es6RenameVariablesInParamLists(AbstractCompiler compiler) {
     this.compiler = compiler;
@@ -41,13 +45,13 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
   @Override
   public void visit(NodeTraversal t, Node n, Node parent) {
     // Arrow functions without blocked body cannot have declarations in the body
-    if (!n.isFunction() || !n.getLastChild().isNormalBlock()) {
+    if (!n.isFunction() || !n.getLastChild().isBlock()) {
       return;
     }
 
     Node paramList = n.getSecondChild();
     final CollectReferences collector = new CollectReferences();
-    NodeTraversal.traverseEs6(compiler, paramList, new NodeTraversal.AbstractPreOrderCallback() {
+    NodeTraversal.traverse(compiler, paramList, new NodeTraversal.AbstractPreOrderCallback() {
       @Override
       public final boolean shouldTraverse(NodeTraversal t, Node n, Node parent) {
         if (parent == null) {
@@ -56,7 +60,7 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
 
         if ((parent.isDefaultValue() && n == parent.getLastChild())
             || (parent.isComputedProp() && n == parent.getFirstChild())) {
-          NodeTraversal.traverseEs6(compiler, n, collector);
+          NodeTraversal.traverse(compiler, n, collector);
           return false;
         }
         return true;
@@ -71,8 +75,8 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
     for (Var var : fBlockScope.getVarIterable()) {
       String oldName = var.getName();
       if (collector.currFuncReferences.contains(oldName)
-          && !renameTable.contains(fBlockScope.rootNode, oldName)) {
-        renameTable.put(fBlockScope.rootNode,
+          && !renameTable.contains(fBlockScope.getRootNode(), oldName)) {
+        renameTable.put(fBlockScope.getRootNode(),
             oldName, oldName + "$" + compiler.getUniqueNameIdSupplier().get());
       }
     }
@@ -83,12 +87,12 @@ public final class Es6RenameVariablesInParamLists extends AbstractPostOrderCallb
 
   @Override
   public void process(Node externs, Node root) {
-    TranspilationPasses.processTranspile(compiler, root, this);
+    TranspilationPasses.processTranspile(compiler, root, transpiledFeatures, this);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, this);
+    TranspilationPasses.hotSwapTranspile(compiler, scriptRoot, transpiledFeatures, this);
   }
 
   /**

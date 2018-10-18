@@ -16,28 +16,34 @@
 package com.google.javascript.jscomp;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.javascript.jscomp.testing.NodeSubject.assertNode;
+import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
-import com.google.common.base.Predicates;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
 
   private Node polymerCall;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     polymerCall = null;
   }
 
   // TODO(jlklein): Add more complex test cases and verify behaviors and descriptors.
 
+  @Test
   public void testSimpleBehavior() {
     PolymerClassDefinition def =
         parseAndExtractClassDefFromCall(
-            LINE_JOINER.join(
+            lines(
                 "/** @polymerBehavior */",
                 "var FunBehavior = {",
                 "  properties: {",
@@ -73,20 +79,21 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
                 "  behaviors: [ FunBehavior ],",
                 "});"));
 
-    assertNotNull(def);
-    assertEquals(PolymerClassDefinition.DefinitionType.ObjectLiteral, def.defType);
+    assertThat(def).isNotNull();
+    assertThat(def.defType).isEqualTo(PolymerClassDefinition.DefinitionType.ObjectLiteral);
     assertNode(def.target).hasType(Token.NAME);
-    assertEquals("A", def.target.getString());
-    assertNull(def.nativeBaseElement);
+    assertThat(def.target.getString()).isEqualTo("A");
+    assertThat(def.nativeBaseElement).isNull();
     assertThat(def.behaviors).hasSize(1);
     assertThat(def.props).hasSize(3);
   }
 
+  @Test
   public void testBasicClass() {
     compiler.getOptions().setLanguageIn(CompilerOptions.LanguageMode.ECMASCRIPT_2015);
     PolymerClassDefinition def =
         parseAndExtractClassDefFromClass(
-            LINE_JOINER.join(
+            lines(
                 "class A extends Polymer.Element {",
                 "  static get is() { return 'x-element'; }",
                 "  static get properties() {",
@@ -100,55 +107,59 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
                 "  }",
                 "}"));
 
-    assertNotNull(def);
-    assertEquals(PolymerClassDefinition.DefinitionType.ES6Class, def.defType);
+    assertThat(def).isNotNull();
+    assertThat(def.defType).isEqualTo(PolymerClassDefinition.DefinitionType.ES6Class);
     assertNode(def.target).hasType(Token.NAME);
-    assertEquals("A", def.target.getString());
-    assertNotNull(def.descriptor);
+    assertThat(def.target.getString()).isEqualTo("A");
+    assertThat(def.descriptor).isNotNull();
     assertNode(def.descriptor).hasType(Token.OBJECTLIT);
-    assertNull(def.nativeBaseElement);
-    assertNull(def.behaviors);
+    assertThat(def.nativeBaseElement).isNull();
+    assertThat(def.behaviors).isNull();
     assertThat(def.props).hasSize(2);
   }
 
+  @Test
   public void testDynamicDescriptor() {
     PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        LINE_JOINER.join(
+        lines(
             "var A = Polymer({",
             "  is: x,",
             "});"));
 
-    assertEquals("A", def.target.getString());
+    assertThat(def.target.getString()).isEqualTo("A");
   }
 
+  @Test
   public void testDynamicDescriptor1() {
     PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        LINE_JOINER.join(
+        lines(
             "Polymer({",
             "  is: x,",
             "});"));
 
-    assertEquals("XElement", def.target.getString());
+    assertThat(def.target.getString()).isEqualTo("XElement");
   }
 
+  @Test
   public void testDynamicDescriptor2() {
     PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        LINE_JOINER.join(
+        lines(
             "Polymer({",
             "  is: foo.bar,",
             "});"));
 
-    assertEquals("Foo$barElement", def.target.getString());
+    assertThat(def.target.getString()).isEqualTo("Foo$barElement");
   }
 
+  @Test
   public void testDynamicDescriptor3() {
     PolymerClassDefinition def = parseAndExtractClassDefFromCall(
-        LINE_JOINER.join(
+        lines(
             "Polymer({",
             "  is: this.bar,",
             "});"));
 
-    assertEquals("This$barElement", def.target.getString());
+    assertThat(def.target.getString()).isEqualTo("This$barElement");
   }
 
   private PolymerClassDefinition parseAndExtractClassDefFromCall(String code) {
@@ -164,10 +175,9 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
               polymerCall = node;
             }
           }
-        },
-        Predicates.<Node>alwaysTrue());
+        });
 
-    assertNotNull(polymerCall);
+    assertThat(polymerCall).isNotNull();
     return PolymerClassDefinition.extractFromCallNode(polymerCall, compiler, globalNamespace);
   }
 
@@ -184,10 +194,9 @@ public final class PolymerClassDefinitionTest extends CompilerTypeTestCase {
               polymerCall = node;
             }
           }
-        },
-        Predicates.<Node>alwaysTrue());
+        });
 
-    assertNotNull(polymerCall);
+    assertThat(polymerCall).isNotNull();
     return PolymerClassDefinition.extractFromClassNode(polymerCall, compiler, globalNamespace);
   }
 }

@@ -27,6 +27,10 @@ public final class Es6CheckModule extends AbstractPostOrderCallback implements H
       DiagnosticType.warning(
           "ES6_MODULE_REFERENCES_THIS", "The body of an ES6 module cannot reference 'this'.");
 
+  static final DiagnosticType IMPORT_CANNOT_BE_REASSIGNED =
+      DiagnosticType.error(
+          "JSC_IMPORT_CANNOT_BE_REASSIGNED", "Assignment to constant variable \"{0}\".");
+
   private final AbstractCompiler compiler;
 
   public Es6CheckModule(AbstractCompiler compiler) {
@@ -35,12 +39,12 @@ public final class Es6CheckModule extends AbstractPostOrderCallback implements H
 
   @Override
   public void process(Node externs, Node root) {
-    NodeTraversal.traverseEs6(compiler, root, this);
+    NodeTraversal.traverse(compiler, root, this);
   }
 
   @Override
   public void hotSwapScript(Node scriptRoot, Node originalRoot) {
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   @Override
@@ -49,6 +53,37 @@ public final class Es6CheckModule extends AbstractPostOrderCallback implements H
       case THIS:
         if (t.inModuleHoistScope()) {
           t.report(n, ES6_MODULE_REFERENCES_THIS);
+        }
+        break;
+      case GETPROP:
+      case GETELEM:
+        if (NodeUtil.isLValue(n)
+            && !NodeUtil.isDeclarationLValue(n)
+            && n.getFirstChild().isName()) {
+          Var var = t.getScope().getVar(n.getFirstChild().getString());
+          if (var != null) {
+            Node nameNode = var.getNameNode();
+            if (nameNode != null && nameNode.isImportStar()) {
+              // import * as M from '';
+              // M.x = 2;
+              compiler.report(t.makeError(n, IMPORT_CANNOT_BE_REASSIGNED, nameNode.getString()));
+            }
+          }
+        }
+        break;
+      case NAME:
+        if (NodeUtil.isLValue(n) && !NodeUtil.isDeclarationLValue(n)) {
+          Var var = t.getScope().getVar(n.getString());
+          if (var != null) {
+            Node nameNode = var.getNameNode();
+            if (nameNode != null && nameNode != n) {
+              if (NodeUtil.isImportedName(nameNode)) {
+                // import { x } from '';
+                // x = 2;
+                compiler.report(t.makeError(n, IMPORT_CANNOT_BE_REASSIGNED, nameNode.getString()));
+              }
+            }
+          }
         }
         break;
       default:

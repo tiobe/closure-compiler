@@ -15,16 +15,21 @@
  */
 package com.google.javascript.jscomp;
 
-import static com.google.javascript.jscomp.testing.NodeSubject.assertNode;
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.javascript.rhino.testing.NodeSubject.assertNode;
 
-import com.google.common.base.Predicates;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.rhino.Node;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
+@RunWith(JUnit4.class)
 public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
 
   private static final String EXTERNS =
-      LINE_JOINER.join(
+      lines(
           "/** @constructor */",
           "var HTMLElement = function() {};",
           "/** @constructor @extends {HTMLElement} */",
@@ -61,7 +66,8 @@ public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
   private Node polymerCall;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     polymerCall = null;
     rootNode = null;
@@ -69,13 +75,14 @@ public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
 
   // TODO(jlklein): Add tests for non-global definitions, interface externs, read-only setters, etc.
 
+  @Test
   public void testVarTarget() {
     test(
-        LINE_JOINER.join(
+        lines(
             "var X = Polymer({",
             "  is: 'x-element',",
             "});"),
-        LINE_JOINER.join(
+        lines(
             "/** @constructor @extends {PolymerElement} @implements {PolymerXInterface} */",
             "var X = function() {};",
             "X = Polymer(/** @lends {X.prototype} */ {",
@@ -84,20 +91,21 @@ public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
 
     setLanguageLevel(LanguageMode.ECMASCRIPT_2015);
     testSame(
-        LINE_JOINER.join(
+        lines(
             "var X = class extends Polymer.Element {",
             "  static get is() { return 'x-element'; }",
             "  static get properties { return { }; }",
             "};"));
   }
 
+  @Test
   public void testDefaultTypeNameTarget() {
     test(
-        LINE_JOINER.join(
+        lines(
             "Polymer({",
             "  is: 'x',",
             "});"),
-        LINE_JOINER.join(
+        lines(
             "/**",
             " * @implements {PolymerXElementInterface}",
             " * @constructor @extends {PolymerElement}",
@@ -108,14 +116,15 @@ public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
             "});"));
   }
 
+  @Test
   public void testPathAssignmentTarget() {
     test(
-        LINE_JOINER.join(
+        lines(
             "var x = {};",
             "x.Z = Polymer({",
             "  is: 'x-element',",
             "});"),
-        LINE_JOINER.join(
+        lines(
             "var x = {};",
             "/** @constructor @extends {PolymerElement} @implements {Polymerx_ZInterface} */",
             "x.Z = function() {};",
@@ -166,11 +175,15 @@ public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
     globalNamespace =  new GlobalNamespace(compiler, rootNode);
     PolymerPassFindExterns findExternsCallback = new PolymerPassFindExterns();
     Node externs = compiler.parseTestCode(EXTERNS);
-    NodeTraversal.traverseEs6(compiler, externs, findExternsCallback);
+    NodeTraversal.traverse(compiler, externs, findExternsCallback);
 
     rewriter =
         new PolymerClassRewriter(
-            compiler, findExternsCallback.getPolymerElementExterns(), version, true);
+            compiler,
+            findExternsCallback.getPolymerElementExterns(),
+            version,
+            PolymerExportPolicy.LEGACY,
+            true);
 
     NodeUtil.visitPostOrder(
         rootNode,
@@ -181,10 +194,9 @@ public final class PolymerClassRewriterTest extends CompilerTypeTestCase {
               polymerCall = node;
             }
           }
-        },
-        Predicates.<Node>alwaysTrue());
+        });
 
-    assertNotNull(polymerCall);
+    assertThat(polymerCall).isNotNull();
     PolymerClassDefinition classDef =
         PolymerClassDefinition.extractFromCallNode(polymerCall, compiler, globalNamespace);
 

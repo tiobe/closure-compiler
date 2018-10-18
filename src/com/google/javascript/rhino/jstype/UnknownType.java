@@ -89,6 +89,11 @@ public class UnknownType extends ObjectType {
   }
 
   @Override
+  public boolean matchesSymbolContext() {
+    return true;
+  }
+
+  @Override
   public TernaryValue testForEquality(JSType that) {
     return UNKNOWN;
   }
@@ -166,12 +171,12 @@ public class UnknownType extends ObjectType {
   }
 
   @Override
-  JSType resolveInternal(ErrorReporter t, StaticTypedScope<JSType> scope) {
+  JSType resolveInternal(ErrorReporter reporter) {
     return this;
   }
 
   @Override
-  public int hashCode() {
+  int recursionUnsafeHashCode() {
     return System.identityHashCode(this);
   }
 }

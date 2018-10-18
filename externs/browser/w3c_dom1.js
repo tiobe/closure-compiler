@@ -25,9 +25,11 @@
 
 /**
  * @constructor
- * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#ID-17189187
+ * @param {string=} message
+ * @param {string=} name
+ * @see https://heycam.github.io/webidl/#idl-DOMException
  */
-function DOMException() {}
+function DOMException(message, name) {}
 
 /**
  * @type {number}
@@ -336,7 +338,7 @@ function Document() {}
 Document.prototype.doctype;
 
 /**
- * @type {!Element}
+ * @type {!HTMLHtmlElement}
  * @see http://www.w3.org/TR/1998/REC-DOM-Level-1-19981001/level-one-core.html#attribute-documentElement
  */
 Document.prototype.documentElement;
@@ -871,9 +873,11 @@ Window.prototype.dispatchEvent = function(evt) {};
 /** @type {?function (Event)} */ Window.prototype.ondblclick;
 /** @type {?function (Event)} */ Window.prototype.ondragdrop;
 // onerror has a special signature.
-// See https://developer.mozilla.org/en/DOM/window.onerror
-// and http://msdn.microsoft.com/en-us/library/cc197053(VS.85).aspx
-/** @type {?function (string, string, number)} */
+// See
+//  https://developer.mozilla.org/en-US/docs/Web/API/GlobalEventHandlers/onerror
+/**
+ * @type {?function (string, string, number, number, !Error):?}
+ */
 Window.prototype.onerror;
 /** @type {?function (Event)} */ Window.prototype.onfocus;
 /** @type {?function (Event)} */ Window.prototype.onhashchange;

@@ -19,11 +19,13 @@ package com.google.javascript.jscomp;
 import com.google.javascript.jscomp.CompilerOptions.LanguageMode;
 import com.google.javascript.jscomp.Normalize.NormalizeStatements;
 import com.google.javascript.rhino.Node;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-/**
- * @author johnlenz@google.com (John Lenz)
- *
- */
+/** @author johnlenz@google.com (John Lenz) */
+@RunWith(JUnit4.class)
 public final class DenormalizeTest extends CompilerTestCase {
   @Override
   protected CompilerPass getProcessor(final Compiler compiler) {
@@ -31,7 +33,8 @@ public final class DenormalizeTest extends CompilerTestCase {
   }
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     setAcceptedLanguage(LanguageMode.ECMASCRIPT_2017);
   }
@@ -42,16 +45,17 @@ public final class DenormalizeTest extends CompilerTestCase {
     return 1;
   }
 
+  @Test
   public void testInlineVarKeyword1() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function f() {",
             "  var x;",
             "  function g() { x = 2; }",
             "  if (y) { x = -1; }",
             "  alert(x);",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "function f() {",
             "  function g() { x = 2; }",
             "  if (y) { var x = -1; }",
@@ -59,16 +63,17 @@ public final class DenormalizeTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineVarKeyword2() {
     test(
-        LINE_JOINER.join(
+        lines(
             "function f() {",
             "  var x;",
             "  function g() { x = 2; }",
             "  if (y) { x = -1; } else { x = 3; }",
             "  alert(x);",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "function f() {",
             "  function g() { x = 2; }",
             "  if (y) { var x = -1; } else { x = 3; }",
@@ -76,16 +81,17 @@ public final class DenormalizeTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineVarKeywordArrowFunc1() {
     test(
-        LINE_JOINER.join(
+        lines(
             "var f = () => {",
             "  var x;",
             "  var g = () => { x = 2; }",
             "  if (y) { x = -1; }",
             "  alert(x);",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "var f = () => {",
             "  var g = () => { x = 2; }",
             "  if (y) { var x = -1; }",
@@ -93,16 +99,17 @@ public final class DenormalizeTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testInlineVarKeywordArrowFunc2() {
     test(
-        LINE_JOINER.join(
+        lines(
             "var f = () => {",
             "  var x;",
             "  var g = () => { x = 2; }",
             "  if (y) { x = -1; } else { x = 3; }",
             "  alert(x);",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "var f = () => {",
             "  var g = () => { x = 2; }",
             "  if (y) { var x = -1; } else { x = 3; }",
@@ -110,18 +117,20 @@ public final class DenormalizeTest extends CompilerTestCase {
             "}"));
   }
 
+  @Test
   public void testNotInlineConstLet() {
     testSame(
-        LINE_JOINER.join(
+        lines(
             "let x;",
             "if (y) { x = -1; }"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "const x = 1;",
             "if (y) { x = -1; }"));
   }
 
+  @Test
   public void testFor() {
     // Verify assignments are moved into the FOR init node.
     test("a = 0; for(; a < 2 ; a++) foo()",
@@ -150,8 +159,16 @@ public final class DenormalizeTest extends CompilerTestCase {
     test("function f(){ var a; for(; a < 2 ; a++) foo() }",
          "function f(){ for(var a; a < 2 ; a++) foo() }");
     testSame("function f(){ return; for(; a < 2 ; a++) foo() }");
+
+    // Verify destructuring assignments are moved.
+    test("[a, b] = [1, 2]; for (; a < 2; a = b++) foo();",
+        "for ([a, b] = [1, 2]; a < 2; a = b++) foo();");
+
+    test("var [a, b] = [1, 2]; for (; a < 2; a = b++) foo();",
+        "for (var [a, b] = [1, 2]; a < 2; a = b++) foo();");
   }
 
+  @Test
   public void testForIn() {
     test("var a; for(a in b) foo()", "for (var a in b) foo()");
     testSame("a = 0; for(a in b) foo()");
@@ -170,8 +187,12 @@ public final class DenormalizeTest extends CompilerTestCase {
 
     // Other statements are left as is.
     testSame("function f(){ return; for(a in b) foo() }");
+
+    // We don't handle destructuring patterns yet.
+    testSame("var a; var b; for ([a, b] in c) foo();");
   }
 
+  @Test
   public void testForOf() {
     test("var a; for (a of b) foo()", "for (var a of b) foo()");
     testSame("a = 0; for (a of b) foo()");
@@ -190,8 +211,12 @@ public final class DenormalizeTest extends CompilerTestCase {
 
     // Other statements are left as is.
     testSame("function f() { return; for (a of b) foo() }");
+
+    // We don't handle destructuring patterns yet.
+    testSame("var a; var b; for ([a, b] of c) foo();");
   }
 
+  @Test
   public void testInOperatorNotInsideFor() {
     // in operators shouldn't be moved into for loops.
     // Some JavaScript interpreters (such as the NetFront Access browser
@@ -212,6 +237,7 @@ public final class DenormalizeTest extends CompilerTestCase {
          "for (;a<2;a++) foo()}");
   }
 
+  @Test
   public void testAssignShorthand() {
     test("x = x | 1;", "x |= 1;");
     test("x = x ^ 1;", "x ^= 1;");
@@ -228,16 +254,17 @@ public final class DenormalizeTest extends CompilerTestCase {
     test("/** @suppress {const} */ x = x + 1;", "/** @suppress {const} */ x += 1;");
   }
 
+  @Test
   public void testNoCrashOnEs6Features() {
     test(
-        LINE_JOINER.join(
+        lines(
             "class C {",
             "  constructor() {",
             "    var x;",
             "    if (y) { x = -1; }",
             "  }",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "class C {",
             "  constructor() {",
             "    if (y) { var x = -1; }",
@@ -245,13 +272,13 @@ public final class DenormalizeTest extends CompilerTestCase {
             "}"));
 
     test(
-        LINE_JOINER.join(
+        lines(
             "var obj = {",
             "  method() {",
             "    var c; for (; c < b ; c++) foo()",
             "  },",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "var obj = {",
             "  method() {",
             "    for (var c; c < b ; c++) foo()",
@@ -259,30 +286,30 @@ public final class DenormalizeTest extends CompilerTestCase {
             "}"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "var obj = {",
             "  ['computed' + 'prop']: 42",
             "}"));
 
     // Denormalize does not revert shorthand object literals that were expanded in Normalize
     test(
-        LINE_JOINER.join(
+        lines(
             "var obj = {",
             "  key",
             "}"),
-        LINE_JOINER.join(
+        lines(
             "var obj = {",
             "  key: key",
             "}"));
 
     test(
-        LINE_JOINER.join(
+        lines(
             "function tag(strings) {",
             "  var x;",
             "  if (y) { x = x + 1; }",
             "}",
             "tag`template`"),
-        LINE_JOINER.join(
+        lines(
             "function tag(strings) {",
             "  var x;",
             "  if (y) { x += 1; }",
@@ -290,7 +317,7 @@ public final class DenormalizeTest extends CompilerTestCase {
             "tag`template`"));
 
     testSame(
-        LINE_JOINER.join(
+        lines(
             "var x;",
             "var y;",
             "if (y) { [x, y] = [1, 2]; }"));
@@ -315,7 +342,7 @@ public final class DenormalizeTest extends CompilerTestCase {
 
     @Override
     public void process(Node externs, Node root) {
-      NodeTraversal.traverseEs6(compiler, root, normalizePass);
+      NodeTraversal.traverse(compiler, root, normalizePass);
       denormalizePass.process(externs, root);
     }
   }

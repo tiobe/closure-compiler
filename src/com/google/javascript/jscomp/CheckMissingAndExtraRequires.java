@@ -66,7 +66,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
     SINGLE_FILE,
     // Used during a normal compilation. The entire program + externs are available.
     FULL_COMPILE
-  };
+  }
 
   private Mode mode;
 
@@ -100,7 +100,8 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
       DiagnosticType.disabled("JSC_MISSING_REQUIRE_STRICT_WARNING", "missing require: ''{0}''");
 
   public static final DiagnosticType EXTRA_REQUIRE_WARNING =
-      DiagnosticType.disabled("JSC_EXTRA_REQUIRE_WARNING", "extra require: ''{0}''");
+      DiagnosticType.disabled(
+          "JSC_EXTRA_REQUIRE_WARNING", "extra require: ''{0}'' is never referenced in this file");
 
   private static final ImmutableSet<String> DEFAULT_EXTRA_NAMESPACES =
       ImmutableSet.of(
@@ -115,7 +116,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
   @Override
   public void process(Node externs, Node root) {
     reset();
-    NodeTraversal.traverseRootsEs6(compiler, this, externs, root);
+    NodeTraversal.traverseRoots(compiler, this, externs, root);
   }
 
   @Override
@@ -124,7 +125,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
     // b/28869281 for context.
     mode = Mode.SINGLE_FILE;
     reset();
-    NodeTraversal.traverseEs6(compiler, scriptRoot, this);
+    NodeTraversal.traverse(compiler, scriptRoot, this);
   }
 
   // Return true if the name is a class name (starts with an uppercase
@@ -140,7 +141,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
 
   // Return the shortest prefix of the className that refers to a class,
   // or null if no part refers to a class.
-  private static List<String> getClassNames(String qualifiedName) {
+  private static ImmutableList<String> getClassNames(String qualifiedName) {
     ImmutableList.Builder<String> classNames = ImmutableList.builder();
     List<String> parts = DOT_SPLITTER.splitToList(qualifiedName);
     for (int i = 0; i < parts.size(); i++) {
@@ -208,19 +209,13 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
         }
         break;
       case NAME:
-        if (!NodeUtil.isLValue(n) && !parent.isGetProp()) {
+        if (!NodeUtil.isLValue(n) && !parent.isGetProp() && !parent.isImportSpec()) {
           visitQualifiedName(t, n, parent);
         }
         break;
       case GETPROP:
         // If parent is a GETPROP, they will handle the weak usages.
         if (!parent.isGetProp() && n.isQualifiedName()) {
-          visitQualifiedName(t, n, parent);
-        }
-        break;
-      case STRING_KEY:
-        if (parent.isObjectLit() && !n.hasChildren()) {
-          // Object literal shorthand. This is a usage of the name.
           visitQualifiedName(t, n, parent);
         }
         break;
@@ -268,7 +263,10 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
       String namespace = entry.getKey();
       Node node = entry.getValue();
       boolean isMissing = isMissingRequire(namespace, node);
-      if (isMissing && (namespace.endsWith(".call") || namespace.endsWith(".apply"))) {
+      if (isMissing
+          && (namespace.endsWith(".call")
+              || namespace.endsWith(".apply")
+              || namespace.endsWith(".bind"))) {
         // assume that the user is calling the corresponding built in function and only look for
         // imports 'above' it.
         String namespaceMinusApply = namespace.substring(0, namespace.lastIndexOf('.'));
@@ -316,10 +314,13 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
   private boolean isMissingRequire(String namespace, Node node) {
     if (namespace.startsWith("goog.global.")
         // Most functions in base.js are goog.someName, but
-        // goog.module.{get,declareLegacyNamespace} are the exceptions, so just check for them
-        // explicitly.
+        // goog.module.{get,declareLegacyNamespace,declareNamespace} are the exceptions, so just
+        // check for them explicitly.
         || namespace.equals("goog.module.get")
-        || namespace.equals("goog.module.declareLegacyNamespace")) {
+        || namespace.equals("goog.module.declareLegacyNamespace")
+        // TODO(johnplaisted): Consolidate on declareModuleId.
+        || namespace.equals("goog.module.declareNamespace")
+        || namespace.equals("goog.declareModuleId")) {
       return false;
     }
 
@@ -530,7 +531,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
     checkState(n.isName() || n.isGetProp() || n.isStringKey(), n);
     String qualifiedName = n.isStringKey() ? n.getString() : n.getQualifiedName();
     addWeakUsagesOfAllPrefixes(qualifiedName);
-    if (mode != Mode.SINGLE_FILE) { // TODO(tbreisacher): Fix violations and remove this check.
+    if (mode != Mode.SINGLE_FILE) { // TODO(b/71638622): Fix violations and remove this check.
       return;
     }
     if (!n.isStringKey() && !NodeUtil.isLhsOfAssign(n) && !parent.isExprResult()) {
@@ -703,7 +704,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
    * require is there or not.
    */
   private void maybeAddWeakUsage(NodeTraversal t, Node n, Node typeNode) {
-    maybeAddUsage(t, n, typeNode, false, Predicates.<Node>alwaysTrue());
+    maybeAddUsage(t, n, typeNode, false, Predicates.alwaysTrue());
   }
 
   /**
@@ -743,7 +744,7 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
               }
               String rootName = Splitter.on('.').split(typeString).iterator().next();
               Var var = t.getScope().getVar(rootName);
-              if (var == null || !var.isExtern()) {
+              if (var == null || (var.isGlobal() && !var.isExtern())) {
                 if (markStrongUsages) {
                   usages.put(typeString, n);
                 } else {
@@ -758,9 +759,9 @@ public class CheckMissingAndExtraRequires implements HotSwapCompilerPass, NodeTr
                   addWeakUsagesOfAllPrefixes(typeString);
                 }
               } else {
-                // Even if the root namespace is in externs, add a weak usage because the full
+                // Even if the root namespace is in externs, add weak usages because the full
                 // namespace may still be goog.provided.
-                weakUsages.add(typeString);
+                addWeakUsagesOfAllPrefixes(typeString);
               }
             }
           }

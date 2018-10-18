@@ -30,15 +30,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Provides a framework for checking code against a set of user configured
- * conformance rules.  The rules are specified by the ConformanceConfig
- * proto, which allows for both standard checks (forbidden properties,
- * variables, or dependencies) and allow for more complex checks using
- * custom rules than specify
+ * Provides a framework for checking code against a set of user configured conformance rules. The
+ * rules are specified by the ConformanceConfig proto, which allows for both standard checks
+ * (forbidden properties, variables, or dependencies) and allow for more complex checks using custom
+ * rules than specify
+ *
+ * <p>Conformance violations are both reported as compiler errors, and are also reported separately
+ * to the {cI gue@link ErrorManager}
  *
  */
 @GwtIncompatible("com.google.protobuf")
 public final class CheckConformance implements Callback, CompilerPass {
+  static final DiagnosticType CONFORMANCE_ERROR =
+      DiagnosticType.error("JSC_CONFORMANCE_ERROR", "Violation: {0}{1}{2}");
 
   static final DiagnosticType CONFORMANCE_VIOLATION =
       DiagnosticType.warning(
@@ -77,7 +81,7 @@ public final class CheckConformance implements Callback, CompilerPass {
   @Override
   public void process(Node externs, Node root) {
     if (!rules.isEmpty()) {
-      NodeTraversal.traverseRootsEs6(compiler, this, externs, root);
+      NodeTraversal.traverseRoots(compiler, this, externs, root);
     }
   }
 
@@ -164,6 +168,7 @@ public final class CheckConformance implements Callback, CompilerPass {
           existing.addAllWhitelistRegexp(requirement.getWhitelistRegexpList());
           existing.addAllOnlyApplyTo(requirement.getOnlyApplyToList());
           existing.addAllOnlyApplyToRegexp(requirement.getOnlyApplyToRegexpList());
+          existing.addAllWhitelistEntry(requirement.getWhitelistEntryList());
         }
       }
     }

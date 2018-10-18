@@ -23,14 +23,13 @@ import static com.google.javascript.jscomp.FunctionArgumentInjector.THIS_MARKER;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.javascript.jscomp.MakeDeclaredNamesUnique.InlineRenamer;
 import com.google.javascript.rhino.IR;
 import com.google.javascript.rhino.Node;
 import com.google.javascript.rhino.Token;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -44,9 +43,8 @@ import java.util.Set;
  */
 class FunctionToBlockMutator {
 
-  private AbstractCompiler compiler;
-  private Supplier<String> safeNameIdSupplier;
-
+  private final AbstractCompiler compiler;
+  private final Supplier<String> safeNameIdSupplier;
 
   FunctionToBlockMutator(
       AbstractCompiler compiler, Supplier<String> safeNameIdSupplier) {
@@ -73,19 +71,33 @@ class FunctionToBlockMutator {
   }
 
   /**
-   * Used when an IIFE wrapper is being removed
+   * Used where the inlining occurs into an isolated scope such as a module. Renaming is avoided
+   * since the associated JSDoc annotations are not updated.
    *
    * @param fnName The name to use when preparing human readable names.
    * @param fnNode The function to prepare.
    * @param callNode The call node that will be replaced.
-   * @return A clone of the function body mutated to be suitable for injection as a statement into a
-   *     script root
+   * @param resultName Function results should be assigned to this name.
+   * @param needsDefaultResult Whether the result value must be set.
+   * @param isCallInLoop Whether the function body must be prepared to be injected into the body of
+   *     a loop.
+   * @return A clone of the function body mutated to be suitable for injection as a statement into
+   *     another code block.
    */
-  Node unwrapIifeInModule(String fnName, Node fnNode, Node callNode) {
-    return mutateInternal(fnName, fnNode, callNode,
-        /* resultName */ null,
-        /* needsDefaultResult */ false,
-        /* isCallInLoop */ false,
+  Node mutateWithoutRenaming(
+      String fnName,
+      Node fnNode,
+      Node callNode,
+      String resultName,
+      boolean needsDefaultResult,
+      boolean isCallInLoop) {
+    return mutateInternal(
+        fnName,
+        fnNode,
+        callNode,
+        resultName,
+        needsDefaultResult,
+        isCallInLoop,
         /* renameLocals */ false);
   }
 
@@ -126,11 +138,10 @@ class FunctionToBlockMutator {
       rewriteFunctionDeclarations(newFnNode.getLastChild());
     }
 
-    // TODO(johnlenz): Mark NAME nodes constant for parameters that are not
-    // modified.
+    // TODO(johnlenz): Mark NAME nodes constant for parameters that are not modified.
     Set<String> namesToAlias =
         FunctionArgumentInjector.findModifiedParameters(newFnNode);
-    LinkedHashMap<String, Node> args =
+    ImmutableMap<String, Node> args =
         FunctionArgumentInjector.getFunctionCallParameterMap(
             newFnNode, callNode, this.safeNameIdSupplier);
     boolean hasArgs = !args.isEmpty();
@@ -144,8 +155,7 @@ class FunctionToBlockMutator {
     newBlock.detach();
 
     if (hasArgs) {
-      Node inlineResult = aliasAndInlineArguments(newBlock,
-          args, namesToAlias);
+      Node inlineResult = aliasAndInlineArguments(newBlock, args, namesToAlias);
       checkState(newBlock == inlineResult);
     }
 
@@ -222,8 +232,7 @@ class FunctionToBlockMutator {
       return;
     }
 
-    // For all VARs
-    if (n.isVar() && n.hasOneChild()) {
+    if ((n.isVar() || n.isLet()) && n.hasOneChild()) {
       Node name = n.getFirstChild();
       // It isn't initialized.
       if (!name.hasChildren()) {
@@ -246,7 +255,7 @@ class FunctionToBlockMutator {
   private void makeLocalNamesUnique(Node fnNode, boolean isCallInLoop) {
     Supplier<String> idSupplier = compiler.getUniqueNameIdSupplier();
     // Make variable names unique to this instance.
-    NodeTraversal.traverseEs6ScopeRoots(
+    NodeTraversal.traverseScopeRoots(
         compiler,
         null,
         ImmutableList.of(fnNode),
@@ -299,8 +308,7 @@ class FunctionToBlockMutator {
    * @return The node or its replacement.
    */
   private Node aliasAndInlineArguments(
-      Node fnTemplateRoot, LinkedHashMap<String, Node> argMap,
-      Set<String> namesToAlias) {
+      Node fnTemplateRoot, ImmutableMap<String, Node> argMap, Set<String> namesToAlias) {
 
     if (namesToAlias == null || namesToAlias.isEmpty()) {
       // There are no names to alias, just inline the arguments directly.
@@ -318,7 +326,7 @@ class FunctionToBlockMutator {
 
       // Declare the alias in the same order as they
       // are declared.
-      List<Node> newVars = new LinkedList<>();
+      List<Node> newVars = new ArrayList<>();
       // NOTE: argMap is a linked map so we get the parameters in the
       // order that they were declared.
       for (Entry<String, Node> entry : argMap.entrySet()) {
@@ -448,7 +456,7 @@ class FunctionToBlockMutator {
    *   a = (void) 0;
    */
   private static void addDummyAssignment(Node node, String resultName) {
-    checkArgument(node.isNormalBlock());
+    checkArgument(node.isBlock());
 
     // A result is needed create a dummy value.
     Node srcLocation = node;

@@ -19,29 +19,32 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.javascript.jscomp.PolymerPassErrors.POLYMER_INVALID_BEHAVIOR;
 import static com.google.javascript.jscomp.testing.JSErrorSubject.assertError;
 
-import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.javascript.jscomp.PolymerBehaviorExtractor.BehaviorDefinition;
 import com.google.javascript.rhino.Node;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-/**
- * Unit tests for {@link PolymerBehaviorExtractor}.
- */
+/** Unit tests for {@link PolymerBehaviorExtractor}. */
+@RunWith(JUnit4.class)
 public class PolymerBehaviorExtractorTest extends CompilerTypeTestCase {
 
   private PolymerBehaviorExtractor extractor;
   private Node behaviorArray;
 
   @Override
-  protected void setUp() throws Exception {
+  @Before
+  public void setUp() throws Exception {
     super.setUp();
     behaviorArray = null;
   }
 
-
+  @Test
   public void testArrayBehavior() {
     parseAndInitializeExtractor(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "var FunBehavior = {",
             "  properties: {",
@@ -83,9 +86,10 @@ public class PolymerBehaviorExtractorTest extends CompilerTypeTestCase {
     // TODO(jlklein): Actually verify the properties of the BehaviorDefinitions.
   }
 
+  @Test
   public void testInlineLiteralBehavior() {
     parseAndInitializeExtractor(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "var FunBehavior = {",
             "  properties: {",
@@ -117,9 +121,10 @@ public class PolymerBehaviorExtractorTest extends CompilerTypeTestCase {
     // TODO(jlklein): Actually verify the properties of the BehaviorDefinitions.
   }
 
+  @Test
   public void testIsPropInBehavior() {
     parseAndInitializeExtractor(
-        LINE_JOINER.join(
+        lines(
             "/** @polymerBehavior */",
             "var FunBehavior = {",
             "  is: 'fun-behavior',",
@@ -145,13 +150,15 @@ public class PolymerBehaviorExtractorTest extends CompilerTypeTestCase {
     GlobalNamespace globalNamespace = new GlobalNamespace(compiler, root);
     extractor = new PolymerBehaviorExtractor(compiler, globalNamespace);
 
-    NodeUtil.visitPostOrder(root, (Node node) -> {
-      if (isBehaviorArrayDeclaration(node)) {
-        behaviorArray = node;
-      }
-    }, Predicates.<Node>alwaysTrue());
+    NodeUtil.visitPostOrder(
+        root,
+        node -> {
+          if (isBehaviorArrayDeclaration(node)) {
+            behaviorArray = node;
+          }
+        });
 
-    assertNotNull(behaviorArray);
+    assertThat(behaviorArray).isNotNull();
   }
 
   private boolean isBehaviorArrayDeclaration(Node node) {

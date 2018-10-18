@@ -22,6 +22,12 @@ goog.setTestOnly();
 
 const testSuite = goog.require('goog.testing.testSuite');
 
+class C {
+  static doSomething(i) {
+    return i;
+  }
+}
+
 testSuite({
   testEmptyFunction() {
     async function empty() {}
@@ -127,6 +133,27 @@ testSuite({
     return c.delayedGetValue().then(v => assertEquals(0, v));
   },
 
+  testMemberFunctionUsingSuper() {
+    class B {
+      constructor() {
+        this.value = 0;
+      }
+
+      async delayedGetValue() {
+        return this.value;
+      }
+    }
+
+    class C extends B {
+      /** @override */
+      async delayedGetValue() {
+        return super.delayedGetValue();
+      }
+    }
+    const c = new C();
+    return c.delayedGetValue().then(v => assertEquals(0, v));
+  },
+
   testMemberFunctionUsingThisInArrowFunction() {
     class C {
       constructor() {
@@ -208,6 +235,21 @@ testSuite({
     return f().then(v => assertObjectEquals([1, 2], v));
   },
 
+  /**
+   * Confirms that method decomposition aliasing a constructor is
+   * handled correctly.
+   *
+   * @return {!Promise<?>}
+   */
+  testMethodCallDecomposingInAsyncFunction() {
+    async function f() {
+      return C.doSomething(await 5);
+    }
+    return f().then(result => {
+      assertEquals(5, result);
+    });
+  },
+
   testRejectWithUndefined() {
     async function f() {
       try {
@@ -225,12 +267,9 @@ testSuite({
    * Confirm that the rejection reason is correctly saved and reported even
    * when more awaiting is done in a finally block.
    *
-   * TODO(bradfordcsmith): fix this
-   * https://github.com/google/closure-compiler/issues/2504
-   *
    * @return {!Promise<?>}
    */
-  disabledTestRejectWithFinally() {
+  testRejectWithFinally() {
     const error = new Error('expected');
     async function fn1() {
       try {

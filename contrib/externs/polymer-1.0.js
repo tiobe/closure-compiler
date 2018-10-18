@@ -18,6 +18,7 @@
  * Originally part of the Polymer Project. Original license below.
  *
  * @externs
+ * @suppress {strictMissingProperties}
  * @license
  * Copyright (c) 2015 The Polymer Project Authors. All rights reserved.
  * This code may only be used under the BSD style license found at
@@ -93,8 +94,11 @@ PolymerElement.prototype.shadyRoot;
  */
 PolymerElement.prototype.$$ = function(selector) {};
 
-/** @type {string} The Custom element tag name. */
+/** @type {string} The custom element tag name. */
 PolymerElement.prototype.is;
+
+/** @type {null|!HTMLTemplateElement} The element's template. */
+PolymerElement.prototype._template;
 
 /** @type {string} The native element this element extends. */
 PolymerElement.prototype.extends;
@@ -633,6 +637,12 @@ Polymer.Gestures.findOriginalTarget = function(ev) {};
  * @type {!Object}
  */
 Polymer.Gestures.gestures = {};
+
+/**
+ * @param {Node} node
+ * @param {string} value
+ */
+Polymer.Gestures.setTouchAction = function(node, value) {};
 
 /**
  * @type {!Object}
@@ -1266,6 +1276,24 @@ var TemplatizerNode = function() {};
 TemplatizerNode.prototype._templateInstance;
 
 
+/**
+ * @see https://github.com/Polymer/polymer/blob/1.x/src/lib/template/dom-if.html
+ * @extends {PolymerElement}
+ * @constructor
+ */
+var DomIf = function() {};
+
+
+/**
+ * Forces the element to render its content. Normally rendering is
+ * asynchronous to a provoking change. This is done for efficiency so
+ * that multiple changes trigger only a single render. The render method
+ * should be called if, for example, template rendering is required to
+ * validate application state.
+ */
+DomIf.prototype.render = function() {};
+
+
 
 /**
  * @see https://github.com/Polymer/polymer/blob/master/src/lib/template/dom-repeat.html
@@ -1326,6 +1354,23 @@ DomRepeatElement.prototype.indexForElement = function(el) {};
  */
 DomRepeatElement.prototype.renderedItemCount;
 
+
+/**
+ * Event object for an event handler on a child of a dom-repeat template.
+ * @see https://www.polymer-project.org/1.0/docs/devguide/templates#handling-events
+ * @extends {CustomEvent}
+ * @constructor
+ * @template T
+ */
+var DomRepeatEvent = function() {};
+
+/**
+ * @type {{
+ *   index: number,
+ *   item: T
+ * }}
+ */
+DomRepeatEvent.prototype.model;
 
 
 /**
