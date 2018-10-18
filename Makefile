@@ -6,7 +6,7 @@ NAME:=$(PREFIX)-$(VERSION)
 JARNAME:=compiler.jar
 TARGETJAR:=./target/$(PREFIX)-1.0-SNAPSHOT.jar
 RELVERSION:=v$(VERSION) TIOBE edition
-BT:=mvn -q
+BT:=mvn
 
 all: build zip
 
@@ -14,7 +14,7 @@ build: $(TARGETJAR)
 	java -jar $(TARGETJAR) --version
 
 $(TARGETJAR):
-	$(BT) install -DskipTests -Dcompiler.version="$(RELVERSION)"
+	$(BT) package -Dmaven.test.skip -Dcompiler.version="$(RELVERSION)" -pl externs/pom.xml,pom-main.xml,pom-main-shaded.xml
 
 
 DEPLOYDIR:=Closure
